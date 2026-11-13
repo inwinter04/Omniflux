@@ -31,6 +31,34 @@ export function setupElegantRouter() {
         i18nKey: `route.${key}` as App.I18n.I18nKey
       };
 
+      const menuOrder: Partial<Record<RouteKey, number>> = {
+        home: 1,
+        projects: 2,
+        applications: 3,
+        providers: 4,
+        'route-policies': 5,
+        'model-services': 6,
+        'api-keys': 7
+      };
+
+      const menuIcons: Partial<Record<RouteKey, string>> = {
+        home: 'mdi:monitor-dashboard',
+        projects: 'mdi:folder-multiple-outline',
+        applications: 'mdi:application-brackets-outline',
+        providers: 'mdi:cloud-lock-outline',
+        'route-policies': 'mdi:routes',
+        'model-services': 'mdi:cube-outline',
+        'api-keys': 'mdi:key-chain-variant'
+      };
+
+      if (menuOrder[key] !== undefined) {
+        meta.order = menuOrder[key];
+      }
+
+      if (menuIcons[key]) {
+        meta.icon = menuIcons[key];
+      }
+
       if (constantRoutes.includes(key)) {
         meta.constant = true;
       }
@@ -39,3 +67,4 @@ export function setupElegantRouter() {
     }
   });
 }
+

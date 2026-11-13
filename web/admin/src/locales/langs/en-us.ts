@@ -229,7 +229,13 @@ const local: App.I18n.Schema = {
     404: 'Page Not Found',
     500: 'Server Error',
     'iframe-page': 'Iframe',
-    home: 'Home'
+    home: 'Home',
+    projects: 'Projects',
+    applications: 'Applications',
+    providers: 'Provider Accounts',
+    'route-policies': 'Route Policies',
+    'model-services': 'Model Services',
+    'api-keys': 'API Keys'
   },
   page: {
     login: {
@@ -367,3 +373,4 @@ const local: App.I18n.Schema = {
 };
 
 export default local;
+

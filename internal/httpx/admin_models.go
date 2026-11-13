@@ -4,6 +4,8 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+
+	"github.com/go-chi/chi/v5"
 	"time"
 
 	"github.com/google/uuid"
@@ -237,3 +239,49 @@ func nullablePolicyID(id *uuid.UUID) any {
 	}
 	return *id
 }
+
+// DeleteModelService 删除模型服务;存在用量记录时拒绝,否则连同候选一起删除。
+func (d ServerDeps) DeleteModelService(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok || d.requireAdmin(w, principal) != nil {
+		return
+	}
+	serviceID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		adminError(w, http.StatusBadRequest, "SERVICE_ID_INVALID", "模型服务 ID 不合法", nil)
+		return
+	}
+	var exists bool
+	if err := d.Pool.QueryRow(r.Context(), `
+		SELECT EXISTS (SELECT 1 FROM model_services WHERE id = $1 AND organization_id = $2)
+	`, serviceID, principal.OrganizationID).Scan(&exists); err != nil {
+		adminError(w, http.StatusInternalServerError, "SERVICE_DELETE_FAILED", "删除模型服务失败", nil)
+		return
+	}
+	if !exists {
+		adminError(w, http.StatusNotFound, "SERVICE_NOT_FOUND", "模型服务不存在或不属于当前组织", nil)
+		return
+	}
+	var usageCount int
+	if err := d.Pool.QueryRow(r.Context(), `
+		SELECT count(*) FROM usage_records WHERE model_service_id = $1
+	`, serviceID).Scan(&usageCount); err != nil {
+		adminError(w, http.StatusInternalServerError, "SERVICE_DELETE_FAILED", "删除模型服务失败", nil)
+		return
+	}
+	if usageCount > 0 {
+		adminError(w, http.StatusConflict, "SERVICE_HAS_USAGE",
+			"模型服务存在用量记录,为保留审计数据无法删除", nil)
+		return
+	}
+	if _, err := d.Pool.Exec(r.Context(), `DELETE FROM model_services WHERE id = $1`, serviceID); err != nil {
+		adminError(w, http.StatusInternalServerError, "SERVICE_DELETE_FAILED", "删除模型服务失败", nil)
+		return
+	}
+	_, _ = d.Pool.Exec(r.Context(), `
+		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id)
+		VALUES ($1,$2,'user','model_service.deleted','model_service',$3)
+	`, principal.OrganizationID, principal.UserID, serviceID.String())
+	adminOK(w, nil)
+}
+

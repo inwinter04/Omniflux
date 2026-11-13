@@ -40,6 +40,28 @@ export const generatedRoutes: GeneratedRoute[] = [
     }
   },
   {
+    name: 'api-keys',
+    path: '/api-keys',
+    component: 'layout.base$view.api-keys',
+    meta: {
+      title: 'api-keys',
+      i18nKey: 'route.api-keys',
+      order: 7,
+      icon: 'mdi:key-chain-variant'
+    }
+  },
+  {
+    name: 'applications',
+    path: '/applications',
+    component: 'layout.base$view.applications',
+    meta: {
+      title: 'applications',
+      i18nKey: 'route.applications',
+      order: 3,
+      icon: 'mdi:application-brackets-outline'
+    }
+  },
+  {
     name: 'home',
     path: '/home',
     component: 'layout.base$view.home',
@@ -73,6 +95,50 @@ export const generatedRoutes: GeneratedRoute[] = [
       i18nKey: 'route.login',
       constant: true,
       hideInMenu: true
+    }
+  },
+  {
+    name: 'model-services',
+    path: '/model-services',
+    component: 'layout.base$view.model-services',
+    meta: {
+      title: 'model-services',
+      i18nKey: 'route.model-services',
+      order: 6,
+      icon: 'mdi:cube-outline'
+    }
+  },
+  {
+    name: 'projects',
+    path: '/projects',
+    component: 'layout.base$view.projects',
+    meta: {
+      title: 'projects',
+      i18nKey: 'route.projects',
+      order: 2,
+      icon: 'mdi:folder-multiple-outline'
+    }
+  },
+  {
+    name: 'providers',
+    path: '/providers',
+    component: 'layout.base$view.providers',
+    meta: {
+      title: 'providers',
+      i18nKey: 'route.providers',
+      order: 4,
+      icon: 'mdi:cloud-lock-outline'
+    }
+  },
+  {
+    name: 'route-policies',
+    path: '/route-policies',
+    component: 'layout.base$view.route-policies',
+    meta: {
+      title: 'route-policies',
+      i18nKey: 'route.route-policies',
+      order: 5,
+      icon: 'mdi:routes'
     }
   }
 ];

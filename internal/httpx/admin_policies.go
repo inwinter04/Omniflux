@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+
+	"github.com/go-chi/chi/v5"
 	"time"
 
 	"github.com/google/uuid"
@@ -147,3 +149,62 @@ func (d ServerDeps) CreateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 	`, principal.OrganizationID, principal.UserID, policyID.String(), auditJSON(map[string]any{"name": body.Name, "strategy": body.Strategy}))
 	adminOK(w, map[string]string{"id": policyID.String()})
 }
+
+// DeleteRoutePolicy 删除路由策略;被模型服务引用或存在策略决策记录时拒绝。
+func (d ServerDeps) DeleteRoutePolicy(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok || d.requireAdmin(w, principal) != nil {
+		return
+	}
+	policyID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		adminError(w, http.StatusBadRequest, "POLICY_ID_INVALID", "路由策略 ID 不合法", nil)
+		return
+	}
+	var exists bool
+	if err := d.Pool.QueryRow(r.Context(), `
+		SELECT EXISTS (SELECT 1 FROM route_policies WHERE id = $1 AND organization_id = $2)
+	`, policyID, principal.OrganizationID).Scan(&exists); err != nil {
+		adminError(w, http.StatusInternalServerError, "POLICY_DELETE_FAILED", "删除路由策略失败", nil)
+		return
+	}
+	if !exists {
+		adminError(w, http.StatusNotFound, "POLICY_NOT_FOUND", "路由策略不存在或不属于当前组织", nil)
+		return
+	}
+	var serviceCount int
+	if err := d.Pool.QueryRow(r.Context(), `
+		SELECT count(*) FROM model_services WHERE route_policy_id = $1
+	`, policyID).Scan(&serviceCount); err != nil {
+		adminError(w, http.StatusInternalServerError, "POLICY_DELETE_FAILED", "删除路由策略失败", nil)
+		return
+	}
+	if serviceCount > 0 {
+		adminError(w, http.StatusConflict, "POLICY_IN_USE",
+			"路由策略已被模型服务引用,请先调整模型服务后再删除", nil)
+		return
+	}
+	var decisionCount int
+	if err := d.Pool.QueryRow(r.Context(), `
+		SELECT count(*) FROM policy_decisions WHERE route_policy_id = $1
+	`, policyID).Scan(&decisionCount); err != nil {
+		adminError(w, http.StatusInternalServerError, "POLICY_DELETE_FAILED", "删除路由策略失败", nil)
+		return
+	}
+	if decisionCount > 0 {
+		adminError(w, http.StatusConflict, "POLICY_HAS_DECISIONS",
+			"路由策略存在决策记录,为保留审计数据无法删除", nil)
+		return
+	}
+	if _, err := d.Pool.Exec(r.Context(), `DELETE FROM route_policies WHERE id = $1`, policyID); err != nil {
+		adminError(w, http.StatusInternalServerError, "POLICY_DELETE_FAILED", "删除路由策略失败", nil)
+		return
+	}
+	_, _ = d.Pool.Exec(r.Context(), `
+		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id)
+		VALUES ($1,$2,'user','route_policy.deleted','route_policy',$3)
+	`, principal.OrganizationID, principal.UserID, policyID.String())
+	adminOK(w, nil)
+}
+
+

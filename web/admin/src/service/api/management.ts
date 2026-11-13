@@ -1,0 +1,97 @@
+import { request } from '../request';
+
+/** Get projects of the current organization */
+export function fetchProjects() {
+  return request<Api.Management.Project[]>({ url: '/projects' });
+}
+
+/** Get applications of the current organization */
+export function fetchApplications() {
+  return request<Api.Management.Application[]>({ url: '/applications' });
+}
+
+/** Get departments of the current organization */
+export function fetchDepartments() {
+  return request<Api.Management.Department[]>({ url: '/departments' });
+}
+
+/** Create a project under a department */
+export function fetchCreateProject(params: Api.Management.CreateProjectParams) {
+  return request<{ id: string }>({ url: '/projects', method: 'post', data: params });
+}
+
+/** Delete a project; blocked when related applications, API keys or usage records exist */
+export function fetchDeleteProject(id: string) {
+  return request({ url: `/projects/${id}`, method: 'delete' });
+}
+
+/** Create an application under a project */
+export function fetchCreateApplication(params: Api.Management.CreateApplicationParams) {
+  return request<{ id: string }>({ url: '/applications', method: 'post', data: params });
+}
+
+/** Delete an application; blocked when related API keys or usage records exist */
+export function fetchDeleteApplication(id: string) {
+  return request({ url: `/applications/${id}`, method: 'delete' });
+}
+
+/** Get provider accounts of the current organization (credentials excluded) */
+export function fetchProviderAccounts() {
+  return request<Api.Management.ProviderAccount[]>({ url: '/provider-accounts' });
+}
+
+/** Create a provider account; the API key is encrypted server-side */
+export function fetchCreateProviderAccount(params: Api.Management.CreateProviderAccountParams) {
+  return request<{ id: string }>({ url: '/provider-accounts', method: 'post', data: params });
+}
+
+/** Delete a provider account */
+export function fetchDeleteProviderAccount(id: string) {
+  return request({ url: `/provider-accounts/${id}`, method: 'delete' });
+}
+
+/** Get route policies of the current organization */
+export function fetchRoutePolicies() {
+  return request<Api.Management.RoutePolicy[]>({ url: '/route-policies' });
+}
+
+/** Create a route policy */
+export function fetchCreateRoutePolicy(params: Api.Management.CreateRoutePolicyParams) {
+  return request<{ id: string }>({ url: '/route-policies', method: 'post', data: params });
+}
+
+/** Delete a route policy; blocked when referenced by model services or has decision records */
+export function fetchDeleteRoutePolicy(id: string) {
+  return request({ url: `/route-policies/${id}`, method: 'delete' });
+}
+
+/** Get model services with candidates of the current organization */
+export function fetchModelServices() {
+  return request<Api.Management.ModelService[]>({ url: '/model-services' });
+}
+
+/** Create a model service with candidates */
+export function fetchCreateModelService(params: Api.Management.CreateModelServiceParams) {
+  return request<{ id: string }>({ url: '/model-services', method: 'post', data: params });
+}
+
+/** Delete a model service with its candidates; blocked when usage records exist */
+export function fetchDeleteModelService(id: string) {
+  return request({ url: `/model-services/${id}`, method: 'delete' });
+}
+
+/** Get API keys of the current organization (no secret material) */
+export function fetchApiKeys() {
+  return request<Api.Management.ApiKey[]>({ url: '/api-keys' });
+}
+
+/** Create an API key; the plaintext key is returned only once */
+export function fetchCreateApiKey(params: Api.Management.CreateApiKeyParams) {
+  return request<Api.Management.CreateApiKeyResult>({ url: '/api-keys', method: 'post', data: params });
+}
+
+/** Disable an API key */
+export function fetchDisableApiKey(id: string) {
+  return request<{ status: string }>({ url: `/api-keys/${id}`, method: 'delete' });
+}
+

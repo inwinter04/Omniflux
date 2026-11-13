@@ -88,15 +88,22 @@ func New(deps ServerDeps) http.Handler {
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Group(func(r chi.Router) {
 			r.Use(func(next http.Handler) http.Handler { return RequireSession(deps, next) })
+			r.Get("/departments", deps.Departments)
 			r.Get("/projects", deps.Projects)
+			r.Post("/projects", deps.CreateProject)
+			r.Delete("/projects/{id}", deps.DeleteProject)
 			r.Get("/applications", deps.Applications)
+			r.Post("/applications", deps.CreateApplication)
+			r.Delete("/applications/{id}", deps.DeleteApplication)
 			r.Get("/provider-accounts", deps.ProviderAccounts)
 			r.Post("/provider-accounts", deps.CreateProviderAccount)
 			r.Delete("/provider-accounts/{id}", deps.DeleteProviderAccount)
 			r.Get("/route-policies", deps.RoutePolicies)
 			r.Post("/route-policies", deps.CreateRoutePolicy)
+			r.Delete("/route-policies/{id}", deps.DeleteRoutePolicy)
 			r.Get("/model-services", deps.ModelServices)
 			r.Post("/model-services", deps.CreateModelService)
+			r.Delete("/model-services/{id}", deps.DeleteModelService)
 			r.Get("/api-keys", deps.APIKeys)
 			r.Post("/api-keys", deps.CreateAPIKey)
 			r.Delete("/api-keys/{id}", deps.DisableAPIKey)
@@ -104,3 +111,4 @@ func New(deps ServerDeps) http.Handler {
 	})
 	return r
 }
+

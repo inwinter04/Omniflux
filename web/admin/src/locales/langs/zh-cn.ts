@@ -225,7 +225,13 @@ const local: App.I18n.Schema = {
     404: '页面不存在',
     500: '服务器错误',
     'iframe-page': '外链页面',
-    home: '首页'
+    home: '首页',
+    projects: '项目',
+    applications: '应用',
+    providers: 'Provider 账号',
+    'route-policies': '路由策略',
+    'model-services': '模型服务',
+    'api-keys': 'API Key'
   },
   page: {
     login: {
@@ -363,3 +369,4 @@ const local: App.I18n.Schema = {
 };
 
 export default local;
+
