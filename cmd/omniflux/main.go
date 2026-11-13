@@ -11,6 +11,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/inwinter04/omniflux/internal/app"
 	"github.com/inwinter04/omniflux/internal/auth"
 	"github.com/inwinter04/omniflux/internal/bifrostx"
@@ -19,6 +22,7 @@ import (
 	"github.com/inwinter04/omniflux/internal/httpx"
 	"github.com/inwinter04/omniflux/internal/infra"
 	"github.com/inwinter04/omniflux/internal/logging"
+	"github.com/inwinter04/omniflux/internal/vault"
 )
 
 func main() {
@@ -58,13 +62,30 @@ func run() error {
 		return err
 	}
 	defer redisClient.Close()
-	engine, engineErr := bifrostx.NewEngine(ctx, nil)
+	specs, err := loadProviderSpecs(ctx, pool, cfg.MasterKey)
+	if err != nil {
+		return err
+	}
+	engine, engineErr := bifrostx.NewEngine(ctx, specs)
 	if engineErr != nil {
 		return engineErr
 	}
 	defer engine.Close()
+	logger.Info("provider engine loaded", "accounts", len(specs))
+	reloadEngine := func(ctx context.Context) error {
+		next, err := loadProviderSpecs(ctx, pool, cfg.MasterKey)
+		if err != nil {
+			return err
+		}
+		return engine.Reload(ctx, next)
+	}
 	authStore := auth.NewStore(pool)
-	handler := httpx.New(httpx.ServerDeps{Logger: logger, Pool: pool, Redis: redisClient, Engine: engine, Auth: authStore, Env: cfg.Env})
+	handler := httpx.New(httpx.ServerDeps{
+		Logger: logger, Pool: pool, Redis: redisClient, Engine: engine,
+		Auth: authStore, Env: cfg.Env,
+		MasterKey: cfg.MasterKey, APIKeyPepper: cfg.APIKeyPepper,
+		ReloadEngine: reloadEngine,
+	})
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           handler,
@@ -91,4 +112,43 @@ func run() error {
 	defer cancel()
 	logger.Info("omniflux shutting down")
 	return server.Shutdown(shutdownCtx)
+}
+
+// loadProviderSpecs 从数据库读取 active Provider 账号并解密凭据,构建上游引擎配置。
+func loadProviderSpecs(ctx context.Context, pool *pgxpool.Pool, masterKey []byte) ([]bifrostx.ProviderSpec, error) {
+	rows, err := pool.Query(ctx, `
+		SELECT a.id, a.provider, a.name, a.base_url, c.ciphertext
+		FROM provider_accounts a
+		JOIN provider_credentials c ON c.provider_account_id = a.id
+		WHERE a.status = 'active'
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	specs := []bifrostx.ProviderSpec{}
+	for rows.Next() {
+		var id uuid.UUID
+		var provider, name string
+		var baseURL *string
+		var ciphertext []byte
+		if err := rows.Scan(&id, &provider, &name, &baseURL, &ciphertext); err != nil {
+			return nil, err
+		}
+		plaintext, err := vault.Decrypt(masterKey, ciphertext)
+		if err != nil {
+			return nil, err
+		}
+		spec := bifrostx.ProviderSpec{
+			Provider:  provider,
+			AccountID: id.String(),
+			Name:      name,
+			APIKey:    string(plaintext),
+		}
+		if baseURL != nil {
+			spec.BaseURL = *baseURL
+		}
+		specs = append(specs, spec)
+	}
+	return specs, rows.Err()
 }

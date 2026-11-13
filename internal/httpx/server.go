@@ -15,16 +15,20 @@ import (
 	"github.com/inwinter04/omniflux/internal/auth"
 	"github.com/inwinter04/omniflux/internal/bifrostx"
 	"github.com/inwinter04/omniflux/internal/console"
+	"github.com/inwinter04/omniflux/internal/dataplane"
 	"github.com/inwinter04/omniflux/internal/infra"
 )
 
 type ServerDeps struct {
-	Logger *slog.Logger
-	Pool   *pgxpool.Pool
-	Redis  *redis.Client
-	Engine *bifrostx.Engine
-	Auth   *auth.Store
-	Env    string
+	Logger       *slog.Logger
+	Pool         *pgxpool.Pool
+	Redis        *redis.Client
+	Engine       *bifrostx.Engine
+	Auth         *auth.Store
+	Env          string
+	MasterKey    []byte
+	APIKeyPepper string
+	ReloadEngine func(context.Context) error
 }
 
 func New(deps ServerDeps) http.Handler {
@@ -59,6 +63,20 @@ func New(deps ServerDeps) http.Handler {
 		http.Redirect(w, nil, "/admin/", http.StatusMovedPermanently)
 	})
 	r.Handle("/admin/*", console.Handler())
+
+	// 数据面:OpenAI 兼容接口,由 API Key 认证。
+	plane := dataplane.Deps{
+		Logger:       deps.Logger,
+		Pool:         deps.Pool,
+		Engine:       deps.Engine,
+		APIKeyPepper: deps.APIKeyPepper,
+	}
+	r.Route("/v1", func(r chi.Router) {
+		r.Use(plane.RequireAPIKey)
+		r.Post("/chat/completions", plane.ChatCompletions)
+	})
+
+	// 管理 API:服务端会话认证,组织隔离。
 	r.Route("/api/v1/auth", func(r chi.Router) {
 		r.Post("/login", deps.Login)
 		r.Group(func(r chi.Router) {
@@ -67,7 +85,22 @@ func New(deps ServerDeps) http.Handler {
 			r.Post("/logout", deps.Logout)
 		})
 	})
+	r.Route("/api/v1", func(r chi.Router) {
+		r.Group(func(r chi.Router) {
+			r.Use(func(next http.Handler) http.Handler { return RequireSession(deps, next) })
+			r.Get("/projects", deps.Projects)
+			r.Get("/applications", deps.Applications)
+			r.Get("/provider-accounts", deps.ProviderAccounts)
+			r.Post("/provider-accounts", deps.CreateProviderAccount)
+			r.Delete("/provider-accounts/{id}", deps.DeleteProviderAccount)
+			r.Get("/route-policies", deps.RoutePolicies)
+			r.Post("/route-policies", deps.CreateRoutePolicy)
+			r.Get("/model-services", deps.ModelServices)
+			r.Post("/model-services", deps.CreateModelService)
+			r.Get("/api-keys", deps.APIKeys)
+			r.Post("/api-keys", deps.CreateAPIKey)
+			r.Delete("/api-keys/{id}", deps.DisableAPIKey)
+		})
+	})
 	return r
 }
-
-func writeJSON(w http.ResponseWriter, status int, body any) { JSON(w, status, body) }

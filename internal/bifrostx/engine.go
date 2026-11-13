@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	core "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
@@ -23,6 +24,11 @@ type ProviderSpec struct {
 
 type Account struct {
 	specs map[schemas.ModelProvider][]ProviderSpec
+}
+
+// MapProvider 把数据库中的 provider 标识转换为 Bifrost 的 ModelProvider。
+func MapProvider(provider string) (schemas.ModelProvider, error) {
+	return mapProvider(provider)
 }
 
 func mapProvider(provider string) (schemas.ModelProvider, error) {
@@ -127,6 +133,8 @@ func (a *Account) GetConfigForProvider(provider schemas.ModelProvider) (*schemas
 }
 
 type Engine struct {
+	// mu 保护 client/account 的热替换;请求路径用 Client() 读取。
+	mu      sync.RWMutex
 	client  *core.Bifrost
 	account *Account
 }
@@ -143,9 +151,38 @@ func NewEngine(ctx context.Context, specs []ProviderSpec) (*Engine, error) {
 	return &Engine{client: client, account: account}, nil
 }
 
-func (e *Engine) Client() *core.Bifrost { return e.client }
-func (e *Engine) Account() *Account     { return e.account }
+func (e *Engine) Client() *core.Bifrost {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.client
+}
+
+func (e *Engine) Account() *Account {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.account
+}
+
+// Reload 用新配置重建上游引擎并原子替换;旧客户端在替换后关闭。
+func (e *Engine) Reload(ctx context.Context, specs []ProviderSpec) error {
+	next, err := NewEngine(ctx, specs)
+	if err != nil {
+		return err
+	}
+	e.mu.Lock()
+	previous := e.client
+	e.client = next.client
+	e.account = next.account
+	e.mu.Unlock()
+	if previous != nil {
+		previous.Shutdown()
+	}
+	return nil
+}
+
 func (e *Engine) Close() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	if e.client != nil {
 		e.client.Shutdown()
 	}
