@@ -46,7 +46,16 @@ func Matches(pepper, fullKey, storedHash string) bool {
 	return subtle.ConstantTimeCompare(got, want) == 1
 }
 
+// ValidFormat 校验 of_<prefix12>_<secret31> 结构。
+// secret 是 base64url 编码,本身可能包含下划线,因此不能按 "_" 拆分,只能按固定长度切。
 func ValidFormat(key string) bool {
-	parts := strings.Split(key, "_")
-	return len(parts) == 3 && parts[0] == "of" && len(parts[1]) == 12 && len(parts[2]) == 31
+	const totalLen = len("of_") + 12 + 1 + 31
+	if len(key) != totalLen {
+		return false
+	}
+	if !strings.HasPrefix(key, "of_") || key[15] != '_' {
+		return false
+	}
+	_, err := base64.RawURLEncoding.DecodeString(key[16:])
+	return err == nil
 }
