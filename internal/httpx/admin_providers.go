@@ -215,3 +215,78 @@ func auditJSON(value map[string]any) []byte {
 	}
 	return data
 }
+
+type updateProviderAccountRequest struct {
+	Name    string  `json:"name"`
+	Region  *string `json:"region"`
+	BaseURL *string `json:"base_url"`
+}
+
+// UpdateProviderAccount 更新账号名称/区域/Base URL;provider 类型与凭据不可修改。
+func (d ServerDeps) UpdateProviderAccount(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok || d.requireAdmin(w, principal) != nil {
+		return
+	}
+	accountID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		adminError(w, http.StatusBadRequest, "PROVIDER_ID_INVALID", "Provider 账号 ID 不合法", nil)
+		return
+	}
+	var body updateProviderAccountRequest
+	if !d.decodeJSON(w, r, &body) {
+		return
+	}
+	body.Name = strings.TrimSpace(body.Name)
+	if body.Name == "" {
+		adminError(w, http.StatusBadRequest, "PROVIDER_NAME_REQUIRED", "请填写账号名称", nil)
+		return
+	}
+	// base_url 更新沿用创建时的引擎约束:同 provider 下不允许出现不同 base URL。
+	if body.BaseURL != nil && *body.BaseURL != "" {
+		var count int
+		if err := d.Pool.QueryRow(r.Context(), `
+			SELECT count(*) FROM provider_accounts
+			WHERE organization_id = $1 AND provider = (SELECT provider FROM provider_accounts WHERE id = $2)
+			  AND id <> $2 AND base_url IS NOT NULL AND base_url <> $3
+		`, principal.OrganizationID, accountID, *body.BaseURL).Scan(&count); err != nil {
+			adminError(w, http.StatusInternalServerError, "PROVIDER_UPDATE_FAILED", "更新 Provider 账号失败", nil)
+			return
+		}
+		if count > 0 {
+			adminError(w, http.StatusConflict, "PROVIDER_BASE_URL_CONFLICT",
+				"同一 provider 下已存在不同 base URL 的账号;当前引擎要求同一 provider 使用相同 base URL", nil)
+			return
+		}
+	}
+	var oldName string
+	err = d.Pool.QueryRow(r.Context(), `
+		SELECT name FROM provider_accounts WHERE id = $1 AND organization_id = $2
+	`, accountID, principal.OrganizationID).Scan(&oldName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		adminError(w, http.StatusNotFound, "PROVIDER_NOT_FOUND", "Provider 账号不存在或不属于当前组织", nil)
+		return
+	}
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "PROVIDER_UPDATE_FAILED", "更新 Provider 账号失败", nil)
+		return
+	}
+	if _, err := d.Pool.Exec(r.Context(), `
+		UPDATE provider_accounts SET name = $3, region = $4, base_url = $5, updated_at = now()
+		WHERE id = $1 AND organization_id = $2
+	`, accountID, principal.OrganizationID, body.Name, body.Region, body.BaseURL); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.ConstraintName == "provider_accounts_organization_id_name_key" {
+			adminError(w, http.StatusConflict, "PROVIDER_NAME_EXISTS", "同名 Provider 账号已存在", nil)
+			return
+		}
+		adminError(w, http.StatusInternalServerError, "PROVIDER_UPDATE_FAILED", "更新 Provider 账号失败", nil)
+		return
+	}
+	_, _ = d.Pool.Exec(r.Context(), `
+		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, before_state, after_state)
+		VALUES ($1,$2,'user','provider_account.updated','provider_account',$3,$4,$5)
+	`, principal.OrganizationID, principal.UserID, accountID.String(),
+		auditJSON(map[string]any{"name": oldName}), auditJSON(map[string]any{"name": body.Name, "region": body.Region, "base_url": body.BaseURL}))
+	adminOK(w, nil)
+}

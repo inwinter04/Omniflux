@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/inwinter04/omniflux/internal/auth"
@@ -143,7 +144,7 @@ func (d ServerDeps) DeleteProject(w http.ResponseWriter, r *http.Request) {
 	}
 	var keyCount int
 	if err := d.Pool.QueryRow(r.Context(), `
-		SELECT count(*) FROM api_keys WHERE project_id = $1
+		SELECT count(*) FROM api_keys WHERE project_id = $1 AND deleted_at IS NULL
 	`, projectID).Scan(&keyCount); err != nil {
 		adminError(w, http.StatusInternalServerError, "PROJECT_DELETE_FAILED", "删除项目失败", nil)
 		return
@@ -255,7 +256,7 @@ func (d ServerDeps) DeleteApplication(w http.ResponseWriter, r *http.Request) {
 	}
 	var keyCount int
 	if err := d.Pool.QueryRow(r.Context(), `
-		SELECT count(*) FROM api_keys WHERE application_id = $1
+		SELECT count(*) FROM api_keys WHERE application_id = $1 AND deleted_at IS NULL
 	`, applicationID).Scan(&keyCount); err != nil {
 		adminError(w, http.StatusInternalServerError, "APPLICATION_DELETE_FAILED", "删除应用失败", nil)
 		return
@@ -287,3 +288,118 @@ func (d ServerDeps) DeleteApplication(w http.ResponseWriter, r *http.Request) {
 	`, principal.OrganizationID, principal.UserID, applicationID.String())
 	adminOK(w, nil)
 }
+
+type updateProjectRequest struct {
+	Name string `json:"name"`
+}
+
+// UpdateProject 更新项目名称。
+func (d ServerDeps) UpdateProject(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok || d.requireAdmin(w, principal) != nil {
+		return
+	}
+	var body updateProjectRequest
+	if !d.decodeJSON(w, r, &body) {
+		return
+	}
+	body.Name = strings.TrimSpace(body.Name)
+	if body.Name == "" {
+		adminError(w, http.StatusBadRequest, "PROJECT_NAME_REQUIRED", "请填写项目名称", nil)
+		return
+	}
+	projectID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		adminError(w, http.StatusBadRequest, "PROJECT_ID_INVALID", "项目 ID 不合法", nil)
+		return
+	}
+	var oldName string
+	err = d.Pool.QueryRow(r.Context(), `
+		SELECT name FROM projects WHERE id = $1 AND organization_id = $2
+	`, projectID, principal.OrganizationID).Scan(&oldName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		adminError(w, http.StatusNotFound, "PROJECT_NOT_FOUND", "项目不存在或不属于当前组织", nil)
+		return
+	}
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "PROJECT_UPDATE_FAILED", "更新项目失败", nil)
+		return
+	}
+	if _, err := d.Pool.Exec(r.Context(), `
+		UPDATE projects SET name = $3, updated_at = now() WHERE id = $1 AND organization_id = $2
+	`, projectID, principal.OrganizationID, body.Name); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.ConstraintName == "projects_organization_id_name_key" {
+			adminError(w, http.StatusConflict, "PROJECT_NAME_EXISTS", "同名项目已存在", nil)
+			return
+		}
+		adminError(w, http.StatusInternalServerError, "PROJECT_UPDATE_FAILED", "更新项目失败", nil)
+		return
+	}
+	_, _ = d.Pool.Exec(r.Context(), `
+		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, before_state, after_state)
+		VALUES ($1,$2,'user','project.updated','project',$3,$4,$5)
+	`, principal.OrganizationID, principal.UserID, projectID.String(), auditJSON(map[string]any{"name": oldName}), auditJSON(map[string]any{"name": body.Name}))
+	adminOK(w, nil)
+}
+
+type updateApplicationRequest struct {
+	Name string `json:"name"`
+}
+
+// UpdateApplication 更新应用名称。
+func (d ServerDeps) UpdateApplication(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok || d.requireAdmin(w, principal) != nil {
+		return
+	}
+	var body updateApplicationRequest
+	if !d.decodeJSON(w, r, &body) {
+		return
+	}
+	body.Name = strings.TrimSpace(body.Name)
+	if body.Name == "" {
+		adminError(w, http.StatusBadRequest, "APPLICATION_NAME_REQUIRED", "请填写应用名称", nil)
+		return
+	}
+	applicationID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		adminError(w, http.StatusBadRequest, "APPLICATION_ID_INVALID", "应用 ID 不合法", nil)
+		return
+	}
+	var oldName string
+	err = d.Pool.QueryRow(r.Context(), `
+		SELECT a.name FROM applications a
+		JOIN projects p ON p.id = a.project_id
+		WHERE a.id = $1 AND p.organization_id = $2
+	`, applicationID, principal.OrganizationID).Scan(&oldName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		adminError(w, http.StatusNotFound, "APPLICATION_NOT_FOUND", "应用不存在或不属于当前组织", nil)
+		return
+	}
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "APPLICATION_UPDATE_FAILED", "更新应用失败", nil)
+		return
+	}
+	if _, err := d.Pool.Exec(r.Context(), `
+		UPDATE applications SET name = $2, updated_at = now() WHERE id = $1
+	`, applicationID, body.Name); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.ConstraintName == "applications_project_id_name_key" {
+			adminError(w, http.StatusConflict, "APPLICATION_NAME_EXISTS", "该项目下同名应用已存在", nil)
+			return
+		}
+		adminError(w, http.StatusInternalServerError, "APPLICATION_UPDATE_FAILED", "更新应用失败", nil)
+		return
+	}
+	_, _ = d.Pool.Exec(r.Context(), `
+		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, before_state, after_state)
+		VALUES ($1,$2,'user','application.updated','application',$3,$4,$5)
+	`, principal.OrganizationID, principal.UserID, applicationID.String(), auditJSON(map[string]any{"name": oldName}), auditJSON(map[string]any{"name": body.Name}))
+	adminOK(w, nil)
+}
+
+var _ = pgx.ErrNoRows
+
+
+

@@ -20,15 +20,20 @@ declare module "@elegant-router/types" {
     "403": "/403";
     "404": "/404";
     "500": "/500";
-    "api-keys": "/api-keys";
-    "applications": "/applications";
     "home": "/home";
     "iframe-page": "/iframe-page/:url";
     "login": "/login/:module(pwd-login|code-login|register|reset-pwd|bind-wechat)?";
-    "model-services": "/model-services";
-    "projects": "/projects";
-    "providers": "/providers";
-    "route-policies": "/route-policies";
+    "model-management": "/model-management";
+    "model-management_model-services": "/model-management/model-services";
+    "model-management_providers": "/model-management/providers";
+    "model-management_route-policies": "/model-management/route-policies";
+    "observability": "/observability";
+    "observability_audit": "/observability/audit";
+    "observability_usage": "/observability/usage";
+    "organization": "/organization";
+    "organization_api-keys": "/organization/api-keys";
+    "organization_applications": "/organization/applications";
+    "organization_projects": "/organization/projects";
   };
 
   /**
@@ -63,15 +68,12 @@ declare module "@elegant-router/types" {
     | "403"
     | "404"
     | "500"
-    | "api-keys"
-    | "applications"
     | "home"
     | "iframe-page"
     | "login"
-    | "model-services"
-    | "projects"
-    | "providers"
-    | "route-policies"
+    | "model-management"
+    | "observability"
+    | "organization"
   >;
 
   /**
@@ -93,13 +95,15 @@ declare module "@elegant-router/types" {
     | "500"
     | "iframe-page"
     | "login"
-    | "api-keys"
-    | "applications"
     | "home"
-    | "model-services"
-    | "projects"
-    | "providers"
-    | "route-policies"
+    | "model-management_model-services"
+    | "model-management_providers"
+    | "model-management_route-policies"
+    | "observability_audit"
+    | "observability_usage"
+    | "organization_api-keys"
+    | "organization_applications"
+    | "organization_projects"
   >;
 
   /**

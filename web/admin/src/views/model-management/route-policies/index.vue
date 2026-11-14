@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { h, onMounted, reactive, ref } from 'vue';
-import { NButton, NPopconfirm, NTag } from 'naive-ui';
+import { NButton, NPopconfirm, NSpace, NTag } from 'naive-ui';
 import type { DataTableColumns, FormInst, FormRules } from 'naive-ui';
-import { fetchCreateRoutePolicy, fetchDeleteRoutePolicy, fetchRoutePolicies } from '@/service/api';
+import { fetchCreateRoutePolicy, fetchDeleteRoutePolicy, fetchRoutePolicies, fetchUpdateRoutePolicy } from '@/service/api';
+import { formatTime, statusTagType, statusText } from '@/utils/admin-status';
 
 defineOptions({
-  name: 'RoutePolicies'
+  name: 'ModelManagementRoutePolicies'
 });
 
 const strategyOptions = [
@@ -18,9 +19,19 @@ const loading = ref(true);
 const list = ref<Api.Management.RoutePolicy[]>([]);
 
 const showCreate = ref(false);
-const creating = ref(false);
+const showEdit = ref(false);
+const submitting = ref(false);
 const formRef = ref<FormInst | null>(null);
+const editFormRef = ref<FormInst | null>(null);
 const formModel = reactive({
+  name: '',
+  strategy: 'balanced',
+  fallback_limit: 2,
+  provider_timeout_ms: 60000,
+  first_token_timeout_ms: 15000
+});
+const editModel = reactive({
+  id: '',
   name: '',
   strategy: 'balanced',
   fallback_limit: 2,
@@ -31,10 +42,9 @@ const formModel = reactive({
 const formRules: FormRules = {
   name: { required: true, message: '请填写策略名称', trigger: 'blur' }
 };
-
-function formatTime(value: string) {
-  return new Date(value).toLocaleString();
-}
+const editRules: FormRules = {
+  name: { required: true, message: '请填写策略名称', trigger: 'blur' }
+};
 
 function strategyLabel(value: string) {
   return strategyOptions.find(item => item.value === value)?.label ?? value;
@@ -52,23 +62,28 @@ const columns: DataTableColumns<Api.Management.RoutePolicy> = [
     key: 'status',
     width: 90,
     render(row) {
-      return h(NTag, { type: row.status === 'active' ? 'success' : 'default', size: 'small', round: true }, { default: () => row.status });
+      return h(NTag, { type: statusTagType(row.status), size: 'small', round: true }, { default: () => statusText(row.status) });
     }
   },
   { title: '更新时间', key: 'updated_at', width: 180, render: row => formatTime(row.updated_at) },
   {
     title: '操作',
     key: 'actions',
-    width: 100,
+    width: 150,
     render(row) {
-      return h(
-        NPopconfirm,
-        { onPositiveClick: () => handleDelete(row.id) },
-        {
-          trigger: () => h(NButton, { size: 'small', type: 'error', quaternary: true }, { default: () => '删除' }),
-          default: () => '被模型服务引用或有决策记录时将无法删除,确认删除?'
-        }
-      );
+      return h(NSpace, { size: 4 }, {
+        default: () => [
+          h(NButton, { size: 'small', quaternary: true, type: 'primary', onClick: () => openEdit(row) }, { default: () => '编辑' }),
+          h(
+            NPopconfirm,
+            { onPositiveClick: () => handleDelete(row.id) },
+            {
+              trigger: () => h(NButton, { size: 'small', type: 'error', quaternary: true }, { default: () => '删除' }),
+              default: () => '被模型服务引用或有决策记录时将无法删除,确认删除?'
+            }
+          )
+        ]
+      });
     }
   }
 ];
@@ -94,9 +109,19 @@ function openCreate() {
   showCreate.value = true;
 }
 
+function openEdit(row: Api.Management.RoutePolicy) {
+  editModel.id = row.id;
+  editModel.name = row.name;
+  editModel.strategy = row.strategy;
+  editModel.fallback_limit = row.fallback_limit;
+  editModel.provider_timeout_ms = row.provider_timeout_ms;
+  editModel.first_token_timeout_ms = row.first_token_timeout_ms;
+  showEdit.value = true;
+}
+
 async function handleCreate() {
   await formRef.value?.validate();
-  creating.value = true;
+  submitting.value = true;
   try {
     const { error } = await fetchCreateRoutePolicy({
       name: formModel.name.trim(),
@@ -111,7 +136,28 @@ async function handleCreate() {
       await loadData();
     }
   } finally {
-    creating.value = false;
+    submitting.value = false;
+  }
+}
+
+async function handleUpdate() {
+  await editFormRef.value?.validate();
+  submitting.value = true;
+  try {
+    const { error } = await fetchUpdateRoutePolicy(editModel.id, {
+      name: editModel.name.trim(),
+      strategy: editModel.strategy,
+      fallback_limit: editModel.fallback_limit,
+      provider_timeout_ms: editModel.provider_timeout_ms,
+      first_token_timeout_ms: editModel.first_token_timeout_ms
+    });
+    if (!error) {
+      window.$message?.success('路由策略已更新');
+      showEdit.value = false;
+      await loadData();
+    }
+  } finally {
+    submitting.value = false;
   }
 }
 
@@ -140,7 +186,7 @@ onMounted(() => {
       <NAlert type="info" :bordered="false" class="mb-12px">
         评分权重与硬约束当前按服务端默认值生效,精细调度将在后续版本实现。
       </NAlert>
-      <NDataTable :columns="columns" :data="list" :loading="loading" :bordered="false" :scroll-x="1000" />
+      <NDataTable :columns="columns" :data="list" :loading="loading" :bordered="false" :scroll-x="1200" />
     </NCard>
 
     <NModal v-model:show="showCreate" preset="card" title="新建路由策略" class="w-520px">
@@ -164,7 +210,33 @@ onMounted(() => {
       <template #footer>
         <NSpace justify="end">
           <NButton @click="showCreate = false">取消</NButton>
-          <NButton type="primary" :loading="creating" @click="handleCreate">创建</NButton>
+          <NButton type="primary" :loading="submitting" @click="handleCreate">创建</NButton>
+        </NSpace>
+      </template>
+    </NModal>
+
+    <NModal v-model:show="showEdit" preset="card" title="编辑路由策略" class="w-520px">
+      <NForm ref="editFormRef" :model="editModel" :rules="editRules" label-placement="left" label-width="140">
+        <NFormItem label="策略名称" path="name">
+          <NInput v-model:value="editModel.name" placeholder="策略名称" />
+        </NFormItem>
+        <NFormItem label="调度策略" path="strategy">
+          <NSelect v-model:value="editModel.strategy" :options="strategyOptions" />
+        </NFormItem>
+        <NFormItem label="Fallback 上限" path="fallback_limit">
+          <NInputNumber v-model:value="editModel.fallback_limit" :min="0" class="w-full" />
+        </NFormItem>
+        <NFormItem label="上游超时(ms)" path="provider_timeout_ms">
+          <NInputNumber v-model:value="editModel.provider_timeout_ms" :min="1" class="w-full" />
+        </NFormItem>
+        <NFormItem label="首 Token 超时(ms)" path="first_token_timeout_ms">
+          <NInputNumber v-model:value="editModel.first_token_timeout_ms" :min="1" class="w-full" />
+        </NFormItem>
+      </NForm>
+      <template #footer>
+        <NSpace justify="end">
+          <NButton @click="showEdit = false">取消</NButton>
+          <NButton type="primary" :loading="submitting" @click="handleUpdate">保存</NButton>
         </NSpace>
       </template>
     </NModal>
@@ -172,6 +244,3 @@ onMounted(() => {
 </template>
 
 <style scoped></style>
-
-
-

@@ -226,12 +226,17 @@ const local: App.I18n.Schema = {
     500: '服务器错误',
     'iframe-page': '外链页面',
     home: '首页',
-    projects: '项目',
-    applications: '应用',
-    providers: 'Provider 账号',
-    'route-policies': '路由策略',
-    'model-services': '模型服务',
-    'api-keys': 'API Key'
+    organization: '组织管理',
+    organization_projects: '项目',
+    organization_applications: '应用',
+    'organization_api-keys': 'API Key',
+    'model-management': '模型管理',
+    'model-management_providers': 'Provider 账号',
+    'model-management_route-policies': '路由策略',
+    'model-management_model-services': '模型服务',
+    observability: '观测管理',
+    observability_usage: '用量报表',
+    observability_audit: '审计日志'
   },
   page: {
     login: {
@@ -369,4 +374,5 @@ const local: App.I18n.Schema = {
 };
 
 export default local;
+
 

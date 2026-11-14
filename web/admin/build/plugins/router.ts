@@ -33,22 +33,32 @@ export function setupElegantRouter() {
 
       const menuOrder: Partial<Record<RouteKey, number>> = {
         home: 1,
-        projects: 2,
-        applications: 3,
-        providers: 4,
-        'route-policies': 5,
-        'model-services': 6,
-        'api-keys': 7
+        organization: 2,
+        organization_projects: 1,
+        organization_applications: 2,
+        'organization_api-keys': 3,
+        'model-management': 3,
+        'model-management_providers': 1,
+        'model-management_route-policies': 2,
+        'model-management_model-services': 3,
+        observability: 4,
+        observability_usage: 1,
+        observability_audit: 2
       };
 
       const menuIcons: Partial<Record<RouteKey, string>> = {
         home: 'mdi:monitor-dashboard',
-        projects: 'mdi:folder-multiple-outline',
-        applications: 'mdi:application-brackets-outline',
-        providers: 'mdi:cloud-lock-outline',
-        'route-policies': 'mdi:routes',
-        'model-services': 'mdi:cube-outline',
-        'api-keys': 'mdi:key-chain-variant'
+        organization: 'mdi:sitemap-outline',
+        organization_projects: 'mdi:folder-multiple-outline',
+        organization_applications: 'mdi:application-brackets-outline',
+        'organization_api-keys': 'mdi:key-chain-variant',
+        'model-management': 'mdi:cube-outline',
+        'model-management_providers': 'mdi:cloud-lock-outline',
+        'model-management_route-policies': 'mdi:routes',
+        'model-management_model-services': 'mdi:cube-send',
+        observability: 'mdi:chart-box-outline',
+        observability_usage: 'mdi:chart-bar',
+        observability_audit: 'mdi:text-box-search-outline'
       };
 
       if (menuOrder[key] !== undefined) {
@@ -67,4 +77,5 @@ export function setupElegantRouter() {
     }
   });
 }
+
 

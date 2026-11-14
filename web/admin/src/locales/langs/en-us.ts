@@ -230,12 +230,17 @@ const local: App.I18n.Schema = {
     500: 'Server Error',
     'iframe-page': 'Iframe',
     home: 'Home',
-    projects: 'Projects',
-    applications: 'Applications',
-    providers: 'Provider Accounts',
-    'route-policies': 'Route Policies',
-    'model-services': 'Model Services',
-    'api-keys': 'API Keys'
+    organization: 'Organization',
+    organization_projects: 'Projects',
+    organization_applications: 'Applications',
+    'organization_api-keys': 'API Keys',
+    'model-management': 'Model Management',
+    'model-management_providers': 'Provider Accounts',
+    'model-management_route-policies': 'Route Policies',
+    'model-management_model-services': 'Model Services',
+    observability: 'Observability',
+    observability_usage: 'Usage',
+    observability_audit: 'Audit Log'
   },
   page: {
     login: {
@@ -373,4 +378,5 @@ const local: App.I18n.Schema = {
 };
 
 export default local;
+
 

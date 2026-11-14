@@ -285,3 +285,143 @@ func (d ServerDeps) DeleteModelService(w http.ResponseWriter, r *http.Request) {
 	adminOK(w, nil)
 }
 
+
+// UpdateModelService 更新服务名称/绑定策略,并用提交的候选全量替换现有候选。
+func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok || d.requireAdmin(w, principal) != nil {
+		return
+	}
+	serviceID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		adminError(w, http.StatusBadRequest, "SERVICE_ID_INVALID", "模型服务 ID 不合法", nil)
+		return
+	}
+	var body createModelServiceRequest
+	if !d.decodeJSON(w, r, &body) {
+		return
+	}
+	body.Name = strings.TrimSpace(body.Name)
+	if body.Name == "" {
+		adminError(w, http.StatusBadRequest, "SERVICE_NAME_REQUIRED", "请填写模型服务名称", nil)
+		return
+	}
+	if len(body.Candidates) == 0 {
+		adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATES_REQUIRED", "至少需要一个模型候选", nil)
+		return
+	}
+	accountIDs := make([]uuid.UUID, 0, len(body.Candidates))
+	for _, c := range body.Candidates {
+		if strings.TrimSpace(c.UpstreamModel) == "" {
+			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "候选缺少 upstream_model", nil)
+			return
+		}
+		parsed, err := uuid.Parse(c.ProviderAccountID)
+		if err != nil {
+			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "候选的 provider_account_id 不合法", nil)
+			return
+		}
+		accountIDs = append(accountIDs, parsed)
+	}
+	// 同一账号可挂多个候选,校验前去重。
+	uniqueAccountIDs := make([]uuid.UUID, 0, len(accountIDs))
+	seen := make(map[uuid.UUID]bool, len(accountIDs))
+	for _, id := range accountIDs {
+		if !seen[id] {
+			seen[id] = true
+			uniqueAccountIDs = append(uniqueAccountIDs, id)
+		}
+	}
+	var accountCount int
+	if err := d.Pool.QueryRow(r.Context(), `
+		SELECT count(*) FROM provider_accounts WHERE id = ANY($1) AND organization_id = $2
+	`, uniqueAccountIDs, principal.OrganizationID).Scan(&accountCount); err != nil {
+		adminError(w, http.StatusInternalServerError, "SERVICE_UPDATE_FAILED", "更新模型服务失败", nil)
+		return
+	}
+	if accountCount != len(uniqueAccountIDs) {
+		adminError(w, http.StatusBadRequest, "SERVICE_ACCOUNT_NOT_FOUND", "候选引用的 Provider 账号不存在或不属于当前组织", nil)
+		return
+	}
+	var policyID *uuid.UUID
+	if body.RoutePolicyID != nil && *body.RoutePolicyID != "" {
+		parsed, err := uuid.Parse(*body.RoutePolicyID)
+		if err != nil {
+			adminError(w, http.StatusBadRequest, "SERVICE_POLICY_INVALID", "route_policy_id 不合法", nil)
+			return
+		}
+		var count int
+		if err := d.Pool.QueryRow(r.Context(), `
+			SELECT count(*) FROM route_policies WHERE id = $1 AND organization_id = $2
+		`, parsed, principal.OrganizationID).Scan(&count); err != nil {
+			adminError(w, http.StatusInternalServerError, "SERVICE_UPDATE_FAILED", "更新模型服务失败", nil)
+			return
+		}
+		if count == 0 {
+			adminError(w, http.StatusBadRequest, "SERVICE_POLICY_NOT_FOUND", "路由策略不存在或不属于当前组织", nil)
+			return
+		}
+		policyID = &parsed
+	}
+	var oldName string
+	err = d.Pool.QueryRow(r.Context(), `
+		SELECT name FROM model_services WHERE id = $1 AND organization_id = $2
+	`, serviceID, principal.OrganizationID).Scan(&oldName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		adminError(w, http.StatusNotFound, "SERVICE_NOT_FOUND", "模型服务不存在或不属于当前组织", nil)
+		return
+	}
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "SERVICE_UPDATE_FAILED", "更新模型服务失败", nil)
+		return
+	}
+	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(r.Context(), `
+			UPDATE model_services SET name = $3, route_policy_id = $4, updated_at = now()
+			WHERE id = $1 AND organization_id = $2
+		`, serviceID, principal.OrganizationID, body.Name, nullablePolicyID(policyID)); err != nil {
+			return err
+		}
+		// 候选全量替换:先清空再插入,保持候选与请求一致。
+		if _, err := tx.Exec(r.Context(), `DELETE FROM model_candidates WHERE model_service_id = $1`, serviceID); err != nil {
+			return err
+		}
+		for _, c := range body.Candidates {
+			accountID, _ := uuid.Parse(c.ProviderAccountID)
+			weight := c.Weight
+			if weight <= 0 {
+				weight = 1
+			}
+			priority := c.Priority
+			if priority == 0 {
+				priority = 100
+			}
+			if _, err := tx.Exec(r.Context(), `
+				INSERT INTO model_candidates(model_service_id, provider_account_id, upstream_model,
+				                             priority, weight, input_cost_per_million, output_cost_per_million)
+				VALUES ($1,$2,$3,$4,$5,$6,$7)
+			`, serviceID, accountID, c.UpstreamModel, priority, weight,
+				c.InputCostPerMillion, c.OutputCostPerMillion); err != nil {
+				return err
+			}
+		}
+		_, err := tx.Exec(r.Context(), `
+			INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, before_state, after_state)
+			VALUES ($1,$2,'user','model_service.updated','model_service',$3,$4,$5)
+		`, principal.OrganizationID, principal.UserID, serviceID.String(),
+			auditJSON(map[string]any{"name": oldName}),
+			auditJSON(map[string]any{"name": body.Name, "route_policy_id": body.RoutePolicyID, "candidates": len(body.Candidates)}))
+		return err
+	})
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.ConstraintName == "model_services_organization_id_name_key" {
+			adminError(w, http.StatusConflict, "SERVICE_NAME_EXISTS", "同名模型服务已存在", nil)
+			return
+		}
+		adminError(w, http.StatusInternalServerError, "SERVICE_UPDATE_FAILED", "更新模型服务失败", nil)
+		return
+	}
+	adminOK(w, nil)
+}
+

@@ -40,28 +40,6 @@ export const generatedRoutes: GeneratedRoute[] = [
     }
   },
   {
-    name: 'api-keys',
-    path: '/api-keys',
-    component: 'layout.base$view.api-keys',
-    meta: {
-      title: 'api-keys',
-      i18nKey: 'route.api-keys',
-      order: 7,
-      icon: 'mdi:key-chain-variant'
-    }
-  },
-  {
-    name: 'applications',
-    path: '/applications',
-    component: 'layout.base$view.applications',
-    meta: {
-      title: 'applications',
-      i18nKey: 'route.applications',
-      order: 3,
-      icon: 'mdi:application-brackets-outline'
-    }
-  },
-  {
     name: 'home',
     path: '/home',
     component: 'layout.base$view.home',
@@ -98,47 +76,130 @@ export const generatedRoutes: GeneratedRoute[] = [
     }
   },
   {
-    name: 'model-services',
-    path: '/model-services',
-    component: 'layout.base$view.model-services',
+    name: 'model-management',
+    path: '/model-management',
+    component: 'layout.base',
     meta: {
-      title: 'model-services',
-      i18nKey: 'route.model-services',
-      order: 6,
+      title: 'model-management',
+      i18nKey: 'route.model-management',
+      order: 3,
       icon: 'mdi:cube-outline'
-    }
+    },
+    children: [
+      {
+        name: 'model-management_model-services',
+        path: '/model-management/model-services',
+        component: 'view.model-management_model-services',
+        meta: {
+          title: 'model-management_model-services',
+          i18nKey: 'route.model-management_model-services',
+          order: 3,
+          icon: 'mdi:cube-send'
+        }
+      },
+      {
+        name: 'model-management_providers',
+        path: '/model-management/providers',
+        component: 'view.model-management_providers',
+        meta: {
+          title: 'model-management_providers',
+          i18nKey: 'route.model-management_providers',
+          order: 1,
+          icon: 'mdi:cloud-lock-outline'
+        }
+      },
+      {
+        name: 'model-management_route-policies',
+        path: '/model-management/route-policies',
+        component: 'view.model-management_route-policies',
+        meta: {
+          title: 'model-management_route-policies',
+          i18nKey: 'route.model-management_route-policies',
+          order: 2,
+          icon: 'mdi:routes'
+        }
+      }
+    ]
   },
   {
-    name: 'projects',
-    path: '/projects',
-    component: 'layout.base$view.projects',
+    name: 'observability',
+    path: '/observability',
+    component: 'layout.base',
     meta: {
-      title: 'projects',
-      i18nKey: 'route.projects',
-      order: 2,
-      icon: 'mdi:folder-multiple-outline'
-    }
-  },
-  {
-    name: 'providers',
-    path: '/providers',
-    component: 'layout.base$view.providers',
-    meta: {
-      title: 'providers',
-      i18nKey: 'route.providers',
+      title: 'observability',
+      i18nKey: 'route.observability',
       order: 4,
-      icon: 'mdi:cloud-lock-outline'
-    }
+      icon: 'mdi:chart-box-outline'
+    },
+    children: [
+      {
+        name: 'observability_audit',
+        path: '/observability/audit',
+        component: 'view.observability_audit',
+        meta: {
+          title: 'observability_audit',
+          i18nKey: 'route.observability_audit',
+          order: 2,
+          icon: 'mdi:text-box-search-outline'
+        }
+      },
+      {
+        name: 'observability_usage',
+        path: '/observability/usage',
+        component: 'view.observability_usage',
+        meta: {
+          title: 'observability_usage',
+          i18nKey: 'route.observability_usage',
+          order: 1,
+          icon: 'mdi:chart-bar'
+        }
+      }
+    ]
   },
   {
-    name: 'route-policies',
-    path: '/route-policies',
-    component: 'layout.base$view.route-policies',
+    name: 'organization',
+    path: '/organization',
+    component: 'layout.base',
     meta: {
-      title: 'route-policies',
-      i18nKey: 'route.route-policies',
-      order: 5,
-      icon: 'mdi:routes'
-    }
+      title: 'organization',
+      i18nKey: 'route.organization',
+      order: 2,
+      icon: 'mdi:sitemap-outline'
+    },
+    children: [
+      {
+        name: 'organization_api-keys',
+        path: '/organization/api-keys',
+        component: 'view.organization_api-keys',
+        meta: {
+          title: 'organization_api-keys',
+          i18nKey: 'route.organization_api-keys',
+          order: 3,
+          icon: 'mdi:key-chain-variant'
+        }
+      },
+      {
+        name: 'organization_applications',
+        path: '/organization/applications',
+        component: 'view.organization_applications',
+        meta: {
+          title: 'organization_applications',
+          i18nKey: 'route.organization_applications',
+          order: 2,
+          icon: 'mdi:application-brackets-outline'
+        }
+      },
+      {
+        name: 'organization_projects',
+        path: '/organization/projects',
+        component: 'view.organization_projects',
+        meta: {
+          title: 'organization_projects',
+          i18nKey: 'route.organization_projects',
+          order: 1,
+          icon: 'mdi:folder-multiple-outline'
+        }
+      }
+    ]
   }
 ];

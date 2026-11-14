@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, h, onMounted, reactive, ref } from 'vue';
-import { NButton, NPopconfirm, NTag } from 'naive-ui';
+import { NButton, NPopconfirm, NSpace, NTag } from 'naive-ui';
 import type { DataTableColumns, FormInst, FormRules } from 'naive-ui';
-import { fetchApplications, fetchApiKeys, fetchCreateApiKey, fetchDisableApiKey, fetchProjects } from '@/service/api';
+import { fetchApiKeys, fetchApplications, fetchCreateApiKey, fetchDeleteApiKey, fetchProjects, fetchUpdateApiKeyStatus } from '@/service/api';
+import { formatTime, statusTagType, statusText } from '@/utils/admin-status';
 
 defineOptions({
-  name: 'ApiKeys'
+  name: 'OrganizationApiKeys'
 });
 
 const loading = ref(true);
@@ -37,16 +38,12 @@ const applicationOptions = computed(() =>
     .map(item => ({ label: item.name, value: item.id }))
 );
 
-function formatTime(value: string | null) {
-  return value ? new Date(value).toLocaleString() : '-';
-}
-
 function projectName(id: string) {
-  return projects.value.find(item => item.id === id)?.name ?? id;
+  return projects.value.find(item => item.id === id)?.name ?? '-';
 }
 
 function applicationName(id: string) {
-  return applications.value.find(item => item.id === id)?.name ?? id;
+  return applications.value.find(item => item.id === id)?.name ?? '-';
 }
 
 const columns: DataTableColumns<Api.Management.ApiKey> = [
@@ -59,7 +56,7 @@ const columns: DataTableColumns<Api.Management.ApiKey> = [
     key: 'status',
     width: 100,
     render(row) {
-      return h(NTag, { type: row.status === 'active' ? 'success' : 'default', size: 'small', round: true }, { default: () => row.status });
+      return h(NTag, { type: statusTagType(row.status), size: 'small', round: true }, { default: () => statusText(row.status) });
     }
   },
   { title: '最近使用', key: 'last_used_at', width: 180, render: row => formatTime(row.last_used_at) },
@@ -67,17 +64,36 @@ const columns: DataTableColumns<Api.Management.ApiKey> = [
   {
     title: '操作',
     key: 'actions',
-    width: 100,
+    width: 150,
     render(row) {
-      if (row.status !== 'active') return '-';
-      return h(
-        NPopconfirm,
-        { onPositiveClick: () => handleDisable(row.id) },
-        {
-          trigger: () => h(NButton, { size: 'small', type: 'warning', quaternary: true }, { default: () => '禁用' }),
-          default: () => '禁用后立即停止认证通过,确认禁用?'
-        }
+      const buttons: ReturnType<typeof h>[] = [];
+      if (row.status === 'active') {
+        buttons.push(
+          h(
+            NPopconfirm,
+            { onPositiveClick: () => handleToggleStatus(row, 'disabled') },
+            {
+              trigger: () => h(NButton, { size: 'small', type: 'warning', quaternary: true }, { default: () => '禁用' }),
+              default: () => '禁用后立即停止认证,之后可重新启用,确认禁用?'
+            }
+          )
+        );
+      } else {
+        buttons.push(
+          h(NButton, { size: 'small', type: 'primary', quaternary: true, onClick: () => handleToggleStatus(row, 'active') }, { default: () => '启用' })
+        );
+      }
+      buttons.push(
+        h(
+          NPopconfirm,
+          { onPositiveClick: () => handleDelete(row.id) },
+          {
+            trigger: () => h(NButton, { size: 'small', type: 'error', quaternary: true }, { default: () => '删除' }),
+            default: () => '删除后该 Key 彻底失效且不再显示,不可恢复,确认删除?'
+          }
+        )
       );
+      return h(NSpace, { size: 4 }, { default: () => buttons });
     }
   }
 ];
@@ -138,10 +154,18 @@ async function handleCopyKey() {
   window.$message?.success('已复制到剪贴板');
 }
 
-async function handleDisable(id: string) {
-  const { error } = await fetchDisableApiKey(id);
+async function handleToggleStatus(row: Api.Management.ApiKey, status: 'active' | 'disabled') {
+  const { error } = await fetchUpdateApiKeyStatus(row.id, status);
   if (!error) {
-    window.$message?.success('API Key 已禁用');
+    window.$message?.success(status === 'active' ? 'API Key 已启用' : 'API Key 已禁用');
+    await loadData();
+  }
+}
+
+async function handleDelete(id: string) {
+  const { error } = await fetchDeleteApiKey(id);
+  if (!error) {
+    window.$message?.success('API Key 已删除');
     await loadData();
   }
 }
@@ -162,9 +186,7 @@ onMounted(() => {
             :disabled="projectOptions.length === 0 || applications.length === 0"
             @click="openCreate"
           >
-            {{
-              projectOptions.length === 0 || applications.length === 0 ? '需要先存在项目与应用' : '新建 API Key'
-            }}
+            {{ projectOptions.length === 0 || applications.length === 0 ? '需要先存在项目与应用' : '新建 API Key' }}
           </NButton>
         </NSpace>
       </template>
@@ -210,4 +232,3 @@ onMounted(() => {
 </template>
 
 <style scoped></style>
-

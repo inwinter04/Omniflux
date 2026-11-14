@@ -48,7 +48,7 @@ func (d Deps) RequireAPIKey(next http.Handler) http.Handler {
 		var expiresAt *time.Time
 		err := d.Pool.QueryRow(r.Context(), `
 			SELECT id, organization_id, project_id, application_id, status, expires_at
-			FROM api_keys WHERE secret_hash = $1
+			FROM api_keys WHERE secret_hash = $1 AND deleted_at IS NULL
 		`, hash).Scan(&ctxValue.KeyID, &ctxValue.OrganizationID, &ctxValue.ProjectID, &ctxValue.ApplicationID, &status, &expiresAt)
 		if errors.Is(err, pgx.ErrNoRows) {
 			apiError(w, http.StatusUnauthorized, "invalid_api_key", "API Key 不存在或已失效")
@@ -73,3 +73,4 @@ func (d Deps) RequireAPIKey(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), apiKeyContextKey{}, ctxValue)))
 	})
 }
+

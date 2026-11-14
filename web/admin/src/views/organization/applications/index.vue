@@ -1,11 +1,18 @@
 <script setup lang="ts">
 import { computed, h, onMounted, reactive, ref } from 'vue';
-import { NButton, NPopconfirm, NTag } from 'naive-ui';
+import { NButton, NPopconfirm, NSpace, NTag } from 'naive-ui';
 import type { DataTableColumns, FormInst, FormRules } from 'naive-ui';
-import { fetchApplications, fetchCreateApplication, fetchDeleteApplication, fetchProjects } from '@/service/api';
+import {
+  fetchApplications,
+  fetchCreateApplication,
+  fetchDeleteApplication,
+  fetchProjects,
+  fetchUpdateApplication
+} from '@/service/api';
+import { statusTagType, statusText } from '@/utils/admin-status';
 
 defineOptions({
-  name: 'Applications'
+  name: 'OrganizationApplications'
 });
 
 const loading = ref(true);
@@ -13,16 +20,25 @@ const list = ref<Api.Management.Application[]>([]);
 const projects = ref<Api.Management.Project[]>([]);
 
 const showCreate = ref(false);
-const creating = ref(false);
+const showEdit = ref(false);
+const submitting = ref(false);
 const formRef = ref<FormInst | null>(null);
+const editFormRef = ref<FormInst | null>(null);
 const formModel = reactive({
   name: '',
   project_id: null as string | null
+});
+const editModel = reactive({
+  id: '',
+  name: ''
 });
 
 const formRules: FormRules = {
   name: { required: true, message: '请填写应用名称', trigger: 'blur' },
   project_id: { required: true, message: '请选择项目', trigger: 'change' }
+};
+const editRules: FormRules = {
+  name: { required: true, message: '请填写应用名称', trigger: 'blur' }
 };
 
 const projectOptions = computed(() => projects.value.map(item => ({ label: item.name, value: item.id })));
@@ -39,22 +55,27 @@ const columns: DataTableColumns<Api.Management.Application> = [
     key: 'status',
     width: 100,
     render(row) {
-      return h(NTag, { type: row.status === 'active' ? 'success' : 'default', size: 'small', round: true }, { default: () => row.status });
+      return h(NTag, { type: statusTagType(row.status), size: 'small', round: true }, { default: () => statusText(row.status) });
     }
   },
   {
     title: '操作',
     key: 'actions',
-    width: 100,
+    width: 150,
     render(row) {
-      return h(
-        NPopconfirm,
-        { onPositiveClick: () => handleDelete(row.id) },
-        {
-          trigger: () => h(NButton, { size: 'small', type: 'error', quaternary: true }, { default: () => '删除' }),
-          default: () => '应用下存在 API Key 时将无法删除,确认删除?'
-        }
-      );
+      return h(NSpace, {}, {
+        default: () => [
+          h(NButton, { size: 'small', quaternary: true, type: 'primary', onClick: () => openEdit(row) }, { default: () => '编辑' }),
+          h(
+            NPopconfirm,
+            { onPositiveClick: () => handleDelete(row.id) },
+            {
+              trigger: () => h(NButton, { size: 'small', type: 'error', quaternary: true }, { default: () => '删除' }),
+              default: () => '应用下存在 API Key 时将无法删除,确认删除?'
+            }
+          )
+        ]
+      });
     }
   }
 ];
@@ -80,9 +101,15 @@ function openCreate() {
   showCreate.value = true;
 }
 
+function openEdit(row: Api.Management.Application) {
+  editModel.id = row.id;
+  editModel.name = row.name;
+  showEdit.value = true;
+}
+
 async function handleCreate() {
   await formRef.value?.validate();
-  creating.value = true;
+  submitting.value = true;
   try {
     const { error } = await fetchCreateApplication({
       name: formModel.name.trim(),
@@ -94,7 +121,22 @@ async function handleCreate() {
       await loadData();
     }
   } finally {
-    creating.value = false;
+    submitting.value = false;
+  }
+}
+
+async function handleUpdate() {
+  await editFormRef.value?.validate();
+  submitting.value = true;
+  try {
+    const { error } = await fetchUpdateApplication(editModel.id, { name: editModel.name.trim() });
+    if (!error) {
+      window.$message?.success('应用已更新');
+      showEdit.value = false;
+      await loadData();
+    }
+  } finally {
+    submitting.value = false;
   }
 }
 
@@ -137,7 +179,21 @@ onMounted(() => {
       <template #footer>
         <NSpace justify="end">
           <NButton @click="showCreate = false">取消</NButton>
-          <NButton type="primary" :loading="creating" @click="handleCreate">创建</NButton>
+          <NButton type="primary" :loading="submitting" @click="handleCreate">创建</NButton>
+        </NSpace>
+      </template>
+    </NModal>
+
+    <NModal v-model:show="showEdit" preset="card" title="编辑应用" class="w-480px">
+      <NForm ref="editFormRef" :model="editModel" :rules="editRules" label-placement="left" label-width="80">
+        <NFormItem label="应用名称" path="name">
+          <NInput v-model:value="editModel.name" placeholder="应用名称" />
+        </NFormItem>
+      </NForm>
+      <template #footer>
+        <NSpace justify="end">
+          <NButton @click="showEdit = false">取消</NButton>
+          <NButton type="primary" :loading="submitting" @click="handleUpdate">保存</NButton>
         </NSpace>
       </template>
     </NModal>

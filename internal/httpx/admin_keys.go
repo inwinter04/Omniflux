@@ -1,12 +1,14 @@
 package httpx
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/inwinter04/omniflux/internal/apikeys"
 	"github.com/inwinter04/omniflux/internal/auth"
@@ -114,7 +116,7 @@ func (d ServerDeps) APIKeys(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := d.Pool.Query(r.Context(), `
 		SELECT id, name, key_prefix, project_id, application_id, status, expires_at, last_used_at, created_at
-		FROM api_keys WHERE organization_id = $1 ORDER BY created_at DESC
+		FROM api_keys WHERE organization_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC
 	`, principal.OrganizationID)
 	if err != nil {
 		adminError(w, http.StatusInternalServerError, "APIKEY_LIST_FAILED", "无法查询 API Key", nil)
@@ -203,8 +205,66 @@ func (d ServerDeps) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// DisableAPIKey 将 API Key 置为 disabled,立即停止认证通过。
-func (d ServerDeps) DisableAPIKey(w http.ResponseWriter, r *http.Request) {
+type updateAPIKeyStatusRequest struct {
+	Status string `json:"status"`
+}
+
+// UpdateAPIKeyStatus 切换 API Key 启用/禁用状态;禁用立即停止认证通过。
+func (d ServerDeps) UpdateAPIKeyStatus(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok || d.requireAdmin(w, principal) != nil {
+		return
+	}
+	var body updateAPIKeyStatusRequest
+	if !d.decodeJSON(w, r, &body) {
+		return
+	}
+	if body.Status != "active" && body.Status != "disabled" {
+		adminError(w, http.StatusBadRequest, "APIKEY_STATUS_INVALID", "status 仅支持 active 或 disabled", nil)
+		return
+	}
+	keyID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		adminError(w, http.StatusBadRequest, "APIKEY_INVALID_ID", "API Key ID 不合法", nil)
+		return
+	}
+	var currentStatus string
+	err = d.Pool.QueryRow(r.Context(), `
+		SELECT status FROM api_keys WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
+	`, keyID, principal.OrganizationID).Scan(&currentStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		adminError(w, http.StatusNotFound, "APIKEY_NOT_FOUND", "API Key 不存在", nil)
+		return
+	}
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "APIKEY_STATUS_FAILED", "更新 API Key 状态失败", nil)
+		return
+	}
+	if currentStatus == body.Status {
+		adminOK(w, map[string]string{"status": body.Status})
+		return
+	}
+	tag, err := d.Pool.Exec(r.Context(), `
+		UPDATE api_keys SET status = $3, updated_at = now()
+		WHERE id = $1 AND organization_id = $2
+	`, keyID, principal.OrganizationID, body.Status)
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "APIKEY_STATUS_FAILED", "更新 API Key 状态失败", nil)
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		adminError(w, http.StatusNotFound, "APIKEY_NOT_FOUND", "API Key 不存在", nil)
+		return
+	}
+	_, _ = d.Pool.Exec(r.Context(), `
+		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, before_state, after_state)
+		VALUES ($1,$2,'user','api_key.status_changed','api_key',$3,$4,$5)
+	`, principal.OrganizationID, principal.UserID, keyID.String(), auditJSON(map[string]any{"status": currentStatus}), auditJSON(map[string]any{"status": body.Status}))
+	adminOK(w, map[string]string{"status": body.Status})
+}
+
+// DeleteAPIKey 软删除 API Key,立即停止认证通过且不再出现在列表中。
+func (d ServerDeps) DeleteAPIKey(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
 	if !ok || d.requireAdmin(w, principal) != nil {
 		return
@@ -215,20 +275,21 @@ func (d ServerDeps) DisableAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tag, err := d.Pool.Exec(r.Context(), `
-		UPDATE api_keys SET status = 'disabled', updated_at = now()
-		WHERE id = $1 AND organization_id = $2 AND status = 'active'
+		UPDATE api_keys SET deleted_at = now(), updated_at = now()
+		WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
 	`, keyID, principal.OrganizationID)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "APIKEY_DISABLE_FAILED", "禁用 API Key 失败", nil)
+		adminError(w, http.StatusInternalServerError, "APIKEY_DELETE_FAILED", "删除 API Key 失败", nil)
 		return
 	}
 	if tag.RowsAffected() == 0 {
-		adminError(w, http.StatusNotFound, "APIKEY_NOT_FOUND", "API Key 不存在或已禁用", nil)
+		adminError(w, http.StatusNotFound, "APIKEY_NOT_FOUND", "API Key 不存在", nil)
 		return
 	}
 	_, _ = d.Pool.Exec(r.Context(), `
 		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id)
-		VALUES ($1,$2,'user','api_key.disabled','api_key',$3)
+		VALUES ($1,$2,'user','api_key.deleted','api_key',$3)
 	`, principal.OrganizationID, principal.UserID, keyID.String())
-	adminOK(w, map[string]string{"status": "disabled"})
+	adminOK(w, nil)
 }
+

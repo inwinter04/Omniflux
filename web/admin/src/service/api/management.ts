@@ -90,8 +90,53 @@ export function fetchCreateApiKey(params: Api.Management.CreateApiKeyParams) {
   return request<Api.Management.CreateApiKeyResult>({ url: '/api-keys', method: 'post', data: params });
 }
 
-/** Disable an API key */
-export function fetchDisableApiKey(id: string) {
-  return request<{ status: string }>({ url: `/api-keys/${id}`, method: 'delete' });
+/** Enable or disable an API key */
+export function fetchUpdateApiKeyStatus(id: string, status: 'active' | 'disabled') {
+  return request<{ status: string }>({ url: `/api-keys/${id}`, method: 'patch', data: { status } });
 }
 
+/** Soft delete an API key; authentication stops immediately and it disappears from lists */
+export function fetchDeleteApiKey(id: string) {
+  return request({ url: `/api-keys/${id}`, method: 'delete' });
+}
+
+/** Get usage summary of recent days */
+export function fetchUsageSummary(days: number) {
+  return request<Api.Management.UsageSummary>({ url: `/usage/summary?days=${days}` });
+}
+
+/** Get paged usage records */
+export function fetchUsageRecords(page: number, pageSize: number) {
+  return request<Api.Management.Paged<Api.Management.UsageRecord>>({ url: '/usage/records', params: { page, page_size: pageSize } });
+}
+
+/** Get paged audit events */
+export function fetchAuditEvents(page: number, pageSize: number) {
+  return request<Api.Management.Paged<Api.Management.AuditEvent>>({ url: '/audit-events', params: { page, page_size: pageSize } });
+}
+
+
+/** Update project name */
+export function fetchUpdateProject(id: string, params: Api.Management.UpdateProjectParams) {
+  return request({ url: `/projects/${id}`, method: 'patch', data: params });
+}
+
+/** Update application name */
+export function fetchUpdateApplication(id: string, params: Api.Management.UpdateApplicationParams) {
+  return request({ url: `/applications/${id}`, method: 'patch', data: params });
+}
+
+/** Update provider account name/region/base URL */
+export function fetchUpdateProviderAccount(id: string, params: Api.Management.UpdateProviderAccountParams) {
+  return request({ url: `/provider-accounts/${id}`, method: 'patch', data: params });
+}
+
+/** Update route policy name and scheduling params */
+export function fetchUpdateRoutePolicy(id: string, params: Api.Management.UpdateRoutePolicyParams) {
+  return request({ url: `/route-policies/${id}`, method: 'patch', data: params });
+}
+
+/** Update model service and fully replace its candidates */
+export function fetchUpdateModelService(id: string, params: Api.Management.UpdateModelServiceParams) {
+  return request({ url: `/model-services/${id}`, method: 'patch', data: params });
+}

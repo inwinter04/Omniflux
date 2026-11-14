@@ -5,11 +5,11 @@ import (
 	"errors"
 	"net/http"
 	"strings"
-
-	"github.com/go-chi/chi/v5"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/inwinter04/omniflux/internal/auth"
@@ -207,4 +207,95 @@ func (d ServerDeps) DeleteRoutePolicy(w http.ResponseWriter, r *http.Request) {
 	adminOK(w, nil)
 }
 
+type updateRoutePolicyRequest struct {
+	Name                string `json:"name"`
+	Strategy            string `json:"strategy"`
+	FallbackLimit       *int   `json:"fallback_limit"`
+	ProviderTimeoutMS   *int   `json:"provider_timeout_ms"`
+	FirstTokenTimeoutMS *int   `json:"first_token_timeout_ms"`
+}
 
+// UpdateRoutePolicy 更新路由策略名称与调度参数;weights/constraints 仍按服务端默认生效。
+func (d ServerDeps) UpdateRoutePolicy(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok || d.requireAdmin(w, principal) != nil {
+		return
+	}
+	var body updateRoutePolicyRequest
+	if !d.decodeJSON(w, r, &body) {
+		return
+	}
+	body.Name = strings.TrimSpace(body.Name)
+	if body.Name == "" {
+		adminError(w, http.StatusBadRequest, "POLICY_NAME_REQUIRED", "请填写策略名称", nil)
+		return
+	}
+	if body.Strategy == "" {
+		body.Strategy = "balanced"
+	}
+	if !allowedStrategies[body.Strategy] {
+		adminError(w, http.StatusBadRequest, "POLICY_STRATEGY_UNSUPPORTED", "不支持的策略类型", nil)
+		return
+	}
+	if body.FallbackLimit != nil && *body.FallbackLimit < 0 {
+		adminError(w, http.StatusBadRequest, "POLICY_INVALID", "fallback_limit 不能为负数", nil)
+		return
+	}
+	if body.ProviderTimeoutMS != nil && *body.ProviderTimeoutMS <= 0 {
+		adminError(w, http.StatusBadRequest, "POLICY_INVALID", "provider_timeout_ms 必须大于 0", nil)
+		return
+	}
+	if body.FirstTokenTimeoutMS != nil && *body.FirstTokenTimeoutMS <= 0 {
+		adminError(w, http.StatusBadRequest, "POLICY_INVALID", "first_token_timeout_ms 必须大于 0", nil)
+		return
+	}
+	policyID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		adminError(w, http.StatusBadRequest, "POLICY_ID_INVALID", "路由策略 ID 不合法", nil)
+		return
+	}
+	var oldName string
+	err = d.Pool.QueryRow(r.Context(), `
+		SELECT name FROM route_policies WHERE id = $1 AND organization_id = $2
+	`, policyID, principal.OrganizationID).Scan(&oldName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		adminError(w, http.StatusNotFound, "POLICY_NOT_FOUND", "路由策略不存在或不属于当前组织", nil)
+		return
+	}
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "POLICY_UPDATE_FAILED", "更新路由策略失败", nil)
+		return
+	}
+	tag, err := d.Pool.Exec(r.Context(), `
+		UPDATE route_policies SET
+			name = $3, strategy = $4,
+			fallback_limit = COALESCE($5, fallback_limit),
+			provider_timeout_ms = COALESCE($6, provider_timeout_ms),
+			first_token_timeout_ms = COALESCE($7, first_token_timeout_ms),
+			version = version + 1, updated_at = now()
+		WHERE id = $1 AND organization_id = $2
+	`, policyID, principal.OrganizationID, body.Name, body.Strategy,
+		body.FallbackLimit, body.ProviderTimeoutMS, body.FirstTokenTimeoutMS)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.ConstraintName == "route_policies_organization_id_name_key" {
+			adminError(w, http.StatusConflict, "POLICY_NAME_EXISTS", "同名路由策略已存在", nil)
+			return
+		}
+		adminError(w, http.StatusInternalServerError, "POLICY_UPDATE_FAILED", "更新路由策略失败", nil)
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		adminError(w, http.StatusNotFound, "POLICY_NOT_FOUND", "路由策略不存在或不属于当前组织", nil)
+		return
+	}
+	_, _ = d.Pool.Exec(r.Context(), `
+		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, before_state, after_state)
+		VALUES ($1,$2,'user','route_policy.updated','route_policy',$3,$4,$5)
+	`, principal.OrganizationID, principal.UserID, policyID.String(),
+		auditJSON(map[string]any{"name": oldName}),
+		auditJSON(map[string]any{"name": body.Name, "strategy": body.Strategy,
+			"fallback_limit": body.FallbackLimit, "provider_timeout_ms": body.ProviderTimeoutMS,
+			"first_token_timeout_ms": body.FirstTokenTimeoutMS}))
+	adminOK(w, nil)
+}

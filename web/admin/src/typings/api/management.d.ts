@@ -137,6 +137,92 @@ declare namespace Api {
       key: string;
       hint: string;
     }
+
+    interface UpdateProjectParams {
+      name: string;
+    }
+
+    interface UpdateApplicationParams {
+      name: string;
+    }
+
+    interface UpdateProviderAccountParams {
+      name: string;
+      region?: string;
+      base_url?: string;
+    }
+
+    interface UpdateRoutePolicyParams {
+      name: string;
+      strategy?: string;
+      fallback_limit?: number;
+      provider_timeout_ms?: number;
+      first_token_timeout_ms?: number;
+    }
+
+    type UpdateModelServiceParams = CreateModelServiceParams;
+
+    interface Paged<T> {
+      total: number;
+      page: number;
+      page_size: number;
+      records: T[];
+    }
+
+    interface UsageModelSummary {
+      provider: string;
+      upstream_model: string;
+      requests: number;
+      input_tokens: number;
+      output_tokens: number;
+      cost: string;
+    }
+
+    interface UsageDaySummary {
+      day: string;
+      requests: number;
+    }
+
+    interface UsageSummary {
+      total_requests: number;
+      success_requests: number;
+      failed_requests: number;
+      total_input_tokens: number;
+      total_output_tokens: number;
+      total_cost: string;
+      cost_currency: string;
+      by_model: UsageModelSummary[];
+      by_day: UsageDaySummary[];
+    }
+
+    interface UsageRecord {
+      id: string;
+      created_at: string;
+      project_name: string;
+      application_name: string;
+      key_name: string;
+      model_service: string;
+      state: string;
+      status_code: number | null;
+      provider: string | null;
+      upstream_model: string | null;
+      input_tokens: number;
+      output_tokens: number;
+      cost: string;
+      total_ms: number | null;
+    }
+
+    interface AuditEvent {
+      id: string;
+      created_at: string;
+      actor_type: string;
+      actor_name: string;
+      action: string;
+      resource_type: string;
+      resource_id: string | null;
+      result: string;
+    }
   }
 }
+
 
