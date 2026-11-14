@@ -15,29 +15,31 @@ import (
 )
 
 type apiKeyResponse struct {
-	ID            string     `json:"id"`
-	Name          string     `json:"name"`
-	KeyPrefix     string     `json:"key_prefix"`
-	ProjectID     string     `json:"project_id"`
-	ApplicationID string     `json:"application_id"`
-	Status        string     `json:"status"`
-	ExpiresAt     *time.Time `json:"expires_at"`
-	LastUsedAt    *time.Time `json:"last_used_at"`
-	CreatedAt     time.Time  `json:"created_at"`
+	ID              string     `json:"id"`
+	Name            string     `json:"name"`
+	KeyPrefix       string     `json:"key_prefix"`
+	ProjectID       string     `json:"project_id"`
+	ApplicationID   string     `json:"application_id"`
+	RateLimitPerMin *int       `json:"rate_limit_per_min"`
+	Status          string     `json:"status"`
+	ExpiresAt       *time.Time `json:"expires_at"`
+	LastUsedAt      *time.Time `json:"last_used_at"`
+	CreatedAt       time.Time  `json:"created_at"`
 }
 
 type createAPIKeyRequest struct {
-	Name          string     `json:"name"`
-	ProjectID     string     `json:"project_id"`
-	ApplicationID string     `json:"application_id"`
-	ExpiresAt     *time.Time `json:"expires_at"`
+	Name            string     `json:"name"`
+	ProjectID       string     `json:"project_id"`
+	ApplicationID   string     `json:"application_id"`
+	ExpiresAt       *time.Time `json:"expires_at"`
+	RateLimitPerMin *int       `json:"rate_limit_per_min"`
 }
 
 type projectResponse struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	DepartmentID  string `json:"department_id"`
-	Status        string `json:"status"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	DepartmentID string `json:"department_id"`
+	Status       string `json:"status"`
 }
 
 type applicationResponse struct {
@@ -115,7 +117,7 @@ func (d ServerDeps) APIKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := d.Pool.Query(r.Context(), `
-		SELECT id, name, key_prefix, project_id, application_id, status, expires_at, last_used_at, created_at
+		SELECT id, name, key_prefix, project_id, application_id, rate_limit_per_min, status, expires_at, last_used_at, created_at
 		FROM api_keys WHERE organization_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC
 	`, principal.OrganizationID)
 	if err != nil {
@@ -128,7 +130,7 @@ func (d ServerDeps) APIKeys(w http.ResponseWriter, r *http.Request) {
 		var item apiKeyResponse
 		var id, projectID, applicationID uuid.UUID
 		if err := rows.Scan(&id, &item.Name, &item.KeyPrefix, &projectID, &applicationID,
-			&item.Status, &item.ExpiresAt, &item.LastUsedAt, &item.CreatedAt); err != nil {
+			&item.RateLimitPerMin, &item.Status, &item.ExpiresAt, &item.LastUsedAt, &item.CreatedAt); err != nil {
 			adminError(w, http.StatusInternalServerError, "APIKEY_LIST_FAILED", "无法查询 API Key", nil)
 			return
 		}
@@ -181,6 +183,10 @@ func (d ServerDeps) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.ExpiresAt != nil && !body.ExpiresAt.After(time.Now()) {
 		adminError(w, http.StatusBadRequest, "APIKEY_EXPIRES_INVALID", "过期时间必须晚于当前时间", nil)
+		if body.RateLimitPerMin != nil && *body.RateLimitPerMin <= 0 {
+			adminError(w, http.StatusBadRequest, "APIKEY_RATE_LIMIT_INVALID", "rate_limit_per_min 必须大于 0", nil)
+			return
+		}
 		return
 	}
 	generated, err := apikeys.Generate()
@@ -191,10 +197,10 @@ func (d ServerDeps) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	secretHash := apikeys.Hash(d.APIKeyPepper, generated.Full)
 	keyID := uuid.New()
 	if _, err := d.Pool.Exec(r.Context(), `
-		INSERT INTO api_keys(id, organization_id, project_id, application_id, created_by, name, key_prefix, secret_hash, expires_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		INSERT INTO api_keys(id, organization_id, project_id, application_id, created_by, name, key_prefix, secret_hash, expires_at, rate_limit_per_min)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 	`, keyID, principal.OrganizationID, projectID, applicationID, principal.UserID,
-		body.Name, generated.Prefix, secretHash, body.ExpiresAt); err != nil {
+		body.Name, generated.Prefix, secretHash, body.ExpiresAt, body.RateLimitPerMin); err != nil {
 		adminError(w, http.StatusInternalServerError, "APIKEY_CREATE_FAILED", "创建 API Key 失败", nil)
 		return
 	}
@@ -209,22 +215,31 @@ func (d ServerDeps) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-type updateAPIKeyStatusRequest struct {
-	Status string `json:"status"`
+type updateAPIKeyRequest struct {
+	Status          *string `json:"status"`
+	RateLimitPerMin *int    `json:"rate_limit_per_min"`
 }
 
-// UpdateAPIKeyStatus 切换 API Key 启用/禁用状态;禁用立即停止认证通过。
+// UpdateAPIKeyStatus 更新 API Key 的状态与限流阈值;禁用立即停止认证通过。
 func (d ServerDeps) UpdateAPIKeyStatus(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
 	if !ok || d.requireProjectAdmin(w, principal) != nil {
 		return
 	}
-	var body updateAPIKeyStatusRequest
+	var body updateAPIKeyRequest
 	if !d.decodeJSON(w, r, &body) {
 		return
 	}
-	if body.Status != "active" && body.Status != "disabled" {
+	if body.Status != nil && *body.Status != "active" && *body.Status != "disabled" {
 		adminError(w, http.StatusBadRequest, "APIKEY_STATUS_INVALID", "status 仅支持 active 或 disabled", nil)
+		return
+	}
+	if body.RateLimitPerMin != nil && *body.RateLimitPerMin <= 0 {
+		adminError(w, http.StatusBadRequest, "APIKEY_RATE_LIMIT_INVALID", "rate_limit_per_min 必须大于 0", nil)
+		return
+	}
+	if body.Status == nil && body.RateLimitPerMin == nil {
+		adminError(w, http.StatusBadRequest, "APIKEY_NOTHING_TO_UPDATE", "status 与 rate_limit_per_min 至少提供一项", nil)
 		return
 	}
 	keyID, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -233,9 +248,10 @@ func (d ServerDeps) UpdateAPIKeyStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var currentStatus string
+	var currentRateLimit *int
 	err = d.Pool.QueryRow(r.Context(), `
-		SELECT status FROM api_keys WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
-	`, keyID, principal.OrganizationID).Scan(&currentStatus)
+		SELECT status, rate_limit_per_min FROM api_keys WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
+	`, keyID, principal.OrganizationID).Scan(&currentStatus, &currentRateLimit)
 	if errors.Is(err, pgx.ErrNoRows) {
 		adminError(w, http.StatusNotFound, "APIKEY_NOT_FOUND", "API Key 不存在", nil)
 		return
@@ -244,14 +260,15 @@ func (d ServerDeps) UpdateAPIKeyStatus(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusInternalServerError, "APIKEY_STATUS_FAILED", "更新 API Key 状态失败", nil)
 		return
 	}
-	if currentStatus == body.Status {
-		adminOK(w, map[string]string{"status": body.Status})
+	if body.Status != nil && currentStatus == *body.Status &&
+		(body.RateLimitPerMin == nil || (currentRateLimit != nil && *currentRateLimit == *body.RateLimitPerMin)) {
+		adminOK(w, map[string]string{"status": currentStatus})
 		return
 	}
 	tag, err := d.Pool.Exec(r.Context(), `
-		UPDATE api_keys SET status = $3, updated_at = now()
+		UPDATE api_keys SET status = COALESCE($3, status), rate_limit_per_min = $4, updated_at = now()
 		WHERE id = $1 AND organization_id = $2
-	`, keyID, principal.OrganizationID, body.Status)
+	`, keyID, principal.OrganizationID, body.Status, nullableIntPtr(body.RateLimitPerMin))
 	if err != nil {
 		adminError(w, http.StatusInternalServerError, "APIKEY_STATUS_FAILED", "更新 API Key 状态失败", nil)
 		return
@@ -262,9 +279,11 @@ func (d ServerDeps) UpdateAPIKeyStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	_, _ = d.Pool.Exec(r.Context(), `
 		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, before_state, after_state)
-		VALUES ($1,$2,'user','api_key.status_changed','api_key',$3,$4,$5)
-	`, principal.OrganizationID, principal.UserID, keyID.String(), auditJSON(map[string]any{"status": currentStatus}), auditJSON(map[string]any{"status": body.Status}))
-	adminOK(w, map[string]string{"status": body.Status})
+		VALUES ($1,$2,'user','api_key.updated','api_key',$3,$4,$5)
+	`, principal.OrganizationID, principal.UserID, keyID.String(),
+		auditJSON(map[string]any{"status": currentStatus, "rate_limit_per_min": currentRateLimit}),
+		auditJSON(map[string]any{"status": body.Status, "rate_limit_per_min": body.RateLimitPerMin}))
+	adminOK(w, map[string]string{"status": currentStatus})
 }
 
 // DeleteAPIKey 软删除 API Key,立即停止认证通过且不再出现在列表中。
@@ -296,7 +315,3 @@ func (d ServerDeps) DeleteAPIKey(w http.ResponseWriter, r *http.Request) {
 	`, principal.OrganizationID, principal.UserID, keyID.String())
 	adminOK(w, nil)
 }
-
-
-
-

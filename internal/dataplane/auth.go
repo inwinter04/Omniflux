@@ -15,10 +15,11 @@ import (
 
 // apiKeyContext 是通过 API Key 认证后附到请求上下文上的调用方信息。
 type apiKeyContext struct {
-	KeyID          uuid.UUID
-	OrganizationID uuid.UUID
-	ProjectID      uuid.UUID
-	ApplicationID  uuid.UUID
+	RateLimitPerMin int
+	KeyID           uuid.UUID
+	OrganizationID  uuid.UUID
+	ProjectID       uuid.UUID
+	ApplicationID   uuid.UUID
 }
 
 type apiKeyContextKey struct{}
@@ -47,9 +48,9 @@ func (d Deps) RequireAPIKey(next http.Handler) http.Handler {
 		var status string
 		var expiresAt *time.Time
 		err := d.Pool.QueryRow(r.Context(), `
-			SELECT id, organization_id, project_id, application_id, status, expires_at
+			SELECT id, organization_id, project_id, application_id, COALESCE(rate_limit_per_min, 0), status, expires_at
 			FROM api_keys WHERE secret_hash = $1 AND deleted_at IS NULL
-		`, hash).Scan(&ctxValue.KeyID, &ctxValue.OrganizationID, &ctxValue.ProjectID, &ctxValue.ApplicationID, &status, &expiresAt)
+		`, hash).Scan(&ctxValue.KeyID, &ctxValue.OrganizationID, &ctxValue.ProjectID, &ctxValue.ApplicationID, &ctxValue.RateLimitPerMin, &status, &expiresAt)
 		if errors.Is(err, pgx.ErrNoRows) {
 			apiError(w, http.StatusUnauthorized, "invalid_api_key", "API Key 不存在或已失效")
 			return
@@ -73,4 +74,3 @@ func (d Deps) RequireAPIKey(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), apiKeyContextKey{}, ctxValue)))
 	})
 }
-

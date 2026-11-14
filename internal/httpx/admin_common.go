@@ -54,3 +54,10 @@ func (d ServerDeps) decodeJSON(w http.ResponseWriter, r *http.Request, target an
 	return true
 }
 
+// nullableIntPtr 把可选限流指针转成可空参数。
+func nullableIntPtr(v *int) any {
+	if v == nil {
+		return nil
+	}
+	return *v
+}
