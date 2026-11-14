@@ -200,3 +200,8 @@ export function fetchTestProviderAccount(id: string) {
 export function fetchAuditEventDetail(id: string) {
   return request<Api.Management.AuditEventDetail>({ url: `/audit-events/${id}` });
 }
+
+/** Get home dashboard overview stats */
+export function fetchDashboard() {
+  return request<Api.Management.Dashboard>({ url: '/dashboard' });
+}

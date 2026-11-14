@@ -6,7 +6,7 @@ import { fetchCreateUser, fetchUpdateUser, fetchUsers } from '@/service/api';
 import { formatTime, statusTagType, statusText } from '@/utils/admin-status';
 
 defineOptions({
-  name: 'OrganizationUsers'
+  name: 'AccessUsers'
 });
 
 const roleText: Record<string, string> = {
@@ -226,3 +226,4 @@ onMounted(() => {
 </template>
 
 <style scoped></style>
+

@@ -229,15 +229,16 @@ const local: App.I18n.Schema = {
     organization: '组织管理',
     organization_projects: '项目',
     organization_applications: '应用',
-    'organization_api-keys': 'API Key',
-    organization_budgets: '预算',
     organization_departments: '部门',
-    organization_users: '用户',
+    access: '访问管理',
+    access_users: '用户',
+    'access_api-keys': 'API Key',
+    observability_budgets: '预算',
     'model-management': '模型管理',
     'model-management_providers': 'Provider 账号',
     'model-management_route-policies': '路由策略',
     'model-management_model-services': '模型服务',
-    observability: '观测管理',
+    observability: '运营中心',
     observability_usage: '用量报表',
     observability_audit: '审计日志'
   },
@@ -377,6 +378,10 @@ const local: App.I18n.Schema = {
 };
 
 export default local;
+
+
+
+
 
 
 

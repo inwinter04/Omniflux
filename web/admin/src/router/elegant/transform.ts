@@ -166,6 +166,9 @@ const routeMap: RouteMap = {
   "403": "/403",
   "404": "/404",
   "500": "/500",
+  "access": "/access",
+  "access_api-keys": "/access/api-keys",
+  "access_users": "/access/users",
   "home": "/home",
   "iframe-page": "/iframe-page/:url",
   "login": "/login/:module(pwd-login|code-login|register|reset-pwd|bind-wechat)?",
@@ -175,14 +178,12 @@ const routeMap: RouteMap = {
   "model-management_route-policies": "/model-management/route-policies",
   "observability": "/observability",
   "observability_audit": "/observability/audit",
+  "observability_budgets": "/observability/budgets",
   "observability_usage": "/observability/usage",
   "organization": "/organization",
-  "organization_api-keys": "/organization/api-keys",
   "organization_applications": "/organization/applications",
-  "organization_budgets": "/organization/budgets",
   "organization_departments": "/organization/departments",
-  "organization_projects": "/organization/projects",
-  "organization_users": "/organization/users"
+  "organization_projects": "/organization/projects"
 };
 
 /**

@@ -40,6 +40,41 @@ export const generatedRoutes: GeneratedRoute[] = [
     }
   },
   {
+    name: 'access',
+    path: '/access',
+    component: 'layout.base',
+    meta: {
+      title: 'access',
+      i18nKey: 'route.access',
+      order: 3,
+      icon: 'mdi:shield-account-outline'
+    },
+    children: [
+      {
+        name: 'access_api-keys',
+        path: '/access/api-keys',
+        component: 'view.access_api-keys',
+        meta: {
+          title: 'access_api-keys',
+          i18nKey: 'route.access_api-keys',
+          order: 2,
+          icon: 'mdi:key-chain-variant'
+        }
+      },
+      {
+        name: 'access_users',
+        path: '/access/users',
+        component: 'view.access_users',
+        meta: {
+          title: 'access_users',
+          i18nKey: 'route.access_users',
+          order: 1,
+          icon: 'mdi:account-group-outline'
+        }
+      }
+    ]
+  },
+  {
     name: 'home',
     path: '/home',
     component: 'layout.base$view.home',
@@ -144,6 +179,17 @@ export const generatedRoutes: GeneratedRoute[] = [
         }
       },
       {
+        name: 'observability_budgets',
+        path: '/observability/budgets',
+        component: 'view.observability_budgets',
+        meta: {
+          title: 'observability_budgets',
+          i18nKey: 'route.observability_budgets',
+          order: 1,
+          icon: 'mdi:wallet-outline'
+        }
+      },
+      {
         name: 'observability_usage',
         path: '/observability/usage',
         component: 'view.observability_usage',
@@ -168,36 +214,14 @@ export const generatedRoutes: GeneratedRoute[] = [
     },
     children: [
       {
-        name: 'organization_api-keys',
-        path: '/organization/api-keys',
-        component: 'view.organization_api-keys',
-        meta: {
-          title: 'organization_api-keys',
-          i18nKey: 'route.organization_api-keys',
-          order: 3,
-          icon: 'mdi:key-chain-variant'
-        }
-      },
-      {
         name: 'organization_applications',
         path: '/organization/applications',
         component: 'view.organization_applications',
         meta: {
           title: 'organization_applications',
           i18nKey: 'route.organization_applications',
-          order: 2,
+          order: 3,
           icon: 'mdi:application-brackets-outline'
-        }
-      },
-      {
-        name: 'organization_budgets',
-        path: '/organization/budgets',
-        component: 'view.organization_budgets',
-        meta: {
-          title: 'organization_budgets',
-          i18nKey: 'route.organization_budgets',
-          order: 4,
-          icon: 'mdi:wallet-outline'
         }
       },
       {
@@ -207,7 +231,7 @@ export const generatedRoutes: GeneratedRoute[] = [
         meta: {
           title: 'organization_departments',
           i18nKey: 'route.organization_departments',
-          order: 5,
+          order: 1,
           icon: 'mdi:division'
         }
       },
@@ -218,19 +242,8 @@ export const generatedRoutes: GeneratedRoute[] = [
         meta: {
           title: 'organization_projects',
           i18nKey: 'route.organization_projects',
-          order: 1,
+          order: 2,
           icon: 'mdi:folder-multiple-outline'
-        }
-      },
-      {
-        name: 'organization_users',
-        path: '/organization/users',
-        component: 'view.organization_users',
-        meta: {
-          title: 'organization_users',
-          i18nKey: 'route.organization_users',
-          order: 6,
-          icon: 'mdi:account-group-outline'
         }
       }
     ]

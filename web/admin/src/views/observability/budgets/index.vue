@@ -14,7 +14,7 @@ import {
 import { formatTime } from '@/utils/admin-status';
 
 defineOptions({
-  name: 'OrganizationBudgets'
+  name: 'ObservabilityBudgets'
 });
 
 const loading = ref(true);
@@ -57,6 +57,14 @@ const scopeTypeOptions = [
 ];
 
 const scopeOptions = ref<{ label: string; value: string }[]>([]);
+
+const currencyOptions = [
+  { label: 'USD - 美元', value: 'USD' },
+  { label: 'CNY - 人民币', value: 'CNY' },
+  { label: 'EUR - 欧元', value: 'EUR' },
+  { label: 'GBP - 英镑', value: 'GBP' },
+  { label: 'JPY - 日元', value: 'JPY' }
+];
 
 function reloadScopeOptions() {
   switch (formModel.scope_type) {
@@ -252,6 +260,9 @@ onMounted(() => {
         <NFormItem label="时间窗口" path="window_range">
           <NDatePicker v-model:value="formModel.window_range" type="datetimerange" clearable class="w-full" />
         </NFormItem>
+        <NFormItem label="币种" path="currency">
+          <NSelect v-model:value="formModel.currency" :options="currencyOptions" />
+        </NFormItem>
         <NFormItem label="限额" path="limit_amount">
           <NInputNumber v-model:value="formModel.limit_amount" :min="0" class="w-full" placeholder="窗口内允许的最大花费">
             <template #prefix>{{ formModel.currency }}</template>
@@ -283,3 +294,6 @@ onMounted(() => {
 </template>
 
 <style scoped></style>
+
+
+

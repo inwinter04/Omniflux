@@ -6,7 +6,7 @@ import { fetchApiKeys, fetchApplications, fetchCreateApiKey, fetchDeleteApiKey, 
 import { formatTime, statusTagType, statusText } from '@/utils/admin-status';
 
 defineOptions({
-  name: 'OrganizationApiKeys'
+  name: 'AccessApiKeys'
 });
 
 const loading = ref(true);
@@ -237,4 +237,5 @@ onMounted(() => {
 </template>
 
 <style scoped></style>
+
 

@@ -238,6 +238,19 @@ declare namespace Api {
       password?: string;
     }
 
+    interface Dashboard {
+      active_services: number;
+      active_providers: number;
+      active_api_keys: number;
+      user_count: number;
+      requests_7d: number;
+      success_rate_7d: string;
+      cost_7d: string;
+      cost_currency: string;
+      active_budgets: number;
+      exceeded_budgets: number;
+    }
+
     interface Budget {
       id: string;
       scope_type: 'organization' | 'project' | 'application' | 'api_key';
@@ -284,6 +297,9 @@ declare namespace Api {
     }
   }
 }
+
+
+
 
 
 

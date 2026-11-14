@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
+import { useRouterPush } from '@/hooks/common/router';
+import { fetchDashboard } from '@/service/api';
 import { useAuthStore } from '@/store/modules/auth';
 
 defineOptions({
@@ -7,40 +9,31 @@ defineOptions({
 });
 
 const authStore = useAuthStore();
-const ready = ref<'loading' | 'ready' | 'unavailable'>('loading');
+const { routerPush } = useRouterPush();
 
-interface Capability {
+const ready = ref<'loading' | 'ready' | 'unavailable'>('loading');
+const loading = ref(true);
+const dash = ref<Api.Management.Dashboard | null>(null);
+
+interface QuickLink {
   title: string;
   description: string;
-  state: string;
+  route: string;
 }
 
-const capabilities = ref<Capability[]>([
-  {
-    title: '统一模型网关',
-    description: 'OpenAI-compatible API、流式响应、多 Provider 接入',
-    state: '实现中'
-  },
-  {
-    title: '路由与策略决策',
-    description: '硬约束过滤、成本 / 质量 / 延迟评分、fallback 审计',
-    state: '实现中'
-  },
-  {
-    title: '预算与计量',
-    description: '预留结算模型、请求归因、成本报表',
-    state: '实现中'
-  },
-  {
-    title: '审计与可观测',
-    description: '管理变更审计、PolicyDecision、metrics / trace',
-    state: '实现中'
-  }
+const quickLinks = ref<QuickLink[]>([
+  { title: 'Provider 账号', description: '接入上游模型供应商', route: '/model-management/providers' },
+  { title: '模型服务', description: '配置业务调用的逻辑模型', route: '/model-management/model-services' },
+  { title: 'API Key', description: '为业务签发访问凭证', route: '/access/api-keys' },
+  { title: '预算', description: '设置成本控制窗口', route: '/observability/budgets' }
 ]);
+
+function go(route: string) {
+  void routerPush({ path: route });
+}
 
 async function checkReadiness() {
   ready.value = 'loading';
-
   try {
     const response = await fetch('/readyz');
     ready.value = response.ok ? 'ready' : 'unavailable';
@@ -49,8 +42,51 @@ async function checkReadiness() {
   }
 }
 
+async function loadDashboard() {
+  loading.value = true;
+  try {
+    const { data, error } = await fetchDashboard();
+    if (!error && data) {
+      dash.value = data;
+    }
+  } finally {
+    loading.value = false;
+  }
+}
+
+function statCards() {
+  return [
+    { label: '启用模型服务', value: dash.value ? String(dash.value.active_services) : '-', route: '/model-management/model-services' },
+    { label: 'Provider 账号', value: dash.value ? String(dash.value.active_providers) : '-', route: '/model-management/providers' },
+    { label: '活跃 API Key', value: dash.value ? String(dash.value.active_api_keys) : '-', route: '/access/api-keys' },
+    { label: '组织成员', value: dash.value ? String(dash.value.user_count) : '-', route: '/access/users' }
+  ];
+}
+
+function usageCards() {
+  return [
+    { label: '近 7 天请求', value: dash.value ? String(dash.value.requests_7d) : '-', route: '/observability/usage' },
+    { label: '近 7 天成功率', value: dash.value ? dash.value.success_rate_7d : '-', route: '/observability/usage' },
+    {
+      label: '近 7 天成本',
+      value: dash.value ? `${dash.value.cost_currency} ${dash.value.cost_7d}` : '-',
+      route: '/observability/usage'
+    },
+    {
+      label: '进行中预算',
+      value: dash.value
+        ? dash.value.exceeded_budgets > 0
+          ? `${dash.value.active_budgets} (超限 ${dash.value.exceeded_budgets})`
+          : String(dash.value.active_budgets)
+        : '-',
+      route: '/observability/budgets'
+    }
+  ];
+}
+
 onMounted(() => {
   void checkReadiness();
+  void loadDashboard();
 });
 </script>
 
@@ -78,19 +114,41 @@ onMounted(() => {
       </NGrid>
     </NCard>
 
-    <NGrid responsive="screen" item-responsive :x-gap="16" :y-gap="16">
-      <NGi v-for="item in capabilities" :key="item.title" span="24 s:12 m:6">
-        <NCard :bordered="false" class="h-full card-wrapper">
-          <div class="min-h-120px flex flex-col justify-between">
-            <div>
-              <h3 class="m-0 text-16px font-semibold">{{ item.title }}</h3>
-              <p class="mt-8px mb-0 text-13px text-#6b7280">{{ item.description }}</p>
-            </div>
-            <NTag size="small" round type="info">{{ item.state }}</NTag>
-          </div>
-        </NCard>
-      </NGi>
-    </NGrid>
+    <NCard title="资源概览" :bordered="false" class="card-wrapper">
+      <template #header-extra>
+        <NButton quaternary type="primary" :loading="loading" @click="loadDashboard">刷新</NButton>
+      </template>
+      <NGrid responsive="screen" item-responsive :x-gap="16" :y-gap="16">
+        <NGi v-for="card in statCards()" :key="card.label" span="24 s:12 m:6">
+          <NCard size="small" :bordered="false" class="cursor-pointer card-wrapper" @click="go(card.route)">
+            <div class="text-13px text-#6b7280">{{ card.label }}</div>
+            <div class="mt-8px text-28px font-semibold">{{ card.value }}</div>
+          </NCard>
+        </NGi>
+      </NGrid>
+    </NCard>
+
+    <NCard title="近 7 天运营" :bordered="false" class="card-wrapper">
+      <NGrid responsive="screen" item-responsive :x-gap="16" :y-gap="16">
+        <NGi v-for="card in usageCards()" :key="card.label" span="24 s:12 m:6">
+          <NCard size="small" :bordered="false" class="cursor-pointer card-wrapper" @click="go(card.route)">
+            <div class="text-13px text-#6b7280">{{ card.label }}</div>
+            <div class="mt-8px text-28px font-semibold">{{ card.value }}</div>
+          </NCard>
+        </NGi>
+      </NGrid>
+    </NCard>
+
+    <NCard title="快速入口" :bordered="false" class="card-wrapper">
+      <NGrid responsive="screen" item-responsive :x-gap="16" :y-gap="16">
+        <NGi v-for="link in quickLinks" :key="link.title" span="24 s:12 m:6">
+          <NCard size="small" :bordered="false" class="cursor-pointer card-wrapper" @click="go(link.route)">
+            <div class="text-15px font-medium">{{ link.title }}</div>
+            <p class="mt-6px mb-0 text-13px text-#6b7280">{{ link.description }}</p>
+          </NCard>
+        </NGi>
+      </NGrid>
+    </NCard>
 
     <NCard title="当前会话" :bordered="false" class="card-wrapper">
       <NDescriptions :column="1" label-placement="left" bordered>

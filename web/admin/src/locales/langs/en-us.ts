@@ -233,15 +233,16 @@ const local: App.I18n.Schema = {
     organization: 'Organization',
     organization_projects: 'Projects',
     organization_applications: 'Applications',
-    'organization_api-keys': 'API Keys',
-    organization_budgets: 'Budgets',
     organization_departments: 'Departments',
-    organization_users: 'Users',
+    access: 'Access',
+    access_users: 'Users',
+    'access_api-keys': 'API Keys',
+    observability_budgets: 'Budgets',
     'model-management': 'Model Management',
     'model-management_providers': 'Provider Accounts',
     'model-management_route-policies': 'Route Policies',
     'model-management_model-services': 'Model Services',
-    observability: 'Observability',
+    observability: 'Operations',
     observability_usage: 'Usage',
     observability_audit: 'Audit Log'
   },
@@ -381,6 +382,10 @@ const local: App.I18n.Schema = {
 };
 
 export default local;
+
+
+
+
 
 
 
