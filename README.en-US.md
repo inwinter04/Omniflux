@@ -39,7 +39,15 @@ Omniflux is under active development. Configuration, data models, and administra
 | `POST /api/v1/organizations` | Create an organization (platform admins only) |
 | `PATCH /api/v1/organizations/{id}` | Update organization name (slug is immutable) |
 
-The data-plane model APIs are under development.
+Data plane (API key bearer auth):
+
+| Endpoint | Description |
+| --- | --- |
+| `GET /v1/models` | Available model services |
+| `POST /v1/chat/completions` | OpenAI-compatible chat (streaming supported) |
+| `POST /v1/embeddings` | OpenAI-compatible embeddings |
+
+Routing applies route-policy hard constraints before scoring candidates (allowed/blocked providers, allowed/blocked upstream models, blended cost ceiling). `first_token_timeout_ms` aborts streaming requests that produce no first token in time. Budgets are post-paid: requests are rejected based on settled spend, and in-flight concurrent requests may slightly overshoot the limit. API keys support per-key rate limits (`rate_limit_per_min`) overriding the global default. Usage abandoned by server interruptions is reconciled as failed by a background maintenance job.
 
 ## Quick start
 

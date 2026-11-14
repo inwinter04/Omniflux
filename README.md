@@ -16,7 +16,7 @@ Omniflux 是一个面向企业的 AI 服务控制平面，用于把分散在多�
 - **多租户治理**：组织、部门、项目、应用、用户、角色与 API Key 分层管理。
 - **计量与归因**：按项目、应用、API Key、Provider 和模型归因请求、Token 与成本。
 - **审计与决策留痕**：管理操作、登录事件与 PolicyDecision 可追溯。
-- **可观测性**：内置 liveness/readiness 探针、结构化日志与 Prometheus metrics。
+- **可观测性**：内置 liveness/readiness 探针、结构化日志,以及覆盖请求数、延迟、Token 与成本的数据面 Prometheus 业务指标。
 - **现代管理台**：基于 Vue 3、TypeScript、Naive UI 和 SoybeanAdmin 的服务端会话管理后台。
 
 ## 架构
@@ -30,30 +30,71 @@ Omniflux 是一个面向企业的 AI 服务控制平面，用于把分散在多�
 | --- | --- |
 | `GET /livez` | 进程存活探针 |
 | `GET /readyz` | PostgreSQL、Redis 与关键依赖就绪检查 |
-| `GET /metrics` | Prometheus 指标 |
+| `GET /metrics` | Prometheus 指标(进程指标 + 数据面业务指标) |
 | `GET /admin/` | 管理控制台 |
+
+管理面(服务端会话认证,组织隔离):
+
+| 接口 | 说明 |
+| --- | --- |
 | `POST /api/v1/auth/login` | 管理员登录 |
 | `GET /api/v1/auth/me` | 获取当前管理员信息 |
 | `POST /api/v1/auth/logout` | 退出登录 |
-
+| `GET /api/v1/dashboard` | 首页统计概览 |
 | `GET /api/v1/organizations` | 组织列表(平台管理员可见全部,其余仅当前组织) |
 | `POST /api/v1/organizations` | 创建组织(仅平台管理员) |
 | `PATCH /api/v1/organizations/{id}` | 修改组织名称(slug 创建后不可变更) |
+| `GET /api/v1/departments` | 部门列表 |
+| `POST /api/v1/departments` | 创建部门 |
+| `PATCH /api/v1/departments/{id}` | 更新部门 |
+| `DELETE /api/v1/departments/{id}` | 删除部门(被项目引用时拒绝) |
 | `GET /api/v1/projects` | 项目列表 |
+| `POST /api/v1/projects` | 创建项目 |
+| `PATCH /api/v1/projects/{id}` | 更新项目 |
+| `DELETE /api/v1/projects/{id}` | 删除项目(存在应用/Key/用量时拒绝) |
 | `GET /api/v1/applications` | 应用列表 |
-| `GET /api/v1/provider-accounts` | Provider 账号列表 |
+| `POST /api/v1/applications` | 创建应用 |
+| `PATCH /api/v1/applications/{id}` | 更新应用 |
+| `DELETE /api/v1/applications/{id}` | 删除应用(存在 Key/用量时拒绝) |
+| `GET /api/v1/users` | 用户列表(需组织所有者;平台管理员可按 `organization_id` 过滤) |
+| `POST /api/v1/users` | 创建用户(平台管理员可指定归属组织) |
+| `PATCH /api/v1/users/{id}` | 更新角色/状态/密码/归属组织 |
+| `GET /api/v1/budgets` | 预算窗口列表 |
+| `POST /api/v1/budgets` | 创建预算窗口 |
+| `PATCH /api/v1/budgets/{id}` | 调整预算限额 |
+| `DELETE /api/v1/budgets/{id}` | 删除预算窗口 |
+| `GET /api/v1/provider-accounts` | Provider 账号列表(含近 24h 被动健康统计) |
 | `POST /api/v1/provider-accounts` | 创建 Provider 账号(凭据加密入库) |
+| `PATCH /api/v1/provider-accounts/{id}` | 更新 Provider 账号 |
+| `POST /api/v1/provider-accounts/{id}/test` | 手动连通性测试 |
 | `DELETE /api/v1/provider-accounts/{id}` | 删除 Provider 账号 |
 | `GET /api/v1/route-policies` | 路由策略列表 |
-| `POST /api/v1/route-policies` | 创建路由策略 |
+| `POST /api/v1/route-policies` | 创建路由策略(含硬约束) |
+| `PATCH /api/v1/route-policies/{id}` | 更新策略参数(constraints 创建后不可改) |
+| `DELETE /api/v1/route-policies/{id}` | 删除路由策略 |
 | `GET /api/v1/model-services` | 模型服务列表(含候选) |
 | `POST /api/v1/model-services` | 创建模型服务与候选 |
+| `PATCH /api/v1/model-services/{id}` | 更新模型服务(候选全量替换) |
+| `DELETE /api/v1/model-services/{id}` | 删除模型服务 |
 | `GET /api/v1/api-keys` | API Key 列表 |
-| `POST /api/v1/api-keys` | 创建 API Key(明文仅返回一次) |
-| `DELETE /api/v1/api-keys/{id}` | 禁用 API Key |
-| `POST /v1/chat/completions` | OpenAI 兼容对话接口(支持流式),使用 API Key 认证 |
+| `POST /api/v1/api-keys` | 创建 API Key(明文仅返回一次,可设置 Key 级限流) |
+| `PATCH /api/v1/api-keys/{id}` | 更新状态与 Key 级限流 |
+| `DELETE /api/v1/api-keys/{id}` | 软删除 API Key |
+| `GET /api/v1/usage/summary` | 用量汇总 |
+| `GET /api/v1/usage/records` | 用量明细分页 |
+| `GET /api/v1/audit-events` | 审计事件分页 |
+| `GET /api/v1/audit-events/{id}` | 审计事件详情 |
 
-数据面按模型服务的候选配置路由:候选按 priority 升序分组,组内按 `weights`(cost/quality/latency/reliability)评分降序排列,评分并列时按 weight 加权随机;候选的 `quality_score`(0-1,默认 0.5)参与 quality 评分,latency 与 reliability 来自近 7 天用量统计。主候选之后的候选作为 fallback 链交给上游网关处理,`fallback_limit` 与 `provider_timeout_ms` 生效。自动质量评估(EvaluationSet/EvaluationRun)将在后续版本实现。每次调用都会写入 `usage_records` 与 `policy_decisions`。
+数据面(API Key Bearer 认证):
+
+| 接口 | 说明 |
+| --- | --- |
+| `GET /v1/models` | 可用模型服务列表 |
+| `POST /v1/chat/completions` | OpenAI 兼容对话接口(支持流式) |
+| `POST /v1/embeddings` | OpenAI 兼容向量化接口 |
+数据面按模型服务的候选配置路由:绑定路由策略时先应用硬约束(`constraints`:allowed/blocked providers、allowed/blocked upstream models、混合单价上限),被排除的候选不参与路由;剩余候选按 priority 升序分组,组内按 `weights`(cost/quality/latency/reliability)评分降序排列,评分并列时按 weight 加权随机。候选的 `quality_score`(0-1,默认 0.5)参与 quality 评分,latency 与 reliability 来自近 7 天用量统计;Provider 账号的健康可见性来自近 24 小时用量统计(路由已按成功率自动降权)。主候选之后的候选作为 fallback 链交给上游网关处理,`fallback_limit` 与 `provider_timeout_ms` 生效;流式请求的 `first_token_timeout_ms` 在未收到首个 token 时中断上游并按失败定稿。自动质量评估(EvaluationSet/EvaluationRun)将在后续版本实现。每次调用都会写入 `usage_records` 与 `policy_decisions`;服务中断遗留的 pending 用量由后台维护任务按失败对账。
+
+预算采用后付口径:请求前按已结算用量拦截,请求成功后累加实际成本,并发在途请求可能小幅越过限额(与主流开源网关一致)。API Key 可配置 Key 级限流(`rate_limit_per_min`),未设置时沿用全局默认阈值;限流基于 Redis 固定窗口实现。
 
 ## 快速开始
 
@@ -83,6 +124,7 @@ docker compose up -d
 | `OMNIFLUX_API_KEY_PEPPER` | 是 | API Key 哈希 pepper，至少 32 字符 |
 | `OMNIFLUX_BOOTSTRAP_EMAIL` | 是 | 初始管理员邮箱 |
 | `OMNIFLUX_BOOTSTRAP_PASSWORD` | 是 | 初始管理员密码，至少 16 字符 |
+| `OMNIFLUX_RATE_LIMIT_PER_MIN` | 否 | 数据面全局默认限流(次/分钟),默认 `60`;API Key 的 `rate_limit_per_min` 可按 Key 覆盖 |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | 否 | OpenTelemetry OTLP endpoint |
 
 示例：

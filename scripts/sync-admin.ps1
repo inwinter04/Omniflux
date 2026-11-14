@@ -9,9 +9,8 @@ if (-not (Test-Path (Join-Path $dist 'index.html'))) {
 }
 
 if (Test-Path $target) {
-  Get-ChildItem -LiteralPath $target -Force
-    | Where-Object { $_.Name -ne '.gitkeep' }
-    | Remove-Item -Recurse -Force
+  $stale = Get-ChildItem -LiteralPath $target -Force | Where-Object { $_.Name -ne '.gitkeep' }
+  $stale | Remove-Item -Recurse -Force
 } else {
   New-Item -ItemType Directory -Path $target | Out-Null
 }
