@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -174,11 +175,13 @@ func (d Deps) loadService(ctx context.Context, orgID uuid.UUID, name string) (re
 	}
 	svc.PolicyID = policyID
 	if policyID != nil {
-		var weightsRaw []byte
+		var weightsRaw, constraintsRaw []byte
 		err = d.Pool.QueryRow(ctx, `
-			SELECT strategy, fallback_limit, provider_timeout_ms, weights FROM route_policies
+			SELECT strategy, fallback_limit, provider_timeout_ms, weights, first_token_timeout_ms, constraints
+			FROM route_policies
 			WHERE id = $1 AND status = 'active'
-		`, *policyID).Scan(&svc.Policy.Strategy, &svc.Policy.FallbackLimit, &svc.Policy.ProviderTimeoutMS, &weightsRaw)
+		`, *policyID).Scan(&svc.Policy.Strategy, &svc.Policy.FallbackLimit, &svc.Policy.ProviderTimeoutMS,
+			&weightsRaw, &svc.Policy.FirstTokenTimeoutMS, &constraintsRaw)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return svc, false, err
 		}
@@ -186,6 +189,7 @@ func (d Deps) loadService(ctx context.Context, orgID uuid.UUID, name string) (re
 			svc.Policy = defaultPolicy
 		} else {
 			svc.Policy.Weights = parsePolicyWeights(weightsRaw)
+			svc.Policy.Constraints = parsePolicyConstraints(constraintsRaw)
 		}
 	} else {
 		svc.Policy = defaultPolicy
@@ -213,6 +217,8 @@ func (d Deps) loadService(ctx context.Context, orgID uuid.UUID, name string) (re
 	if err := rows.Err(); err != nil {
 		return svc, false, err
 	}
+	// 硬约束在评分前过滤:被约束排除的候选不参与路由,也不进 fallback 链。
+	svc.Candidates = svc.Policy.Constraints.filter(svc.Candidates)
 	return svc, len(svc.Candidates) > 0, nil
 }
 
@@ -264,7 +270,10 @@ func (d Deps) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	timeout := time.Duration(svc.Policy.ProviderTimeoutMS) * time.Millisecond
-	bctx := schemas.NewBifrostContext(r.Context(), time.Now().Add(timeout))
+	// 上游调用从可取消的子 ctx 派生:首 token 看门狗用它中断卡死的流。
+	requestCtx, cancelRequest := context.WithCancel(r.Context())
+	defer cancelRequest()
+	bctx := schemas.NewBifrostContext(requestCtx, time.Now().Add(timeout))
 	req := &schemas.BifrostChatRequest{
 		Provider:  provider,
 		Model:     primary.UpstreamModel,
@@ -274,10 +283,35 @@ func (d Deps) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if meta.Stream {
-		d.handleStream(bctx, r, w, requestID, keyCtx, chain, meta.Model, req, start)
+		// first_token_timeout_ms 仅对流式生效:超时未出首字则取消上游,按失败定稿。
+		var firstTokenSeen atomic.Bool
+		if svc.Policy.FirstTokenTimeoutMS > 0 {
+			d.startFirstTokenWatchdog(requestCtx, cancelRequest, &firstTokenSeen,
+				time.Duration(svc.Policy.FirstTokenTimeoutMS)*time.Millisecond, requestID)
+		}
+		d.handleStream(bctx, requestCtx, r, w, requestID, keyCtx, chain, meta.Model, req, start, &firstTokenSeen)
 		return
 	}
 	d.handleNonStream(bctx, r, w, requestID, chain, meta.Model, req, start)
+}
+
+// startFirstTokenWatchdog 在首 token 未按时出现时取消上游调用。
+// 看门狗只做取消,结果路径由 handleStream 统一按 first_token_timeout 定稿。
+func (d Deps) startFirstTokenWatchdog(requestCtx context.Context, cancel context.CancelFunc,
+	firstTokenSeen *atomic.Bool, timeout time.Duration, requestID uuid.UUID) {
+	go func() {
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		select {
+		case <-requestCtx.Done():
+			return
+		case <-timer.C:
+			if !firstTokenSeen.Load() {
+				d.Logger.Warn("first token timeout", "request_id", requestID, "timeout_ms", timeout.Milliseconds())
+				cancel()
+			}
+		}
+	}()
 }
 
 // fallbackSpecs 把主候选之后的链转成 Bifrost 的 fallback 列表,并用 KeyID 钉住对应账号。

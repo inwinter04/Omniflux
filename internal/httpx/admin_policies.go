@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/inwinter04/omniflux/internal/auth"
+	"github.com/inwinter04/omniflux/internal/dataplane"
 )
 
 type routePolicyResponse struct {
@@ -136,6 +137,10 @@ func (d ServerDeps) CreateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 	if len(constraints) == 0 {
 		constraints = json.RawMessage("{}")
 	}
+	if err := dataplane.ValidateConstraintsJSON(constraints); err != nil {
+		adminError(w, http.StatusBadRequest, "POLICY_CONSTRAINTS_INVALID", err.Error(), nil)
+		return
+	}
 	weights := body.Weights
 	if len(weights) == 0 {
 		// strategy 是权重预设入口:未显式给 weights 时按策略类型写入对应预设。
@@ -228,7 +233,7 @@ type updateRoutePolicyRequest struct {
 	FirstTokenTimeoutMS *int   `json:"first_token_timeout_ms"`
 }
 
-// UpdateRoutePolicy 更新路由策略名称与调度参数;weights/constraints 仍按服务端默认生效。
+// UpdateRoutePolicy 更新路由策略名称与调度参数;weights 真实生效,constraints 由数据面硬过滤执行。
 func (d ServerDeps) UpdateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
 	if !ok || d.requireProjectAdmin(w, principal) != nil {
@@ -314,5 +319,3 @@ func (d ServerDeps) UpdateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 			"first_token_timeout_ms": body.FirstTokenTimeoutMS}))
 	adminOK(w, nil)
 }
-
-

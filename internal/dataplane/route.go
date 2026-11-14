@@ -35,10 +35,12 @@ type policyWeights struct {
 // routePolicy 是数据面路由真正读取的策略字段。
 // strategy 字段只在管理端写入 weights 时作为预设模板,调度只认 weights。
 type routePolicy struct {
-	Strategy          string
-	Weights           policyWeights
-	FallbackLimit     int
-	ProviderTimeoutMS int
+	Strategy            string
+	Weights             policyWeights
+	FallbackLimit       int
+	ProviderTimeoutMS   int
+	FirstTokenTimeoutMS int
+	Constraints         policyConstraints
 }
 
 var defaultPolicy = routePolicy{

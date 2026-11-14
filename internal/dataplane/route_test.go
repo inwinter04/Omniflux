@@ -144,3 +144,90 @@ func TestFindCandidateMapsProvider(t *testing.T) {
 		t.Fatal("findCandidate should fail for unknown upstream model")
 	}
 }
+
+func TestConstraintsFilter(t *testing.T) {
+	openai := testCandidate("openai-m", 1, 1, 10, 10, 0.5)
+	openai.Provider = "openai"
+	anthropic := testCandidate("anthropic-m", 1, 1, 10, 10, 0.5)
+	anthropic.Provider = "anthropic"
+	expensive := testCandidate("expensive-m", 1, 1, 40, 40, 0.5)
+
+	cases := []struct {
+		name        string
+		constraints string
+		expect      []string
+	}{
+		{
+			name:        "no constraints keeps all",
+			constraints: `{}`,
+			expect:      []string{"model-openai-m", "model-anthropic-m", "model-expensive-m"},
+		},
+		{
+			name:        "allowed providers whitelist",
+			constraints: `{"allowed_providers":["openai"]}`,
+			expect:      []string{"model-openai-m"},
+		},
+		{
+			name:        "blocked providers",
+			constraints: `{"blocked_providers":["anthropic"]}`,
+			expect:      []string{"model-openai-m", "model-expensive-m"},
+		},
+		{
+			name:        "allowed upstream models",
+			constraints: `{"allowed_upstream_models":["model-anthropic-m"]}`,
+			expect:      []string{"model-anthropic-m"},
+		},
+		{
+			name:        "max cost per million",
+			constraints: `{"max_cost_per_million":20}`,
+			expect:      []string{"model-openai-m", "model-anthropic-m"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := parsePolicyConstraints([]byte(tc.constraints))
+			got := c.filter(routeChain{openai, anthropic, expensive})
+			if len(got) != len(tc.expect) {
+				t.Fatalf("filter kept %d candidates, want %d", len(got), len(tc.expect))
+			}
+			for i, want := range tc.expect {
+				if got[i].UpstreamModel != want {
+					t.Fatalf("filtered[%d] = %s, want %s", i, got[i].UpstreamModel, want)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateConstraintsJSON(t *testing.T) {
+	if err := ValidateConstraintsJSON(nil); err != nil {
+		t.Fatalf("nil constraints should pass, got %v", err)
+	}
+	if err := ValidateConstraintsJSON([]byte(`{}`)); err != nil {
+		t.Fatalf("empty constraints should pass, got %v", err)
+	}
+	if err := ValidateConstraintsJSON([]byte(`{"allowed_providers":["openai"],"max_cost_per_million":10.5}`)); err != nil {
+		t.Fatalf("valid constraints rejected: %v", err)
+	}
+	if err := ValidateConstraintsJSON([]byte(`{"unknown_key":true}`)); err == nil {
+		t.Fatal("unknown key should be rejected")
+	}
+	if err := ValidateConstraintsJSON([]byte(`{"max_cost_per_million":-1}`)); err == nil {
+		t.Fatal("negative cost should be rejected")
+	}
+	if err := ValidateConstraintsJSON([]byte(`{"allowed_providers":"openai"}`)); err == nil {
+		t.Fatal("non-array providers should be rejected")
+	}
+}
+
+func TestLoadServiceAppliesConstraints(t *testing.T) {
+	// 约束过滤发生在 loadService 内:被过滤到 0 个候选时视为服务不可用。
+	cheap := testCandidate("cheap", 1, 1, 10, 10, 0.5)
+	expensive := testCandidate("expensive", 1, 1, 40, 40, 0.5)
+	c := parsePolicyConstraints([]byte(`{"max_cost_per_million":20}`))
+	filtered := c.filter(routeChain{cheap, expensive})
+	if len(filtered) != 1 || filtered[0].UpstreamModel != "model-cheap" {
+		t.Fatalf("constraint filter should keep only cheap candidate, got %d", len(filtered))
+	}
+}

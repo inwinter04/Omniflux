@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,11 +29,18 @@ type chatStreamChoice struct {
 
 // handleStream 调用上游并把流式 chunk 转成 SSE 输出;结束时定稿用量。
 // 客户端断开记 interrupted;上游报错记 failed 并在流内输出错误事件。
-func (d Deps) handleStream(bctx *schemas.BifrostContext, r *http.Request, w http.ResponseWriter,
+func (d Deps) handleStream(bctx *schemas.BifrostContext, streamCtx context.Context, r *http.Request, w http.ResponseWriter,
 	requestID uuid.UUID, keyCtx apiKeyContext, chain routeChain, requestedModel string,
-	req *schemas.BifrostChatRequest, start time.Time) {
+	req *schemas.BifrostChatRequest, start time.Time, firstTokenSeen *atomic.Bool) {
 	stream, bifrostErr := d.Engine.Client().ChatCompletionStreamRequest(bctx, req)
 	if bifrostErr != nil {
+		// 看门狗在建立流阶段取消(非客户端断开):按首 token 超时定稿,不记上游错误。
+		if streamCtx.Err() != nil && r.Context().Err() == nil && firstTokenSeen != nil && !firstTokenSeen.Load() {
+			d.recordFirstTokenTimeout(r.Context(), requestID, chain, start)
+			apiError(w, http.StatusGatewayTimeout, "timeout",
+				"上游未在 first_token_timeout_ms 内返回首个 token")
+			return
+		}
 		d.recordFailure(r.Context(), requestID, chain, bifrostErr, start, nil, usageSnapshot{})
 		writeBifrostError(w, bifrostErr)
 		return
@@ -98,6 +106,7 @@ func (d Deps) handleStream(bctx *schemas.BifrostContext, r *http.Request, w http
 			if choice.Delta != nil && choice.Delta.Content != nil && *choice.Delta.Content != "" && firstTokenMS == nil {
 				elapsed := int(time.Since(start).Milliseconds())
 				firstTokenMS = &elapsed
+				firstTokenSeen.Store(true)
 			}
 			outChunk.Choices = append(outChunk.Choices, chatStreamChoice{Index: i, Delta: choice.Delta, FinishReason: choice.FinishReason})
 		}
@@ -115,6 +124,18 @@ func (d Deps) handleStream(bctx *schemas.BifrostContext, r *http.Request, w http
 
 	if interrupted {
 		d.recordInterrupted(r.Context(), requestID, chain, start, firstTokenMS, snapshot)
+		return
+	}
+	if streamCtx.Err() != nil && firstTokenMS == nil {
+		// 看门狗取消且没有收到任何内容:按首 token 超时定稿并在流内输出错误事件。
+		d.recordFirstTokenTimeout(r.Context(), requestID, chain, start)
+		errorPayload, _ := json.Marshal(map[string]any{"error": map[string]any{
+			"type":    "timeout",
+			"message": "上游未在 first_token_timeout_ms 内返回首个 token",
+		}})
+		_ = writeEvent(errorPayload)
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		flusher.Flush()
 		return
 	}
 	if streamErr != nil {
@@ -149,6 +170,24 @@ func (d Deps) handleStream(bctx *schemas.BifrostContext, r *http.Request, w http
 	flusher.Flush()
 
 	d.recordStreamSuccess(r.Context(), requestID, keyCtx, chain, servedProvider, servedModel, start, firstTokenMS, snapshot)
+}
+
+// recordFirstTokenTimeout 定稿一次首 token 超时的流式请求。
+func (d Deps) recordFirstTokenTimeout(ctx context.Context, requestID uuid.UUID, chain routeChain, start time.Time) {
+	total := int(time.Since(start).Milliseconds())
+	primary := chain[0]
+	store := usageStore{pool: d.Pool}
+	if err := store.finalize(context.WithoutCancel(ctx), requestID, finalUsage{
+		State:        "failed",
+		StatusCode:   intPtr(http.StatusGatewayTimeout),
+		Provider:     stringPtr(primary.Provider),
+		TotalMS:      total,
+		ErrorType:    stringPtr("first_token_timeout"),
+		ErrorMessage: stringPtr("上游未在 first_token_timeout_ms 内返回首个 token"),
+		AttemptTrail: attemptTrailJSON(chain, candidate{}, "failed", "first_token_timeout"),
+	}); err != nil {
+		d.Logger.Warn("finalize first token timeout usage failed", "request_id", requestID, "error", err)
+	}
 }
 
 // recordStreamSuccess 定稿一次成功的流式请求。
@@ -220,6 +259,3 @@ func errorMessageOf(err *schemas.BifrostError) string {
 	}
 	return "upstream request failed"
 }
-
-
-
