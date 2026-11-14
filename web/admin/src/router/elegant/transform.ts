@@ -180,7 +180,9 @@ const routeMap: RouteMap = {
   "organization_api-keys": "/organization/api-keys",
   "organization_applications": "/organization/applications",
   "organization_budgets": "/organization/budgets",
-  "organization_projects": "/organization/projects"
+  "organization_departments": "/organization/departments",
+  "organization_projects": "/organization/projects",
+  "organization_users": "/organization/users"
 };
 
 /**

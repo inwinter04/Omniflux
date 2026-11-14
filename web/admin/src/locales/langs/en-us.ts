@@ -235,6 +235,8 @@ const local: App.I18n.Schema = {
     organization_applications: 'Applications',
     'organization_api-keys': 'API Keys',
     organization_budgets: 'Budgets',
+    organization_departments: 'Departments',
+    organization_users: 'Users',
     'model-management': 'Model Management',
     'model-management_providers': 'Provider Accounts',
     'model-management_route-policies': 'Route Policies',
@@ -379,6 +381,7 @@ const local: App.I18n.Schema = {
 };
 
 export default local;
+
 
 
 

@@ -78,7 +78,7 @@ func parsePaging(r *http.Request) (int, int) {
 // UsageSummary 返回近 N 天的请求/Token/成本汇总,默认 7 天,上限 90 天。
 func (d ServerDeps) UsageSummary(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireAdmin(w, principal) != nil {
+	if !ok || d.requireViewer(w, principal) != nil {
 		return
 	}
 	days, err := strconv.Atoi(r.URL.Query().Get("days"))
@@ -154,7 +154,7 @@ func (d ServerDeps) UsageSummary(w http.ResponseWriter, r *http.Request) {
 // UsageRecords 返回用量明细分页,按时间倒序,附带项目/应用/Key/模型的业务名称。
 func (d ServerDeps) UsageRecords(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireAdmin(w, principal) != nil {
+	if !ok || d.requireViewer(w, principal) != nil {
 		return
 	}
 	page, pageSize := parsePaging(r)
@@ -222,7 +222,7 @@ type auditEventsPage struct {
 // AuditEvents 返回当前组织审计事件分页,按时间倒序,actor 显示业务身份。
 func (d ServerDeps) AuditEvents(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireAdmin(w, principal) != nil {
+	if !ok || d.requireViewer(w, principal) != nil {
 		return
 	}
 	page, pageSize := parsePaging(r)
@@ -263,4 +263,5 @@ func (d ServerDeps) AuditEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	adminOK(w, result)
 }
+
 

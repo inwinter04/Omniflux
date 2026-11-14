@@ -16,6 +16,33 @@ func (d ServerDeps) requireAdmin(w http.ResponseWriter, principal auth.Principal
 	return nil
 }
 
+// requireViewer 校验至少是 viewer,用于只读接口。
+func (d ServerDeps) requireViewer(w http.ResponseWriter, principal auth.Principal) error {
+	if err := auth.RequireRole(principal, "viewer"); err != nil {
+		adminError(w, http.StatusForbidden, "PERMISSION_DENIED", "需要至少查看者权限", nil)
+		return err
+	}
+	return nil
+}
+
+// requireProjectAdmin 校验至少是 project_admin,用于业务资源写接口。
+func (d ServerDeps) requireProjectAdmin(w http.ResponseWriter, principal auth.Principal) error {
+	if err := auth.RequireRole(principal, "project_admin"); err != nil {
+		adminError(w, http.StatusForbidden, "PERMISSION_DENIED", "需要项目管理员权限", nil)
+		return err
+	}
+	return nil
+}
+
+// requireOwner 校验至少是 org_owner,用于用户管理等最高权限接口。
+func (d ServerDeps) requireOwner(w http.ResponseWriter, principal auth.Principal) error {
+	if err := auth.RequireRole(principal, "org_owner"); err != nil {
+		adminError(w, http.StatusForbidden, "PERMISSION_DENIED", "需要组织所有者权限", nil)
+		return err
+	}
+	return nil
+}
+
 // decodeJSON 解析请求体;失败时写出 400。
 func (d ServerDeps) decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024*1024))
@@ -26,3 +53,4 @@ func (d ServerDeps) decodeJSON(w http.ResponseWriter, r *http.Request, target an
 	}
 	return true
 }
+

@@ -160,3 +160,33 @@ export function fetchUpdateBudget(id: string, limitAmount: string) {
 export function fetchDeleteBudget(id: string) {
   return request({ url: `/budgets/${id}`, method: 'delete' });
 }
+
+/** Create a department; requires org admin */
+export function fetchCreateDepartment(params: Api.Management.CreateDepartmentParams) {
+  return request<{ id: string }>({ url: '/departments', method: 'post', data: params });
+}
+
+/** Update department name */
+export function fetchUpdateDepartment(id: string, params: Api.Management.CreateDepartmentParams) {
+  return request({ url: `/departments/${id}`, method: 'patch', data: params });
+}
+
+/** Delete a department; blocked when projects reference it */
+export function fetchDeleteDepartment(id: string) {
+  return request({ url: `/departments/${id}`, method: 'delete' });
+}
+
+/** Get users of the current organization; requires org owner */
+export function fetchUsers() {
+  return request<Api.Management.User[]>({ url: '/users' });
+}
+
+/** Create a user; requires org owner */
+export function fetchCreateUser(params: Api.Management.CreateUserParams) {
+  return request<{ id: string }>({ url: '/users', method: 'post', data: params });
+}
+
+/** Update user role/status or reset password; requires org owner */
+export function fetchUpdateUser(id: string, params: Api.Management.UpdateUserParams) {
+  return request({ url: `/users/${id}`, method: 'patch', data: params });
+}

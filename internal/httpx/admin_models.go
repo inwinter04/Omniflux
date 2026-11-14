@@ -55,7 +55,7 @@ type createModelServiceRequest struct {
 // ModelServices 返回当前组织的模型服务列表(含候选)。
 func (d ServerDeps) ModelServices(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireAdmin(w, principal) != nil {
+	if !ok || d.requireViewer(w, principal) != nil {
 		return
 	}
 	svcRows, err := d.Pool.Query(r.Context(), `
@@ -127,7 +127,7 @@ func (d ServerDeps) ModelServices(w http.ResponseWriter, r *http.Request) {
 // CreateModelService 创建模型服务与候选;候选引用的账号必须属于当前组织。
 func (d ServerDeps) CreateModelService(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireAdmin(w, principal) != nil {
+	if !ok || d.requireProjectAdmin(w, principal) != nil {
 		return
 	}
 	var body createModelServiceRequest
@@ -243,7 +243,7 @@ func nullablePolicyID(id *uuid.UUID) any {
 // DeleteModelService 删除模型服务;存在用量记录时拒绝,否则连同候选一起删除。
 func (d ServerDeps) DeleteModelService(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireAdmin(w, principal) != nil {
+	if !ok || d.requireProjectAdmin(w, principal) != nil {
 		return
 	}
 	serviceID, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -289,7 +289,7 @@ func (d ServerDeps) DeleteModelService(w http.ResponseWriter, r *http.Request) {
 // UpdateModelService 更新服务名称/绑定策略,并用提交的候选全量替换现有候选。
 func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireAdmin(w, principal) != nil {
+	if !ok || d.requireProjectAdmin(w, principal) != nil {
 		return
 	}
 	serviceID, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -424,4 +424,5 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 	}
 	adminOK(w, nil)
 }
+
 

@@ -77,7 +77,7 @@ func amountValid(raw string) bool {
 // Budgets 返回当前组织的预算窗口列表,附带 scope 业务名称。
 func (d ServerDeps) Budgets(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireAdmin(w, principal) != nil {
+	if !ok || d.requireViewer(w, principal) != nil {
 		return
 	}
 	rows, err := d.Pool.Query(r.Context(), `
@@ -117,7 +117,7 @@ func (d ServerDeps) Budgets(w http.ResponseWriter, r *http.Request) {
 // CreateBudget 创建预算窗口;scope 必须属于当前组织,时间窗必须有效。
 func (d ServerDeps) CreateBudget(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireAdmin(w, principal) != nil {
+	if !ok || d.requireProjectAdmin(w, principal) != nil {
 		return
 	}
 	var body createBudgetRequest
@@ -180,7 +180,7 @@ func (d ServerDeps) CreateBudget(w http.ResponseWriter, r *http.Request) {
 // UpdateBudget 调整预算限额。
 func (d ServerDeps) UpdateBudget(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireAdmin(w, principal) != nil {
+	if !ok || d.requireProjectAdmin(w, principal) != nil {
 		return
 	}
 	var body updateBudgetRequest
@@ -225,7 +225,7 @@ func (d ServerDeps) UpdateBudget(w http.ResponseWriter, r *http.Request) {
 // DeleteBudget 删除预算窗口;已有结算记录时数据库外键会拒绝,提前检查并提示。
 func (d ServerDeps) DeleteBudget(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireAdmin(w, principal) != nil {
+	if !ok || d.requireProjectAdmin(w, principal) != nil {
 		return
 	}
 	budgetID, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -266,5 +266,6 @@ func (d ServerDeps) DeleteBudget(w http.ResponseWriter, r *http.Request) {
 	`, principal.OrganizationID, principal.UserID, budgetID.String())
 	adminOK(w, nil)
 }
+
 
 

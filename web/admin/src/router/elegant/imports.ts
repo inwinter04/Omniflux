@@ -29,5 +29,7 @@ export const views: Record<LastLevelRouteKey, RouteComponent | (() => Promise<Ro
   "organization_api-keys": () => import("@/views/organization/api-keys/index.vue"),
   organization_applications: () => import("@/views/organization/applications/index.vue"),
   organization_budgets: () => import("@/views/organization/budgets/index.vue"),
+  organization_departments: () => import("@/views/organization/departments/index.vue"),
   organization_projects: () => import("@/views/organization/projects/index.vue"),
+  organization_users: () => import("@/views/organization/users/index.vue"),
 };

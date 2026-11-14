@@ -201,6 +201,17 @@ export const generatedRoutes: GeneratedRoute[] = [
         }
       },
       {
+        name: 'organization_departments',
+        path: '/organization/departments',
+        component: 'view.organization_departments',
+        meta: {
+          title: 'organization_departments',
+          i18nKey: 'route.organization_departments',
+          order: 5,
+          icon: 'mdi:division'
+        }
+      },
+      {
         name: 'organization_projects',
         path: '/organization/projects',
         component: 'view.organization_projects',
@@ -209,6 +220,17 @@ export const generatedRoutes: GeneratedRoute[] = [
           i18nKey: 'route.organization_projects',
           order: 1,
           icon: 'mdi:folder-multiple-outline'
+        }
+      },
+      {
+        name: 'organization_users',
+        path: '/organization/users',
+        component: 'view.organization_users',
+        meta: {
+          title: 'organization_users',
+          i18nKey: 'route.organization_users',
+          order: 6,
+          icon: 'mdi:account-group-outline'
         }
       }
     ]

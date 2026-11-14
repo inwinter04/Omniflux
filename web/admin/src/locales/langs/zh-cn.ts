@@ -231,6 +231,8 @@ const local: App.I18n.Schema = {
     organization_applications: '应用',
     'organization_api-keys': 'API Key',
     organization_budgets: '预算',
+    organization_departments: '部门',
+    organization_users: '用户',
     'model-management': '模型管理',
     'model-management_providers': 'Provider 账号',
     'model-management_route-policies': '路由策略',
@@ -375,6 +377,7 @@ const local: App.I18n.Schema = {
 };
 
 export default local;
+
 
 
 

@@ -212,6 +212,31 @@ declare namespace Api {
       total_ms: number | null;
     }
 
+    interface CreateDepartmentParams {
+      name: string;
+    }
+
+    interface User {
+      id: string;
+      email: string;
+      role: string;
+      status: string;
+      last_login_at: string | null;
+      created_at: string;
+    }
+
+    interface CreateUserParams {
+      email: string;
+      password: string;
+      role: string;
+    }
+
+    interface UpdateUserParams {
+      role?: string;
+      status?: string;
+      password?: string;
+    }
+
     interface Budget {
       id: string;
       scope_type: 'organization' | 'project' | 'application' | 'api_key';
@@ -246,6 +271,7 @@ declare namespace Api {
     }
   }
 }
+
 
 
 

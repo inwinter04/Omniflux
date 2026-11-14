@@ -57,7 +57,7 @@ func strategyWeights(strategy string) string {
 // RoutePolicies 返回当前组织的路由策略列表。
 func (d ServerDeps) RoutePolicies(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireAdmin(w, principal) != nil {
+	if !ok || d.requireViewer(w, principal) != nil {
 		return
 	}
 	rows, err := d.Pool.Query(r.Context(), `
@@ -89,7 +89,7 @@ func (d ServerDeps) RoutePolicies(w http.ResponseWriter, r *http.Request) {
 // CreateRoutePolicy 创建路由策略。评分字段当前由默认权重生效,创建时保存原始配置。
 func (d ServerDeps) CreateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireAdmin(w, principal) != nil {
+	if !ok || d.requireProjectAdmin(w, principal) != nil {
 		return
 	}
 	var body createRoutePolicyRequest
@@ -166,7 +166,7 @@ func (d ServerDeps) CreateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 // DeleteRoutePolicy 删除路由策略;被模型服务引用或存在策略决策记录时拒绝。
 func (d ServerDeps) DeleteRoutePolicy(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireAdmin(w, principal) != nil {
+	if !ok || d.requireProjectAdmin(w, principal) != nil {
 		return
 	}
 	policyID, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -231,7 +231,7 @@ type updateRoutePolicyRequest struct {
 // UpdateRoutePolicy 更新路由策略名称与调度参数;weights/constraints 仍按服务端默认生效。
 func (d ServerDeps) UpdateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireAdmin(w, principal) != nil {
+	if !ok || d.requireProjectAdmin(w, principal) != nil {
 		return
 	}
 	var body updateRoutePolicyRequest
@@ -314,4 +314,5 @@ func (d ServerDeps) UpdateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 			"first_token_timeout_ms": body.FirstTokenTimeoutMS}))
 	adminOK(w, nil)
 }
+
 

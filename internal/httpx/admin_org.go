@@ -31,7 +31,7 @@ type createApplicationRequest struct {
 // Departments 返回当前组织的部门列表,供项目创建与展示使用。
 func (d ServerDeps) Departments(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireAdmin(w, principal) != nil {
+	if !ok || d.requireViewer(w, principal) != nil {
 		return
 	}
 	rows, err := d.Pool.Query(r.Context(), `
@@ -60,7 +60,7 @@ func (d ServerDeps) Departments(w http.ResponseWriter, r *http.Request) {
 // CreateProject 在指定部门下创建项目。
 func (d ServerDeps) CreateProject(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireAdmin(w, principal) != nil {
+	if !ok || d.requireProjectAdmin(w, principal) != nil {
 		return
 	}
 	var body createProjectRequest
@@ -111,7 +111,7 @@ func (d ServerDeps) CreateProject(w http.ResponseWriter, r *http.Request) {
 // DeleteProject 删除项目;存在关联应用、API Key 或用量记录时拒绝,避免级联删除业务数据。
 func (d ServerDeps) DeleteProject(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireAdmin(w, principal) != nil {
+	if !ok || d.requireProjectAdmin(w, principal) != nil {
 		return
 	}
 	projectID, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -180,7 +180,7 @@ func (d ServerDeps) DeleteProject(w http.ResponseWriter, r *http.Request) {
 // CreateApplication 在指定项目下创建应用。
 func (d ServerDeps) CreateApplication(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireAdmin(w, principal) != nil {
+	if !ok || d.requireProjectAdmin(w, principal) != nil {
 		return
 	}
 	var body createApplicationRequest
@@ -231,7 +231,7 @@ func (d ServerDeps) CreateApplication(w http.ResponseWriter, r *http.Request) {
 // DeleteApplication 删除应用;存在关联 API Key 或用量记录时拒绝。
 func (d ServerDeps) DeleteApplication(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireAdmin(w, principal) != nil {
+	if !ok || d.requireProjectAdmin(w, principal) != nil {
 		return
 	}
 	applicationID, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -296,7 +296,7 @@ type updateProjectRequest struct {
 // UpdateProject 更新项目名称。
 func (d ServerDeps) UpdateProject(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireAdmin(w, principal) != nil {
+	if !ok || d.requireProjectAdmin(w, principal) != nil {
 		return
 	}
 	var body updateProjectRequest
@@ -350,7 +350,7 @@ type updateApplicationRequest struct {
 // UpdateApplication 更新应用名称。
 func (d ServerDeps) UpdateApplication(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireAdmin(w, principal) != nil {
+	if !ok || d.requireProjectAdmin(w, principal) != nil {
 		return
 	}
 	var body updateApplicationRequest
@@ -403,3 +403,138 @@ var _ = pgx.ErrNoRows
 
 
 
+
+
+type createDepartmentRequest struct {
+	Name string `json:"name"`
+}
+
+// CreateDepartment 创建部门;需要组织管理员权限。
+func (d ServerDeps) CreateDepartment(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok || d.requireAdmin(w, principal) != nil {
+		return
+	}
+	var body createDepartmentRequest
+	if !d.decodeJSON(w, r, &body) {
+		return
+	}
+	body.Name = strings.TrimSpace(body.Name)
+	if body.Name == "" {
+		adminError(w, http.StatusBadRequest, "DEPARTMENT_NAME_REQUIRED", "请填写部门名称", nil)
+		return
+	}
+	departmentID := uuid.New()
+	if _, err := d.Pool.Exec(r.Context(), `
+		INSERT INTO departments(id, organization_id, name) VALUES ($1,$2,$3)
+	`, departmentID, principal.OrganizationID, body.Name); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.ConstraintName == "departments_organization_id_name_key" {
+			adminError(w, http.StatusConflict, "DEPARTMENT_NAME_EXISTS", "同名部门已存在", nil)
+			return
+		}
+		adminError(w, http.StatusInternalServerError, "DEPARTMENT_CREATE_FAILED", "创建部门失败", nil)
+		return
+	}
+	_, _ = d.Pool.Exec(r.Context(), `
+		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, after_state)
+		VALUES ($1,$2,'user','department.created','department',$3,$4)
+	`, principal.OrganizationID, principal.UserID, departmentID.String(), auditJSON(map[string]any{"name": body.Name}))
+	adminOK(w, map[string]string{"id": departmentID.String()})
+}
+
+// UpdateDepartment 更新部门名称。
+func (d ServerDeps) UpdateDepartment(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok || d.requireAdmin(w, principal) != nil {
+		return
+	}
+	var body createDepartmentRequest
+	if !d.decodeJSON(w, r, &body) {
+		return
+	}
+	body.Name = strings.TrimSpace(body.Name)
+	if body.Name == "" {
+		adminError(w, http.StatusBadRequest, "DEPARTMENT_NAME_REQUIRED", "请填写部门名称", nil)
+		return
+	}
+	departmentID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		adminError(w, http.StatusBadRequest, "DEPARTMENT_ID_INVALID", "部门 ID 不合法", nil)
+		return
+	}
+	var oldName string
+	err = d.Pool.QueryRow(r.Context(), `
+		SELECT name FROM departments WHERE id = $1 AND organization_id = $2
+	`, departmentID, principal.OrganizationID).Scan(&oldName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		adminError(w, http.StatusNotFound, "DEPARTMENT_NOT_FOUND", "部门不存在或不属于当前组织", nil)
+		return
+	}
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "DEPARTMENT_UPDATE_FAILED", "更新部门失败", nil)
+		return
+	}
+	if _, err := d.Pool.Exec(r.Context(), `
+		UPDATE departments SET name = $3 WHERE id = $1 AND organization_id = $2
+	`, departmentID, principal.OrganizationID, body.Name); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.ConstraintName == "departments_organization_id_name_key" {
+			adminError(w, http.StatusConflict, "DEPARTMENT_NAME_EXISTS", "同名部门已存在", nil)
+			return
+		}
+		adminError(w, http.StatusInternalServerError, "DEPARTMENT_UPDATE_FAILED", "更新部门失败", nil)
+		return
+	}
+	_, _ = d.Pool.Exec(r.Context(), `
+		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, before_state, after_state)
+		VALUES ($1,$2,'user','department.updated','department',$3,$4,$5)
+	`, principal.OrganizationID, principal.UserID, departmentID.String(),
+		auditJSON(map[string]any{"name": oldName}), auditJSON(map[string]any{"name": body.Name}))
+	adminOK(w, nil)
+}
+
+// DeleteDepartment 删除部门;存在关联项目时拒绝(FK RESTRICT 保证)。
+func (d ServerDeps) DeleteDepartment(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok || d.requireAdmin(w, principal) != nil {
+		return
+	}
+	departmentID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		adminError(w, http.StatusBadRequest, "DEPARTMENT_ID_INVALID", "部门 ID 不合法", nil)
+		return
+	}
+	var exists bool
+	if err := d.Pool.QueryRow(r.Context(), `
+		SELECT EXISTS (SELECT 1 FROM departments WHERE id = $1 AND organization_id = $2)
+	`, departmentID, principal.OrganizationID).Scan(&exists); err != nil {
+		adminError(w, http.StatusInternalServerError, "DEPARTMENT_DELETE_FAILED", "删除部门失败", nil)
+		return
+	}
+	if !exists {
+		adminError(w, http.StatusNotFound, "DEPARTMENT_NOT_FOUND", "部门不存在或不属于当前组织", nil)
+		return
+	}
+	var projectCount int
+	if err := d.Pool.QueryRow(r.Context(), `
+		SELECT count(*) FROM projects WHERE department_id = $1
+	`, departmentID).Scan(&projectCount); err != nil {
+		adminError(w, http.StatusInternalServerError, "DEPARTMENT_DELETE_FAILED", "删除部门失败", nil)
+		return
+	}
+	if projectCount > 0 {
+		adminError(w, http.StatusConflict, "DEPARTMENT_HAS_PROJECTS",
+			"部门下存在项目,请先处理项目后再删除部门", nil)
+		return
+	}
+	if _, err := d.Pool.Exec(r.Context(), `DELETE FROM departments WHERE id = $1`, departmentID); err != nil {
+		adminError(w, http.StatusInternalServerError, "DEPARTMENT_DELETE_FAILED", "删除部门失败", nil)
+		return
+	}
+	_, _ = d.Pool.Exec(r.Context(), `
+		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id)
+		VALUES ($1,$2,'user','department.deleted','department',$3)
+	`, principal.OrganizationID, principal.UserID, departmentID.String())
+	adminOK(w, nil)
+}

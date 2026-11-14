@@ -38,6 +38,8 @@ export function setupElegantRouter() {
         organization_applications: 2,
         'organization_api-keys': 3,
         organization_budgets: 4,
+        organization_departments: 5,
+        organization_users: 6,
         'model-management': 3,
         'model-management_providers': 1,
         'model-management_route-policies': 2,
@@ -54,6 +56,8 @@ export function setupElegantRouter() {
         organization_applications: 'mdi:application-brackets-outline',
         'organization_api-keys': 'mdi:key-chain-variant',
         organization_budgets: 'mdi:wallet-outline',
+        organization_departments: 'mdi:division',
+        organization_users: 'mdi:account-group-outline',
         'model-management': 'mdi:cube-outline',
         'model-management_providers': 'mdi:cloud-lock-outline',
         'model-management_route-policies': 'mdi:routes',
@@ -79,6 +83,7 @@ export function setupElegantRouter() {
     }
   });
 }
+
 
 
 

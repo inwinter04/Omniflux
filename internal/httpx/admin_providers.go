@@ -44,7 +44,7 @@ type createProviderAccountRequest struct {
 // ProviderAccounts 返回当前组织的 Provider 账号列表(不含凭据)。
 func (d ServerDeps) ProviderAccounts(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireAdmin(w, principal) != nil {
+	if !ok || d.requireViewer(w, principal) != nil {
 		return
 	}
 	rows, err := d.Pool.Query(r.Context(), `
@@ -73,7 +73,7 @@ func (d ServerDeps) ProviderAccounts(w http.ResponseWriter, r *http.Request) {
 // CreateProviderAccount 创建 Provider 账号并把 API Key 用主密钥加密入库。
 func (d ServerDeps) CreateProviderAccount(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireAdmin(w, principal) != nil {
+	if !ok || d.requireProjectAdmin(w, principal) != nil {
 		return
 	}
 	var body createProviderAccountRequest
@@ -153,7 +153,7 @@ func (d ServerDeps) CreateProviderAccount(w http.ResponseWriter, r *http.Request
 // DeleteProviderAccount 删除 Provider 账号;被候选引用时拒绝删除并说明。
 func (d ServerDeps) DeleteProviderAccount(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireAdmin(w, principal) != nil {
+	if !ok || d.requireProjectAdmin(w, principal) != nil {
 		return
 	}
 	accountID, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -225,7 +225,7 @@ type updateProviderAccountRequest struct {
 // UpdateProviderAccount 更新账号名称/区域/Base URL;provider 类型与凭据不可修改。
 func (d ServerDeps) UpdateProviderAccount(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireAdmin(w, principal) != nil {
+	if !ok || d.requireProjectAdmin(w, principal) != nil {
 		return
 	}
 	accountID, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -294,4 +294,5 @@ func (d ServerDeps) UpdateProviderAccount(w http.ResponseWriter, r *http.Request
 	}
 	adminOK(w, nil)
 }
+
 
