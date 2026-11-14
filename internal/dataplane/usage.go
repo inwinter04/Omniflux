@@ -72,6 +72,8 @@ func (s usageStore) insertPending(ctx context.Context, p pendingUsage) error {
 
 // finalize 定稿用量与决策。路由决策的 attempt_trail 一并更新。
 func (s usageStore) finalize(ctx context.Context, requestID uuid.UUID, f finalUsage) error {
+	// 定稿是所有请求的唯一出口,业务指标在这里统一采集。
+	recordFinalizedMetrics(f)
 	_, err := s.pool.Exec(ctx, `
 		UPDATE usage_records SET
 			state = $2, status_code = $3, model_candidate_id = $4,

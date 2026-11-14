@@ -85,6 +85,9 @@ func (d Deps) checkBudgets(w http.ResponseWriter, r *http.Request, keyCtx apiKey
 }
 
 // settleBudget 把成功请求的实际成本累加到命中的窗口,并为每个窗口写一条结算记录。
+// 预算采用后付口径:请求前按已结算金额拦截,请求后累加实际成本。
+// 并发在途请求可能小幅越过限额(与 LiteLLM 等主流网关一致),
+// 不做前置预留以避免失败退还/超时释放的额外复杂度;budget_reservations 仅作结算审计。
 func (d Deps) settleBudget(ctx context.Context, keyCtx apiKeyContext, requestID uuid.UUID, cost float64) {
 	if cost <= 0 {
 		return

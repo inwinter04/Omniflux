@@ -57,6 +57,7 @@ func run() error {
 	if err := bootstrap.Seed(ctx, logger, pool, cfg); err != nil {
 		return err
 	}
+	app.StartMaintenance(ctx, logger, pool)
 	redisClient, err := infra.NewRedis(ctx, cfg.RedisAddr)
 	if err != nil {
 		return err

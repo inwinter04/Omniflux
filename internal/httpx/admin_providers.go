@@ -24,14 +24,17 @@ var allowedProviders = map[string]bool{
 }
 
 type providerAccountResponse struct {
-	ID        string    `json:"id"`
-	Provider  string    `json:"provider"`
-	Name      string    `json:"name"`
-	Region    *string   `json:"region"`
-	BaseURL   *string   `json:"base_url"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	// 近 24 小时被动健康统计,来自 usage_records;无流量时为 null。
+	ID             string    `json:"id"`
+	Provider       string    `json:"provider"`
+	Name           string    `json:"name"`
+	Region         *string   `json:"region"`
+	BaseURL        *string   `json:"base_url"`
+	Status         string    `json:"status"`
+	Requests24h    int64     `json:"requests_24h"`
+	SuccessRate24h *float64  `json:"success_rate_24h"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 type createProviderAccountRequest struct {
@@ -67,6 +70,54 @@ func (d ServerDeps) ProviderAccounts(w http.ResponseWriter, r *http.Request) {
 		}
 		item.ID = id.String()
 		list = append(list, item)
+	}
+	if err := rows.Err(); err != nil {
+		adminError(w, http.StatusInternalServerError, "PROVIDER_LIST_FAILED", "无法查询 Provider 账号", nil)
+		return
+	}
+	// 近 24 小时被动健康统计:路由已按成功率自动降权,这里补足可见性。
+	healthRows, err := d.Pool.Query(r.Context(), `
+		SELECT a.id,
+		       count(u.id),
+		       avg(CASE WHEN u.state = 'success' THEN 1.0 ELSE 0.0 END)
+		FROM provider_accounts a
+		LEFT JOIN model_candidates mc ON mc.provider_account_id = a.id
+		LEFT JOIN usage_records u ON u.model_candidate_id = mc.id
+		     AND u.created_at >= now() - interval '24 hours'
+		     AND u.state <> 'pending'
+		WHERE a.organization_id = $1
+		GROUP BY a.id
+	`, principal.OrganizationID)
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "PROVIDER_LIST_FAILED", "无法查询 Provider 健康统计", nil)
+		return
+	}
+	defer healthRows.Close()
+	health := map[uuid.UUID]struct {
+		Requests    int64
+		SuccessRate *float64
+	}{}
+	for healthRows.Next() {
+		var id uuid.UUID
+		var h struct {
+			Requests    int64
+			SuccessRate *float64
+		}
+		if err := healthRows.Scan(&id, &h.Requests, &h.SuccessRate); err != nil {
+			adminError(w, http.StatusInternalServerError, "PROVIDER_LIST_FAILED", "无法查询 Provider 健康统计", nil)
+			return
+		}
+		health[id] = h
+	}
+	for j := range list {
+		var id uuid.UUID
+		if err := id.UnmarshalText([]byte(list[j].ID)); err != nil {
+			continue
+		}
+		if h, ok := health[id]; ok {
+			list[j].Requests24h = h.Requests
+			list[j].SuccessRate24h = h.SuccessRate
+		}
 	}
 	adminOK(w, list)
 }
