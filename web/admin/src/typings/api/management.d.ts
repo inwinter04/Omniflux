@@ -57,6 +57,9 @@ declare namespace Api {
       region: string | null;
       base_url: string | null;
       status: string;
+      /** 近 24 小时被动健康统计;无流量时为 null */
+      requests_24h: number;
+      success_rate_24h: number | null;
       created_at: string;
       updated_at: string;
     }
@@ -69,12 +72,20 @@ declare namespace Api {
       api_key: string;
     }
 
+    interface RouteConstraints {
+      allowed_providers?: string[];
+      blocked_providers?: string[];
+      allowed_upstream_models?: string[];
+      blocked_upstream_models?: string[];
+      max_cost_per_million?: number;
+    }
+
     interface RoutePolicy {
       id: string;
       name: string;
       version: number;
       strategy: string;
-      constraints: unknown;
+      constraints: RouteConstraints;
       weights: unknown;
       fallback_limit: number;
       provider_timeout_ms: number;
@@ -90,6 +101,7 @@ declare namespace Api {
       fallback_limit?: number;
       provider_timeout_ms?: number;
       first_token_timeout_ms?: number;
+      constraints?: RouteConstraints;
     }
 
     interface ModelCandidate {
@@ -137,6 +149,8 @@ declare namespace Api {
       key_prefix: string;
       project_id: string;
       application_id: string;
+      /** 每分钟请求上限;null 表示沿用全局默认 */
+      rate_limit_per_min: number | null;
       status: string;
       expires_at: string | null;
       last_used_at: string | null;
@@ -148,6 +162,12 @@ declare namespace Api {
       project_id: string;
       application_id: string;
       expires_at?: string;
+      rate_limit_per_min?: number;
+    }
+
+    interface UpdateApiKeyParams {
+      status?: 'active' | 'disabled';
+      rate_limit_per_min?: number;
     }
 
     /** 明文 key 仅在创建响应中出现一次 */

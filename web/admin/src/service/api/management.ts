@@ -105,9 +105,9 @@ export function fetchCreateApiKey(params: Api.Management.CreateApiKeyParams) {
   return request<Api.Management.CreateApiKeyResult>({ url: '/api-keys', method: 'post', data: params });
 }
 
-/** Enable or disable an API key */
-export function fetchUpdateApiKeyStatus(id: string, status: 'active' | 'disabled') {
-  return request<{ status: string }>({ url: `/api-keys/${id}`, method: 'patch', data: { status } });
+/** Update API key status and/or per-key rate limit */
+export function fetchUpdateApiKey(id: string, params: Api.Management.UpdateApiKeyParams) {
+  return request<{ status: string }>({ url: `/api-keys/${id}`, method: 'patch', data: params });
 }
 
 /** Soft delete an API key; authentication stops immediately and it disappears from lists */

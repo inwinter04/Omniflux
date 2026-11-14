@@ -2,7 +2,7 @@
 import { computed, h, onMounted, reactive, ref } from 'vue';
 import { NButton, NPopconfirm, NSpace, NTag } from 'naive-ui';
 import type { DataTableColumns, FormInst, FormRules } from 'naive-ui';
-import { fetchApiKeys, fetchApplications, fetchCreateApiKey, fetchDeleteApiKey, fetchProjects, fetchUpdateApiKeyStatus } from '@/service/api';
+import { fetchApiKeys, fetchApplications, fetchCreateApiKey, fetchDeleteApiKey, fetchProjects, fetchUpdateApiKey } from '@/service/api';
 import { formatTime, statusTagType, statusText } from '@/utils/admin-status';
 
 defineOptions({
@@ -21,7 +21,17 @@ const formModel = reactive({
   name: '',
   project_id: null as string | null,
   application_id: null as string | null,
-  expires_at: null as number | null
+  expires_at: null as number | null,
+  rate_limit_per_min: null as number | null
+});
+
+const showRateLimit = ref(false);
+const submittingRateLimit = ref(false);
+const rateLimitFormRef = ref<FormInst | null>(null);
+const rateLimitModel = reactive({
+  id: '',
+  name: '',
+  rate_limit_per_min: null as number | null
 });
 
 const formRules: FormRules = {
@@ -68,6 +78,9 @@ const columns: DataTableColumns<Api.Management.ApiKey> = [
     width: 150,
     render(row) {
       const buttons: ReturnType<typeof h>[] = [];
+      buttons.push(
+        h(NButton, { size: 'small', quaternary: true, type: 'primary', onClick: () => openRateLimit(row) }, { default: () => '限流' })
+      );
       if (row.status === 'active') {
         buttons.push(
           h(
@@ -121,7 +134,30 @@ function openCreate() {
   formModel.name = '';
   formModel.project_id = null;
   formModel.application_id = null;
+  formModel.rate_limit_per_min = null;
   showCreate.value = true;
+}
+
+function openRateLimit(row: Api.Management.ApiKey) {
+  rateLimitModel.id = row.id;
+  rateLimitModel.name = row.name;
+  rateLimitModel.rate_limit_per_min = row.rate_limit_per_min;
+  showRateLimit.value = true;
+}
+
+async function handleSaveRateLimit() {
+  await rateLimitFormRef.value?.validate();
+  submittingRateLimit.value = true;
+  try {
+    const { error } = await fetchUpdateApiKey(rateLimitModel.id, { rate_limit_per_min: rateLimitModel.rate_limit_per_min ?? undefined });
+    if (!error) {
+      window.$message?.success('限流阈值已更新');
+      showRateLimit.value = false;
+      await loadData();
+    }
+  } finally {
+    submittingRateLimit.value = false;
+  }
 }
 
 function handleProjectChange() {
@@ -139,7 +175,8 @@ async function handleCreate() {
       name: formModel.name.trim(),
       project_id: formModel.project_id!,
       application_id: formModel.application_id!,
-      expires_at: formModel.expires_at ? new Date(formModel.expires_at).toISOString() : undefined
+      expires_at: formModel.expires_at ? new Date(formModel.expires_at).toISOString() : undefined,
+      rate_limit_per_min: formModel.rate_limit_per_min ?? undefined
     });
     if (!error && data) {
       createdKey.value = data.key;
@@ -157,7 +194,7 @@ async function handleCopyKey() {
 }
 
 async function handleToggleStatus(row: Api.Management.ApiKey, status: 'active' | 'disabled') {
-  const { error } = await fetchUpdateApiKeyStatus(row.id, status);
+  const { error } = await fetchUpdateApiKey(row.id, { status });
   if (!error) {
     window.$message?.success(status === 'active' ? 'API Key 已启用' : 'API Key 已禁用');
     await loadData();
@@ -214,6 +251,9 @@ onMounted(() => {
         <NFormItem label="过期时间" path="expires_at">
           <NDatePicker v-model:value="formModel.expires_at" type="datetime" clearable placeholder="可选,留空表示永不过期" class="w-full" />
         </NFormItem>
+        <NFormItem label="限流/分钟" path="rate_limit_per_min">
+          <NInputNumber v-model:value="formModel.rate_limit_per_min" :min="1" clearable class="w-full" placeholder="可选,留空沿用全局默认" />
+        </NFormItem>
       </NForm>
       <template #footer>
         <NSpace justify="end">
@@ -230,6 +270,23 @@ onMounted(() => {
         <NSpace justify="end">
           <NButton @click="handleCopyKey">复制</NButton>
           <NButton type="primary" @click="createdKey = ''">我已保存</NButton>
+        </NSpace>
+      </template>
+    </NModal>
+    <NModal v-model:show="showRateLimit" preset="card" title="调整限流" class="w-440px">
+      <NForm ref="rateLimitFormRef" :model="rateLimitModel" label-placement="left" label-width="100">
+        <NFormItem label="名称">
+          <NInput :value="rateLimitModel.name" disabled />
+        </NFormItem>
+        <NFormItem label="限流/分钟" path="rate_limit_per_min">
+          <NInputNumber v-model:value="rateLimitModel.rate_limit_per_min" :min="1" clearable class="w-full" placeholder="留空表示沿用全局默认" />
+        </NFormItem>
+        <NAlert type="info" :bordered="false">阈值立即生效;清空表示移除 Key 级限流,改用全局默认。</NAlert>
+      </NForm>
+      <template #footer>
+        <NSpace justify="end">
+          <NButton @click="showRateLimit = false">取消</NButton>
+          <NButton type="primary" :loading="submittingRateLimit" @click="handleSaveRateLimit">保存</NButton>
         </NSpace>
       </template>
     </NModal>

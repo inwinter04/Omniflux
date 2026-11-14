@@ -15,6 +15,16 @@ const strategyOptions = [
   { label: '均衡 (balanced)', value: 'balanced' }
 ];
 
+const constraintProviderOptions = [
+  { label: 'OpenAI', value: 'openai' },
+  { label: 'Azure OpenAI', value: 'azure_openai' },
+  { label: 'Anthropic', value: 'anthropic' },
+  { label: 'Gemini', value: 'gemini' },
+  { label: 'Vertex AI', value: 'vertex' },
+  { label: 'AWS Bedrock', value: 'bedrock' },
+  { label: 'OpenAI Compatible', value: 'openai_compatible' }
+];
+
 const loading = ref(true);
 const list = ref<Api.Management.RoutePolicy[]>([]);
 
@@ -28,7 +38,12 @@ const formModel = reactive({
   strategy: 'balanced',
   fallback_limit: 2,
   provider_timeout_ms: 60000,
-  first_token_timeout_ms: 15000
+  first_token_timeout_ms: 15000,
+  allowed_providers: [] as string[],
+  blocked_providers: [] as string[],
+  allowed_upstream_models: [] as string[],
+  blocked_upstream_models: [] as string[],
+  max_cost_per_million: null as number | null
 });
 const editModel = reactive({
   id: '',
@@ -106,7 +121,22 @@ function openCreate() {
   formModel.fallback_limit = 2;
   formModel.provider_timeout_ms = 60000;
   formModel.first_token_timeout_ms = 15000;
+  formModel.allowed_providers = [];
+  formModel.blocked_providers = [];
+  formModel.allowed_upstream_models = [];
+  formModel.blocked_upstream_models = [];
+  formModel.max_cost_per_million = null;
   showCreate.value = true;
+}
+
+function buildConstraints(): Api.Management.RouteConstraints | undefined {
+  const c: Api.Management.RouteConstraints = {};
+  if (formModel.allowed_providers.length > 0) c.allowed_providers = formModel.allowed_providers;
+  if (formModel.blocked_providers.length > 0) c.blocked_providers = formModel.blocked_providers;
+  if (formModel.allowed_upstream_models.length > 0) c.allowed_upstream_models = formModel.allowed_upstream_models;
+  if (formModel.blocked_upstream_models.length > 0) c.blocked_upstream_models = formModel.blocked_upstream_models;
+  if (formModel.max_cost_per_million != null) c.max_cost_per_million = formModel.max_cost_per_million;
+  return Object.keys(c).length > 0 ? c : undefined;
 }
 
 function openEdit(row: Api.Management.RoutePolicy) {
@@ -128,7 +158,8 @@ async function handleCreate() {
       strategy: formModel.strategy,
       fallback_limit: formModel.fallback_limit,
       provider_timeout_ms: formModel.provider_timeout_ms,
-      first_token_timeout_ms: formModel.first_token_timeout_ms
+      first_token_timeout_ms: formModel.first_token_timeout_ms,
+      constraints: buildConstraints()
     });
     if (!error) {
       window.$message?.success('路由策略已创建');
@@ -184,7 +215,7 @@ onMounted(() => {
         </NSpace>
       </template>
       <NAlert type="info" :bordered="false" class="mb-12px">
-        评分权重与硬约束当前按服务端默认值生效,精细调度将在后续版本实现。
+        评分权重按所选调度策略生效;硬约束在路由前过滤候选,仅创建时可设置,更新策略不改变 constraints。
       </NAlert>
       <NDataTable :columns="columns" :data="list" :loading="loading" :bordered="false" :scroll-x="1200" />
     </NCard>
@@ -205,6 +236,23 @@ onMounted(() => {
         </NFormItem>
         <NFormItem label="首 Token 超时(ms)" path="first_token_timeout_ms">
           <NInputNumber v-model:value="formModel.first_token_timeout_ms" :min="1" class="w-full" />
+        </NFormItem>
+
+        <NDivider title-placement="left">硬约束(可选,仅创建时可设置)</NDivider>
+        <NFormItem label="允许 Provider" path="allowed_providers">
+          <NSelect v-model:value="formModel.allowed_providers" multiple clearable tag :options="constraintProviderOptions" placeholder="留空不限制" />
+        </NFormItem>
+        <NFormItem label="禁止 Provider" path="blocked_providers">
+          <NSelect v-model:value="formModel.blocked_providers" multiple clearable tag :options="constraintProviderOptions" placeholder="留空不限制" />
+        </NFormItem>
+        <NFormItem label="允许上游模型" path="allowed_upstream_models">
+          <NSelect v-model:value="formModel.allowed_upstream_models" multiple clearable filterable tag placeholder="输入模型名后回车" />
+        </NFormItem>
+        <NFormItem label="禁止上游模型" path="blocked_upstream_models">
+          <NSelect v-model:value="formModel.blocked_upstream_models" multiple clearable filterable tag placeholder="输入模型名后回车" />
+        </NFormItem>
+        <NFormItem label="混合单价上限" path="max_cost_per_million">
+          <NInputNumber v-model:value="formModel.max_cost_per_million" :min="0" class="w-full" placeholder="$/M,留空不限制" />
         </NFormItem>
       </NForm>
       <template #footer>
@@ -232,6 +280,7 @@ onMounted(() => {
         <NFormItem label="首 Token 超时(ms)" path="first_token_timeout_ms">
           <NInputNumber v-model:value="editModel.first_token_timeout_ms" :min="1" class="w-full" />
         </NFormItem>
+        <NAlert type="info" :bordered="false">切换策略会按新策略模板重置评分权重;硬约束仅在创建时设置,如需调整请新建策略。</NAlert>
       </NForm>
       <template #footer>
         <NSpace justify="end">

@@ -67,6 +67,16 @@ const columns: DataTableColumns<Api.Management.ProviderAccount> = [
       return h(NTag, { type: statusTagType(row.status), size: 'small', round: true }, { default: () => statusText(row.status) });
     }
   },
+  {
+    title: '近24h健康',
+    key: 'success_rate_24h',
+    width: 130,
+    render(row) {
+      if (row.requests_24h === 0) return '无流量';
+      const pct = Math.round((row.success_rate_24h ?? 0) * 100);
+      return `${pct}% (${row.requests_24h}次)`;
+    }
+  },
   { title: '创建时间', key: 'created_at', width: 180, render: row => formatTime(row.created_at) },
   {
     title: '操作',
