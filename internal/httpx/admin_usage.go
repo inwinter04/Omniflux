@@ -1,34 +1,38 @@
 package httpx
 
 import (
+	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/inwinter04/omniflux/internal/auth"
 )
 
 type usageSummaryResponse struct {
-	TotalRequests      int64                  `json:"total_requests"`
-	SuccessRequests    int64                  `json:"success_requests"`
-	FailedRequests     int64                  `json:"failed_requests"`
-	TotalInputTokens   int64                  `json:"total_input_tokens"`
-	TotalOutputTokens  int64                  `json:"total_output_tokens"`
-	TotalCost          string                 `json:"total_cost"`
-	CostCurrency       string                 `json:"cost_currency"`
-	ByModel            []usageModelSummary    `json:"by_model"`
-	ByDay              []usageDaySummary      `json:"by_day"`
+	TotalRequests     int64               `json:"total_requests"`
+	SuccessRequests   int64               `json:"success_requests"`
+	FailedRequests    int64               `json:"failed_requests"`
+	TotalInputTokens  int64               `json:"total_input_tokens"`
+	TotalOutputTokens int64               `json:"total_output_tokens"`
+	TotalCost         string              `json:"total_cost"`
+	CostCurrency      string              `json:"cost_currency"`
+	ByModel           []usageModelSummary `json:"by_model"`
+	ByDay             []usageDaySummary   `json:"by_day"`
 }
 
 type usageModelSummary struct {
-	Provider         string `json:"provider"`
-	UpstreamModel    string `json:"upstream_model"`
-	Requests         int64  `json:"requests"`
-	InputTokens      int64  `json:"input_tokens"`
-	OutputTokens     int64  `json:"output_tokens"`
-	Cost             string `json:"cost"`
+	Provider      string `json:"provider"`
+	UpstreamModel string `json:"upstream_model"`
+	Requests      int64  `json:"requests"`
+	InputTokens   int64  `json:"input_tokens"`
+	OutputTokens  int64  `json:"output_tokens"`
+	Cost          string `json:"cost"`
 }
 
 type usageDaySummary struct {
@@ -37,27 +41,27 @@ type usageDaySummary struct {
 }
 
 type usageRecordResponse struct {
-	ID             string  `json:"id"`
-	CreatedAt      string  `json:"created_at"`
-	ProjectName    string  `json:"project_name"`
-	ApplicationName string `json:"application_name"`
-	KeyName        string  `json:"key_name"`
-	ModelService   string  `json:"model_service"`
-	State          string  `json:"state"`
-	StatusCode     *int    `json:"status_code"`
-	Provider       *string `json:"provider"`
-	UpstreamModel  *string `json:"upstream_model"`
-	InputTokens    int64   `json:"input_tokens"`
-	OutputTokens   int64   `json:"output_tokens"`
-	Cost           string  `json:"cost"`
-	TotalMS        *int    `json:"total_ms"`
+	ID              string  `json:"id"`
+	CreatedAt       string  `json:"created_at"`
+	ProjectName     string  `json:"project_name"`
+	ApplicationName string  `json:"application_name"`
+	KeyName         string  `json:"key_name"`
+	ModelService    string  `json:"model_service"`
+	State           string  `json:"state"`
+	StatusCode      *int    `json:"status_code"`
+	Provider        *string `json:"provider"`
+	UpstreamModel   *string `json:"upstream_model"`
+	InputTokens     int64   `json:"input_tokens"`
+	OutputTokens    int64   `json:"output_tokens"`
+	Cost            string  `json:"cost"`
+	TotalMS         *int    `json:"total_ms"`
 }
 
 type usageRecordsPage struct {
-	Total   int64                 `json:"total"`
-	Page    int                   `json:"page"`
-	PageSize int                  `json:"page_size"`
-	Records []usageRecordResponse `json:"records"`
+	Total    int64                 `json:"total"`
+	Page     int                   `json:"page"`
+	PageSize int                   `json:"page_size"`
+	Records  []usageRecordResponse `json:"records"`
 }
 
 func parsePaging(r *http.Request) (int, int) {
@@ -202,21 +206,21 @@ func (d ServerDeps) UsageRecords(w http.ResponseWriter, r *http.Request) {
 }
 
 type auditEventResponse struct {
-	ID           string `json:"id"`
-	CreatedAt    string `json:"created_at"`
-	ActorType    string `json:"actor_type"`
-	ActorName    string `json:"actor_name"`
-	Action       string `json:"action"`
-	ResourceType string `json:"resource_type"`
+	ID           string  `json:"id"`
+	CreatedAt    string  `json:"created_at"`
+	ActorType    string  `json:"actor_type"`
+	ActorName    string  `json:"actor_name"`
+	Action       string  `json:"action"`
+	ResourceType string  `json:"resource_type"`
 	ResourceID   *string `json:"resource_id"`
-	Result       string `json:"result"`
+	Result       string  `json:"result"`
 }
 
 type auditEventsPage struct {
-	Total   int64                `json:"total"`
-	Page    int                  `json:"page"`
-	PageSize int                 `json:"page_size"`
-	Records []auditEventResponse `json:"records"`
+	Total    int64                `json:"total"`
+	Page     int                  `json:"page"`
+	PageSize int                  `json:"page_size"`
+	Records  []auditEventResponse `json:"records"`
 }
 
 // AuditEvents 返回当前组织审计事件分页,按时间倒序,actor 显示业务身份。
@@ -264,4 +268,66 @@ func (d ServerDeps) AuditEvents(w http.ResponseWriter, r *http.Request) {
 	adminOK(w, result)
 }
 
+type auditEventDetailResponse struct {
+	ID           string          `json:"id"`
+	CreatedAt    string          `json:"created_at"`
+	ActorType    string          `json:"actor_type"`
+	ActorName    string          `json:"actor_name"`
+	Action       string          `json:"action"`
+	ResourceType string          `json:"resource_type"`
+	ResourceID   *string         `json:"resource_id"`
+	Result       string          `json:"result"`
+	BeforeState  json.RawMessage `json:"before_state"`
+	AfterState   json.RawMessage `json:"after_state"`
+	IPAddress    *string         `json:"ip_address"`
+	UserAgent    *string         `json:"user_agent"`
+}
 
+// AuditEventDetail 返回单条审计事件的完整内容,含 before/after 状态与请求来源。
+func (d ServerDeps) AuditEventDetail(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok || d.requireViewer(w, principal) != nil {
+		return
+	}
+	eventID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		adminError(w, http.StatusBadRequest, "AUDIT_ID_INVALID", "审计事件 ID 不合法", nil)
+		return
+	}
+	var item auditEventDetailResponse
+	var id uuid.UUID
+	var createdAt time.Time
+	var beforeRaw, afterRaw []byte
+	err = d.Pool.QueryRow(r.Context(), `
+		SELECT e.id, e.created_at, e.actor_type, COALESCE(u.email, '系统'),
+		       e.action, e.resource_type, e.resource_id, e.result,
+		       e.before_state, e.after_state, e.ip_address::text, e.user_agent
+		FROM audit_events e
+		LEFT JOIN users u ON u.id = e.actor_user_id
+		WHERE e.id = $1 AND e.organization_id = $2
+	`, eventID, principal.OrganizationID).Scan(
+		&id, &createdAt, &item.ActorType, &item.ActorName,
+		&item.Action, &item.ResourceType, &item.ResourceID, &item.Result,
+		&beforeRaw, &afterRaw, &item.IPAddress, &item.UserAgent)
+	if errors.Is(err, pgx.ErrNoRows) {
+		adminError(w, http.StatusNotFound, "AUDIT_NOT_FOUND", "审计事件不存在或不属于当前组织", nil)
+		return
+	}
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "AUDIT_DETAIL_FAILED", "无法查询审计详情", nil)
+		return
+	}
+	item.ID = id.String()
+	item.CreatedAt = createdAt.Format(time.RFC3339)
+	item.BeforeState = normalizeAuditJSON(beforeRaw)
+	item.AfterState = normalizeAuditJSON(afterRaw)
+	adminOK(w, item)
+}
+
+// normalizeAuditJSON 把空 JSON 归一为 null,避免前端渲染 "{}" 干扰。
+func normalizeAuditJSON(raw []byte) json.RawMessage {
+	if len(raw) == 0 || string(raw) == "{}" {
+		return nil
+	}
+	return raw
+}

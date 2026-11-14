@@ -129,6 +129,7 @@ declare namespace Api {
       name: string;
       project_id: string;
       application_id: string;
+      expires_at?: string;
     }
 
     /** 明文 key 仅在创建响应中出现一次 */
@@ -259,6 +260,18 @@ declare namespace Api {
       currency?: string;
     }
 
+    interface ProviderTestResult {
+      ok: boolean;
+      message: string;
+    }
+
+    interface AuditEventDetail extends AuditEvent {
+      before_state: unknown;
+      after_state: unknown;
+      ip_address: string | null;
+      user_agent: string | null;
+    }
+
     interface AuditEvent {
       id: string;
       created_at: string;
@@ -271,6 +284,7 @@ declare namespace Api {
     }
   }
 }
+
 
 
 

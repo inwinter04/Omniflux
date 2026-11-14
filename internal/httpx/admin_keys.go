@@ -179,6 +179,10 @@ func (d ServerDeps) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusBadRequest, "APIKEY_APPLICATION_MISMATCH", "应用不存在或不属于所选项目", nil)
 		return
 	}
+	if body.ExpiresAt != nil && !body.ExpiresAt.After(time.Now()) {
+		adminError(w, http.StatusBadRequest, "APIKEY_EXPIRES_INVALID", "过期时间必须晚于当前时间", nil)
+		return
+	}
 	generated, err := apikeys.Generate()
 	if err != nil {
 		adminError(w, http.StatusInternalServerError, "APIKEY_CREATE_FAILED", "生成 API Key 失败", nil)
@@ -292,6 +296,7 @@ func (d ServerDeps) DeleteAPIKey(w http.ResponseWriter, r *http.Request) {
 	`, principal.OrganizationID, principal.UserID, keyID.String())
 	adminOK(w, nil)
 }
+
 
 
 

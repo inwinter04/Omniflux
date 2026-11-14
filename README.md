@@ -95,7 +95,30 @@ export OMNIFLUX_BOOTSTRAP_PASSWORD="<strong-password>"
 
 空数据库首次启动时会创建初始管理员。请勿在生产环境使用示例值。
 
-### 3. 构建管理台
+### 3. Docker 部署
+
+生产环境推荐使用镜像部署,一条命令完成管理台与服务端构建:
+
+```bash
+docker build -t omniflux:latest .
+```
+
+运行时通过环境变量注入配置:
+
+```bash
+docker run -d -p 8080:8080 \
+  -e OMNIFLUX_DATABASE_URL="postgres://user:pass@host:5432/omniflux?sslmode=require" \
+  -e OMNIFLUX_REDIS_ADDR="host:6379" \
+  -e OMNIFLUX_MASTER_KEY="<base64-encoded-32-byte-key>" \
+  -e OMNIFLUX_API_KEY_PEPPER="<random-pepper-at-least-32-characters>" \
+  -e OMNIFLUX_BOOTSTRAP_EMAIL="admin@example.com" \
+  -e OMNIFLUX_BOOTSTRAP_PASSWORD="<strong-password>" \
+  omniflux:latest
+```
+
+会话 Cookie 为 `SameSite=Strict` + `HttpOnly`,生产环境请置于反向代理之后并启用 HTTPS(此时 Cookie 自动附加 `Secure`)。
+
+### 4. 构建管理台
 
 ```bash
 corepack pnpm --dir web/admin install
@@ -159,3 +182,4 @@ corepack pnpm --dir web/admin build
 - API Key 只保存 keyed hash，明文只在创建时返回一次。
 - 审计事件采用追加式模型，应用层不提供更新与删除能力。
 - 请勿在日志、示例、提交信息或 issue 中提交真实密钥。
+

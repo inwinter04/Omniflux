@@ -1,0 +1,11 @@
+.git
+.codex
+.env
+.env.*
+web/admin/node_modules
+web/admin/dist
+docs
+scripts
+docker-compose.yml
+Makefile
+*.md

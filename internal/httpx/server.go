@@ -112,6 +112,7 @@ func New(deps ServerDeps) http.Handler {
 			r.Get("/provider-accounts", deps.ProviderAccounts)
 			r.Post("/provider-accounts", deps.CreateProviderAccount)
 			r.Patch("/provider-accounts/{id}", deps.UpdateProviderAccount)
+			r.Post("/provider-accounts/{id}/test", deps.TestProviderAccount)
 			r.Delete("/provider-accounts/{id}", deps.DeleteProviderAccount)
 			r.Get("/route-policies", deps.RoutePolicies)
 			r.Post("/route-policies", deps.CreateRoutePolicy)
@@ -125,6 +126,7 @@ func New(deps ServerDeps) http.Handler {
 			r.Get("/usage/summary", deps.UsageSummary)
 			r.Get("/usage/records", deps.UsageRecords)
 			r.Get("/audit-events", deps.AuditEvents)
+			r.Get("/audit-events/{id}", deps.AuditEventDetail)
 			r.Get("/users", deps.Users)
 			r.Post("/users", deps.CreateUser)
 			r.Patch("/users/{id}", deps.UpdateUser)
@@ -135,6 +137,7 @@ func New(deps ServerDeps) http.Handler {
 	})
 	return r
 }
+
 
 
 

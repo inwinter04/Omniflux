@@ -2,7 +2,7 @@
 import { h, onMounted, reactive, ref } from 'vue';
 import { NButton, NPopconfirm, NSpace, NTag } from 'naive-ui';
 import type { DataTableColumns, FormInst, FormRules } from 'naive-ui';
-import { fetchCreateProviderAccount, fetchDeleteProviderAccount, fetchProviderAccounts, fetchUpdateProviderAccount } from '@/service/api';
+import { fetchCreateProviderAccount, fetchDeleteProviderAccount, fetchProviderAccounts, fetchTestProviderAccount, fetchUpdateProviderAccount } from '@/service/api';
 import { formatTime, statusTagType, statusText } from '@/utils/admin-status';
 
 defineOptions({
@@ -71,11 +71,12 @@ const columns: DataTableColumns<Api.Management.ProviderAccount> = [
   {
     title: '操作',
     key: 'actions',
-    width: 150,
+    width: 190,
     render(row) {
       return h(NSpace, { size: 4 }, {
         default: () => [
           h(NButton, { size: 'small', quaternary: true, type: 'primary', onClick: () => openEdit(row) }, { default: () => '编辑' }),
+          h(NButton, { size: 'small', quaternary: true, type: 'info', onClick: () => handleTest(row) }, { default: () => '测试' }),
           h(
             NPopconfirm,
             { onPositiveClick: () => handleDelete(row.id) },
@@ -160,6 +161,17 @@ async function handleUpdate() {
   }
 }
 
+async function handleTest(row: Api.Management.ProviderAccount) {
+  const { data, error } = await fetchTestProviderAccount(row.id);
+  if (!error && data) {
+    if (data.ok) {
+      window.$message?.success(`连通正常`);
+    } else {
+      window.$message?.error(data.message);
+    }
+  }
+}
+
 async function handleDelete(id: string) {
   const { error } = await fetchDeleteProviderAccount(id);
   if (!error) {
@@ -238,3 +250,4 @@ onMounted(() => {
 </template>
 
 <style scoped></style>
+

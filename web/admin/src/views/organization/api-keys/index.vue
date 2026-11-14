@@ -20,7 +20,8 @@ const formRef = ref<FormInst | null>(null);
 const formModel = reactive({
   name: '',
   project_id: null as string | null,
-  application_id: null as string | null
+  application_id: null as string | null,
+  expires_at: null as number | null
 });
 
 const formRules: FormRules = {
@@ -137,7 +138,8 @@ async function handleCreate() {
     const { data, error } = await fetchCreateApiKey({
       name: formModel.name.trim(),
       project_id: formModel.project_id!,
-      application_id: formModel.application_id!
+      application_id: formModel.application_id!,
+      expires_at: formModel.expires_at ? new Date(formModel.expires_at).toISOString() : undefined
     });
     if (!error && data) {
       createdKey.value = data.key;
@@ -209,6 +211,9 @@ onMounted(() => {
             placeholder="先选择项目"
           />
         </NFormItem>
+        <NFormItem label="过期时间" path="expires_at">
+          <NDatePicker v-model:value="formModel.expires_at" type="datetime" clearable placeholder="可选,留空表示永不过期" class="w-full" />
+        </NFormItem>
       </NForm>
       <template #footer>
         <NSpace justify="end">
@@ -232,3 +237,4 @@ onMounted(() => {
 </template>
 
 <style scoped></style>
+

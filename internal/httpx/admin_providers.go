@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -295,4 +296,108 @@ func (d ServerDeps) UpdateProviderAccount(w http.ResponseWriter, r *http.Request
 	adminOK(w, nil)
 }
 
+type providerTestResult struct {
+	OK      bool   `json:"ok"`
+	Message string `json:"message"`
+}
 
+// TestProviderAccount 用账号凭据向上游发起轻量列表请求,验证连通性与凭据有效性。
+// azure_openai/vertex/bedrock 的认证模型特殊,暂不支持在线测试。
+func (d ServerDeps) TestProviderAccount(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok || d.requireProjectAdmin(w, principal) != nil {
+		return
+	}
+	accountID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		adminError(w, http.StatusBadRequest, "PROVIDER_ID_INVALID", "Provider 账号 ID 不合法", nil)
+		return
+	}
+	var account struct {
+		Provider string
+		BaseURL  *string
+	}
+	err = d.Pool.QueryRow(r.Context(), `
+		SELECT provider, base_url FROM provider_accounts WHERE id = $1 AND organization_id = $2
+	`, accountID, principal.OrganizationID).Scan(&account.Provider, &account.BaseURL)
+	if errors.Is(err, pgx.ErrNoRows) {
+		adminError(w, http.StatusNotFound, "PROVIDER_NOT_FOUND", "Provider 账号不存在或不属于当前组织", nil)
+		return
+	}
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "PROVIDER_TEST_FAILED", "连通性测试失败", nil)
+		return
+	}
+	var ciphertext []byte
+	var keyID string
+	err = d.Pool.QueryRow(r.Context(), `
+		SELECT ciphertext, key_id FROM provider_credentials WHERE provider_account_id = $1
+	`, accountID).Scan(&ciphertext, &keyID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		adminError(w, http.StatusNotFound, "PROVIDER_CREDENTIAL_NOT_FOUND", "账号没有已保存的凭据", nil)
+		return
+	}
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "PROVIDER_TEST_FAILED", "连通性测试失败", nil)
+		return
+	}
+	plaintext, err := vault.Decrypt(d.MasterKey, ciphertext)
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "PROVIDER_TEST_FAILED", "凭据解密失败,请检查主密钥配置", nil)
+		return
+	}
+	apiKey := string(plaintext)
+
+	testURL, headers, err := providerProbeRequest(account.Provider, account.BaseURL, apiKey)
+	if err != nil {
+		adminError(w, http.StatusBadRequest, "PROVIDER_TEST_UNSUPPORTED",
+			"该 provider 暂不支持在线连通性测试,请通过实际调用验证", nil)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, testURL, nil)
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "PROVIDER_TEST_FAILED", "连通性测试失败", nil)
+		return
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		adminOK(w, providerTestResult{OK: false, Message: "无法连接上游: " + err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		adminOK(w, providerTestResult{OK: true, Message: fmt.Sprintf("连通正常(HTTP %d)", resp.StatusCode)})
+		return
+	}
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		adminOK(w, providerTestResult{OK: false, Message: fmt.Sprintf("凭据被拒绝(HTTP %d),请检查 API Key", resp.StatusCode)})
+		return
+	}
+	adminOK(w, providerTestResult{OK: false, Message: fmt.Sprintf("上游返回 HTTP %d", resp.StatusCode)})
+}
+
+// providerProbeRequest 按 provider 构造轻量探测请求;不支持的 provider 返回错误。
+func providerProbeRequest(provider string, baseURL *string, apiKey string) (string, map[string]string, error) {
+	switch provider {
+	case "openai", "openai_compatible":
+		base := "https://api.openai.com/v1"
+		if baseURL != nil && *baseURL != "" {
+			base = strings.TrimRight(*baseURL, "/")
+		}
+		return base + "/models", map[string]string{"Authorization": "Bearer " + apiKey}, nil
+	case "anthropic":
+		return "https://api.anthropic.com/v1/models", map[string]string{
+			"x-api-key":         apiKey,
+			"anthropic-version": "2023-06-01",
+		}, nil
+	case "gemini":
+		return "https://generativelanguage.googleapis.com/v1beta/models?key=" + apiKey, nil, nil
+	default:
+		return "", nil, fmt.Errorf("provider %s does not support online probe", provider)
+	}
+}

@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { h, onMounted, ref } from 'vue';
+import { useAppStore } from '@/store/modules/app';
+import { useEcharts } from '@/hooks/common/echarts';
 import { NButton, NPagination, NTag } from 'naive-ui';
 import type { DataTableColumns } from 'naive-ui';
 import { fetchUsageRecords, fetchUsageSummary } from '@/service/api';
@@ -58,6 +60,15 @@ const recordColumns: DataTableColumns<Api.Management.UsageRecord> = [
 
 const successRate = ref('-');
 
+const appStore = useAppStore();
+const { domRef: trendRef, updateOptions: updateTrend } = useEcharts(() => ({
+  tooltip: { trigger: 'axis' },
+  grid: { left: '3%', right: '4%', bottom: '3%', top: '12%' },
+  xAxis: { type: 'category', boundaryGap: false, data: [] as string[] },
+  yAxis: { type: 'value', minInterval: 1 },
+  series: [{ color: '#8e9dff', name: '请求数', type: 'line', smooth: true, data: [] as number[] }]
+}));
+
 async function loadSummary() {
   summaryLoading.value = true;
   try {
@@ -67,6 +78,11 @@ async function loadSummary() {
       successRate.value = data.total_requests > 0
         ? `${Math.round((data.success_requests / data.total_requests) * 100)}%`
         : '-';
+      updateTrend(options => {
+        options.xAxis.data = data.by_day.map(item => item.day);
+        options.series[0].data = data.by_day.map(item => item.requests);
+        return options;
+      });
     }
   } finally {
     summaryLoading.value = false;
@@ -148,6 +164,10 @@ onMounted(() => {
       </NGrid>
     </NCard>
 
+    <NCard title="请求趋势" :bordered="false" class="mt-16px card-wrapper">
+      <div ref="trendRef" class="h-320px" />
+    </NCard>
+
     <NCard title="按模型分布" :bordered="false" class="mt-16px card-wrapper">
       <NDataTable
         :columns="modelColumns"
@@ -168,3 +188,4 @@ onMounted(() => {
 </template>
 
 <style scoped></style>
+

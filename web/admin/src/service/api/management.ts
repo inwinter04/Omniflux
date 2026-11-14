@@ -190,3 +190,13 @@ export function fetchCreateUser(params: Api.Management.CreateUserParams) {
 export function fetchUpdateUser(id: string, params: Api.Management.UpdateUserParams) {
   return request({ url: `/users/${id}`, method: 'patch', data: params });
 }
+
+/** Test provider account connectivity with its stored credential */
+export function fetchTestProviderAccount(id: string) {
+  return request<Api.Management.ProviderTestResult>({ url: `/provider-accounts/${id}/test`, method: 'post' });
+}
+
+/** Get one audit event with before/after states */
+export function fetchAuditEventDetail(id: string) {
+  return request<Api.Management.AuditEventDetail>({ url: `/audit-events/${id}` });
+}

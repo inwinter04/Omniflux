@@ -85,7 +85,7 @@ func (d ServerDeps) Budgets(w http.ResponseWriter, r *http.Request) {
 		       limit_amount::text, spent_amount::text, currency
 		FROM budget_windows
 		WHERE organization_id = $1
-		ORDER BY window_start DESC, created_at DESC
+		ORDER BY window_start DESC, updated_at DESC
 	`, principal.OrganizationID)
 	if err != nil {
 		adminError(w, http.StatusInternalServerError, "BUDGET_LIST_FAILED", "无法查询预算", nil)
@@ -98,6 +98,7 @@ func (d ServerDeps) Budgets(w http.ResponseWriter, r *http.Request) {
 		var id, scopeID uuid.UUID
 		if err := rows.Scan(&id, &item.ScopeType, &scopeID, &item.WindowStart, &item.WindowEnd,
 			&item.LimitAmount, &item.SpentAmount, &item.Currency); err != nil {
+			d.Logger.Error("scan budget failed", "error", err)
 			adminError(w, http.StatusInternalServerError, "BUDGET_LIST_FAILED", "无法查询预算", nil)
 			return
 		}
@@ -266,6 +267,8 @@ func (d ServerDeps) DeleteBudget(w http.ResponseWriter, r *http.Request) {
 	`, principal.OrganizationID, principal.UserID, budgetID.String())
 	adminOK(w, nil)
 }
+
+
 
 
 

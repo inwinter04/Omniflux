@@ -81,7 +81,28 @@ export OMNIFLUX_BOOTSTRAP_PASSWORD="<strong-password>"
 
 The initial administrator is created only when the database is empty. Never use example credentials in production.
 
-### 3. Build the admin console
+### 3. Docker deployment
+
+For production, build the image which bundles the admin console and the server binary:
+
+```bash
+docker build -t omniflux:latest .
+```
+
+Then run it with environment variables:
+
+```bash
+docker run -d -p 8080:8080 \
+  -e OMNIFLUX_DATABASE_URL="postgres://user:pass@host:5432/omniflux?sslmode=require" \
+  -e OMNIFLUX_REDIS_ADDR="host:6379" \
+  -e OMNIFLUX_MASTER_KEY="<base64-encoded-32-byte-key>" \
+  -e OMNIFLUX_API_KEY_PEPPER="<random-pepper-at-least-32-characters>" \
+  -e OMNIFLUX_BOOTSTRAP_EMAIL="admin@example.com" \
+  -e OMNIFLUX_BOOTSTRAP_PASSWORD="<strong-password>" \
+  omniflux:latest
+```
+
+Session cookies use `SameSite=Strict` + `HttpOnly`; put the service behind a reverse proxy with HTTPS in production (the cookie automatically gets the `Secure` flag).
 
 ```bash
 corepack pnpm --dir web/admin install
@@ -145,3 +166,4 @@ corepack pnpm --dir web/admin build
 - API keys store only a keyed hash; the plaintext is shown once at creation.
 - Audit events are append-only at the application layer.
 - Never commit or publish real keys in logs, examples, commit messages, or issues.
+
