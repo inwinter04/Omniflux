@@ -36,6 +36,9 @@ Omniflux 是一个面向企业的 AI 服务控制平面，用于把分散在多�
 | `GET /api/v1/auth/me` | 获取当前管理员信息 |
 | `POST /api/v1/auth/logout` | 退出登录 |
 
+| `GET /api/v1/organizations` | 组织列表(平台管理员可见全部,其余仅当前组织) |
+| `POST /api/v1/organizations` | 创建组织(仅平台管理员) |
+| `PATCH /api/v1/organizations/{id}` | 修改组织名称(slug 创建后不可变更) |
 | `GET /api/v1/projects` | 项目列表 |
 | `GET /api/v1/applications` | 应用列表 |
 | `GET /api/v1/provider-accounts` | Provider 账号列表 |
@@ -50,7 +53,7 @@ Omniflux 是一个面向企业的 AI 服务控制平面，用于把分散在多�
 | `DELETE /api/v1/api-keys/{id}` | 禁用 API Key |
 | `POST /v1/chat/completions` | OpenAI 兼容对话接口(支持流式),使用 API Key 认证 |
 
-数据面按模型服务的候选配置路由:候选按 priority 升序、同优先级内按 weight 加权随机;主候选之后的候选作为 fallback 链交给上游网关处理。路由策略的 `fallback_limit` 与 `provider_timeout_ms` 生效;评分字段(`strategy`/`weights`/`constraints`)按默认权重生效,精细调度将在后续版本实现。每次调用都会写入 `usage_records` 与 `policy_decisions`。
+数据面按模型服务的候选配置路由:候选按 priority 升序分组,组内按 `weights`(cost/quality/latency/reliability)评分降序排列,评分并列时按 weight 加权随机;候选的 `quality_score`(0-1,默认 0.5)参与 quality 评分,latency 与 reliability 来自近 7 天用量统计。主候选之后的候选作为 fallback 链交给上游网关处理,`fallback_limit` 与 `provider_timeout_ms` 生效。自动质量评估(EvaluationSet/EvaluationRun)将在后续版本实现。每次调用都会写入 `usage_records` 与 `policy_decisions`。
 
 ## 快速开始
 

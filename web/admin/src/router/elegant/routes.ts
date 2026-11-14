@@ -236,6 +236,17 @@ export const generatedRoutes: GeneratedRoute[] = [
         }
       },
       {
+        name: 'organization_organizations',
+        path: '/organization/organizations',
+        component: 'view.organization_organizations',
+        meta: {
+          title: 'organization_organizations',
+          i18nKey: 'route.organization_organizations',
+          order: 0,
+          icon: 'mdi:domain-outline'
+        }
+      },
+      {
         name: 'organization_projects',
         path: '/organization/projects',
         component: 'view.organization_projects',

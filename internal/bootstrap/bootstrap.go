@@ -43,13 +43,13 @@ func Seed(ctx context.Context, logger *slog.Logger, pool *pgxpool.Pool, cfg conf
 		if _, err := tx.Exec(ctx, `INSERT INTO applications(id,organization_id,project_id,name) VALUES($1,$2,$3,$4)`, appID, orgID, projectID, "Console"); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO users(id,organization_id,email,password_hash,role) VALUES($1,$2,$3,$4,'org_owner')`, userID, orgID, cfg.BootstrapEmail, hash); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO users(id,organization_id,email,password_hash,role) VALUES($1,$2,$3,$4,'platform_admin')`, userID, orgID, cfg.BootstrapEmail, hash); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO audit_events(organization_id,actor_user_id,actor_type,action,resource_type,resource_id) VALUES($1,$2,'system','bootstrap.created','user',$3)`, orgID, userID, userID.String()); err != nil {
 			return err
 		}
-		logger.Info("bootstrap owner created", "email", cfg.BootstrapEmail, "organization_id", orgID)
+		logger.Info("bootstrap platform admin created", "email", cfg.BootstrapEmail, "organization_id", orgID)
 		return nil
 	})
 	if errors.Is(err, pgx.ErrNoRows) {

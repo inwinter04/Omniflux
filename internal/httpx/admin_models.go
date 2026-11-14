@@ -24,6 +24,7 @@ type candidateResponse struct {
 	Weight               float64 `json:"weight"`
 	InputCostPerMillion  float64 `json:"input_cost_per_million"`
 	OutputCostPerMillion float64 `json:"output_cost_per_million"`
+	QualityScore         float64 `json:"quality_score"`
 	Status               string  `json:"status"`
 }
 
@@ -38,12 +39,13 @@ type modelServiceResponse struct {
 }
 
 type createCandidateRequest struct {
-	ProviderAccountID    string  `json:"provider_account_id"`
-	UpstreamModel        string  `json:"upstream_model"`
-	Priority             int     `json:"priority"`
-	Weight               float64 `json:"weight"`
-	InputCostPerMillion  float64 `json:"input_cost_per_million"`
-	OutputCostPerMillion float64 `json:"output_cost_per_million"`
+	ProviderAccountID    string   `json:"provider_account_id"`
+	UpstreamModel        string   `json:"upstream_model"`
+	Priority             int      `json:"priority"`
+	Weight               float64  `json:"weight"`
+	InputCostPerMillion  float64  `json:"input_cost_per_million"`
+	OutputCostPerMillion float64  `json:"output_cost_per_million"`
+	QualityScore         *float64 `json:"quality_score"`
 }
 
 type createModelServiceRequest struct {
@@ -96,7 +98,7 @@ func (d ServerDeps) ModelServices(w http.ResponseWriter, r *http.Request) {
 	}
 	candRows, err := d.Pool.Query(r.Context(), `
 		SELECT c.id, c.model_service_id, c.provider_account_id, a.provider, c.upstream_model, c.priority, c.weight,
-		       c.input_cost_per_million, c.output_cost_per_million, c.status
+		       c.input_cost_per_million, c.output_cost_per_million, c.quality_score, c.status
 		FROM model_candidates c
 		JOIN provider_accounts a ON a.id = c.provider_account_id
 		WHERE a.organization_id = $1
@@ -111,7 +113,7 @@ func (d ServerDeps) ModelServices(w http.ResponseWriter, r *http.Request) {
 		var candID, svcID, accountID uuid.UUID
 		var c candidateResponse
 		if err := candRows.Scan(&candID, &svcID, &accountID, &c.Provider, &c.UpstreamModel, &c.Priority, &c.Weight,
-			&c.InputCostPerMillion, &c.OutputCostPerMillion, &c.Status); err != nil {
+			&c.InputCostPerMillion, &c.OutputCostPerMillion, &c.QualityScore, &c.Status); err != nil {
 			adminError(w, http.StatusInternalServerError, "SERVICE_LIST_FAILED", "无法查询模型候选", nil)
 			return
 		}
@@ -149,6 +151,10 @@ func (d ServerDeps) CreateModelService(w http.ResponseWriter, r *http.Request) {
 			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "候选缺少 upstream_model", nil)
 			return
 		}
+		if c.QualityScore != nil && (*c.QualityScore < 0 || *c.QualityScore > 1) {
+			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "候选质量分必须在 0 到 1 之间", nil)
+			return
+		}
 		parsed, err := uuid.Parse(c.ProviderAccountID)
 		if err != nil {
 			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "候选的 provider_account_id 不合法", nil)
@@ -156,15 +162,23 @@ func (d ServerDeps) CreateModelService(w http.ResponseWriter, r *http.Request) {
 		}
 		accountIDs = append(accountIDs, parsed)
 	}
-	// 候选引用的账号必须属于当前组织,FK 只保证存在,组织归属需要显式校验。
+	// 同一账号可挂多个候选,校验前去重;候选引用的账号必须属于当前组织。
+	uniqueAccountIDs := make([]uuid.UUID, 0, len(accountIDs))
+	seen := make(map[uuid.UUID]bool, len(accountIDs))
+	for _, id := range accountIDs {
+		if !seen[id] {
+			seen[id] = true
+			uniqueAccountIDs = append(uniqueAccountIDs, id)
+		}
+	}
 	var accountCount int
 	if err := d.Pool.QueryRow(r.Context(), `
 		SELECT count(*) FROM provider_accounts WHERE id = ANY($1) AND organization_id = $2
-	`, accountIDs, principal.OrganizationID).Scan(&accountCount); err != nil {
+	`, uniqueAccountIDs, principal.OrganizationID).Scan(&accountCount); err != nil {
 		adminError(w, http.StatusInternalServerError, "SERVICE_CREATE_FAILED", "创建模型服务失败", nil)
 		return
 	}
-	if accountCount != len(accountIDs) {
+	if accountCount != len(uniqueAccountIDs) {
 		adminError(w, http.StatusBadRequest, "SERVICE_ACCOUNT_NOT_FOUND", "候选引用的 Provider 账号不存在或不属于当前组织", nil)
 		return
 	}
@@ -208,10 +222,10 @@ func (d ServerDeps) CreateModelService(w http.ResponseWriter, r *http.Request) {
 			}
 			if _, err := tx.Exec(r.Context(), `
 				INSERT INTO model_candidates(model_service_id, provider_account_id, upstream_model,
-				                             priority, weight, input_cost_per_million, output_cost_per_million)
-				VALUES ($1,$2,$3,$4,$5,$6,$7)
+				                             priority, weight, input_cost_per_million, output_cost_per_million, quality_score)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 			`, serviceID, accountID, c.UpstreamModel, priority, weight,
-				c.InputCostPerMillion, c.OutputCostPerMillion); err != nil {
+				c.InputCostPerMillion, c.OutputCostPerMillion, candidateQuality(c)); err != nil {
 				return err
 			}
 		}
@@ -231,6 +245,14 @@ func (d ServerDeps) CreateModelService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	adminOK(w, map[string]string{"id": serviceID.String()})
+}
+
+// candidateQuality 返回候选入库质量分;未传时取 schema 默认 0.5,由路由评分读取。
+func candidateQuality(c createCandidateRequest) float64 {
+	if c.QualityScore == nil {
+		return 0.5
+	}
+	return *c.QualityScore
 }
 
 func nullablePolicyID(id *uuid.UUID) any {
@@ -285,7 +307,6 @@ func (d ServerDeps) DeleteModelService(w http.ResponseWriter, r *http.Request) {
 	adminOK(w, nil)
 }
 
-
 // UpdateModelService 更新服务名称/绑定策略,并用提交的候选全量替换现有候选。
 func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
@@ -314,6 +335,10 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 	for _, c := range body.Candidates {
 		if strings.TrimSpace(c.UpstreamModel) == "" {
 			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "候选缺少 upstream_model", nil)
+			return
+		}
+		if c.QualityScore != nil && (*c.QualityScore < 0 || *c.QualityScore > 1) {
+			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "候选质量分必须在 0 到 1 之间", nil)
 			return
 		}
 		parsed, err := uuid.Parse(c.ProviderAccountID)
@@ -398,10 +423,10 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 			}
 			if _, err := tx.Exec(r.Context(), `
 				INSERT INTO model_candidates(model_service_id, provider_account_id, upstream_model,
-				                             priority, weight, input_cost_per_million, output_cost_per_million)
-				VALUES ($1,$2,$3,$4,$5,$6,$7)
+				                             priority, weight, input_cost_per_million, output_cost_per_million, quality_score)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 			`, serviceID, accountID, c.UpstreamModel, priority, weight,
-				c.InputCostPerMillion, c.OutputCostPerMillion); err != nil {
+				c.InputCostPerMillion, c.OutputCostPerMillion, candidateQuality(c)); err != nil {
 				return err
 			}
 		}
@@ -424,5 +449,3 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 	}
 	adminOK(w, nil)
 }
-
-

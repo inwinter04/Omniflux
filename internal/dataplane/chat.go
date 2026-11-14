@@ -157,7 +157,6 @@ func (d Deps) loadCandidateHealth(ctx context.Context, orgID uuid.UUID, chain []
 	return &policyScores{Health: health}
 }
 
-
 // loadService 按 org + name 解析 active 模型服务、active 候选与绑定的路由策略。
 // 策略被禁用或不存在时回退到内置默认值。
 func (d Deps) loadService(ctx context.Context, orgID uuid.UUID, name string) (resolvedService, bool, error) {
@@ -193,7 +192,7 @@ func (d Deps) loadService(ctx context.Context, orgID uuid.UUID, name string) (re
 	}
 	rows, err := d.Pool.Query(ctx, `
 		SELECT c.id, a.provider, a.id, c.upstream_model, c.priority, c.weight,
-		       c.input_cost_per_million, c.output_cost_per_million
+		       c.input_cost_per_million, c.output_cost_per_million, c.quality_score
 		FROM model_candidates c
 		JOIN provider_accounts a ON a.id = c.provider_account_id
 		WHERE c.model_service_id = $1 AND c.status = 'active' AND a.status = 'active'
@@ -206,7 +205,7 @@ func (d Deps) loadService(ctx context.Context, orgID uuid.UUID, name string) (re
 	for rows.Next() {
 		var c candidate
 		if err := rows.Scan(&c.ID, &c.Provider, &c.AccountID, &c.UpstreamModel,
-			&c.Priority, &c.Weight, &c.InputCostPerM, &c.OutputCostPerM); err != nil {
+			&c.Priority, &c.Weight, &c.InputCostPerM, &c.OutputCostPerM, &c.Quality); err != nil {
 			return svc, false, err
 		}
 		svc.Candidates = append(svc.Candidates, c)
@@ -435,8 +434,3 @@ func writeBifrostError(w http.ResponseWriter, bifrostErr *schemas.BifrostError) 
 	}
 	apiError(w, status, errType, message)
 }
-
-
-
-
-

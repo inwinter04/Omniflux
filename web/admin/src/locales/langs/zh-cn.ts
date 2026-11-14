@@ -230,6 +230,7 @@ const local: App.I18n.Schema = {
     organization_projects: '项目',
     organization_applications: '应用',
     organization_departments: '部门',
+    organization_organizations: '组织',
     access: '访问管理',
     access_users: '用户',
     'access_api-keys': 'API Key',

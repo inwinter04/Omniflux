@@ -21,6 +21,7 @@ type candidate struct {
 	Weight         float64
 	InputCostPerM  float64
 	OutputCostPerM float64
+	Quality        float64
 }
 
 // policyWeights 是路由策略的评分权重,来自 route_policies.weights JSON。
@@ -71,7 +72,7 @@ type routeChain []candidate
 
 // scoreOf 计算单个候选的综合分:
 //   - cost: 价格越低分越高,组内归一(全等价时 0.5);
-//   - quality: 当前没有质量数据源,恒 0.5;
+//   - quality: 候选配置的 quality_score(管理员按模型能力评估维护,默认 0.5);
 //   - latency: 组内平均耗时越低分越高(无历史 0.5);
 //   - reliability: 成功率(无历史 0.5)。
 func scoreOf(c candidate, all routeChain, scores *policyScores, w policyWeights) float64 {
@@ -85,8 +86,7 @@ func scoreOf(c candidate, all routeChain, scores *policyScores, w policyWeights)
 	if ok && health.Total > 0 {
 		reliabilityScore = health.successRate()
 	}
-	qualityScore := 0.5
-	return w.Cost*costScore + w.Quality*qualityScore + w.Latency*latencyScore + w.Reliability*reliabilityScore
+	return w.Cost*costScore + w.Quality*c.Quality + w.Latency*latencyScore + w.Reliability*reliabilityScore
 }
 
 // costRate 是每百万 token 的混合参考价(输入/输出等权)。
@@ -265,4 +265,3 @@ func (chain routeChain) findCandidate(provider, model string) (candidate, error)
 	}
 	return candidate{}, fmt.Errorf("served provider/model (%s, %s) not found in route chain", provider, model)
 }
-

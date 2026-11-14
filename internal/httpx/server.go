@@ -94,6 +94,9 @@ func New(deps ServerDeps) http.Handler {
 		r.Group(func(r chi.Router) {
 			r.Use(func(next http.Handler) http.Handler { return RequireSession(deps, next) })
 			r.Get("/dashboard", deps.Dashboard)
+			r.Get("/organizations", deps.Organizations)
+			r.Post("/organizations", deps.CreateOrganization)
+			r.Patch("/organizations/{id}", deps.UpdateOrganization)
 			r.Get("/departments", deps.Departments)
 			r.Post("/departments", deps.CreateDepartment)
 			r.Patch("/departments/{id}", deps.UpdateDepartment)
@@ -138,8 +141,3 @@ func New(deps ServerDeps) http.Handler {
 	})
 	return r
 }
-
-
-
-
-

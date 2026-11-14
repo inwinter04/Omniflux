@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { h, onMounted, reactive, ref } from 'vue';
+import { computed, h, onMounted, reactive, ref } from 'vue';
 import { NButton, NModal, NPopconfirm, NSpace, NTag } from 'naive-ui';
 import type { DataTableColumns, FormInst, FormRules } from 'naive-ui';
-import { fetchCreateUser, fetchUpdateUser, fetchUsers } from '@/service/api';
+import { fetchCreateUser, fetchOrganizations, fetchUpdateUser, fetchUsers } from '@/service/api';
+import { useAuthStore } from '@/store/modules/auth';
 import { formatTime, statusTagType, statusText } from '@/utils/admin-status';
 
 defineOptions({
@@ -10,12 +11,18 @@ defineOptions({
 });
 
 const roleText: Record<string, string> = {
+  platform_admin: '平台管理员',
   org_owner: '组织所有者',
   org_admin: '组织管理员',
   project_admin: '项目管理员',
   developer: '开发者',
   viewer: '查看者'
 };
+
+const authStore = useAuthStore();
+const isPlatformAdmin = computed(() => authStore.userInfo.roles.includes('platform_admin'));
+const orgOptions = ref<{ label: string; value: string }[]>([]);
+const filterOrgId = ref<string | null>(null);
 
 const roleOptions = [
   { label: '组织管理员', value: 'org_admin' },
@@ -36,7 +43,16 @@ const editFormRef = ref<FormInst | null>(null);
 const formModel = reactive({
   email: '',
   password: '',
-  role: 'developer'
+  role: 'developer',
+  organization_id: null as string | null
+});
+const showMove = ref(false);
+const submittingMove = ref(false);
+const moveFormRef = ref<FormInst | null>(null);
+const moveModel = reactive({
+  id: '',
+  email: '',
+  organization_id: null as string | null
 });
 const editModel = reactive({
   id: '',
@@ -78,21 +94,33 @@ const columns: DataTableColumns<Api.Management.User> = [
     key: 'actions',
     width: 150,
     render(row) {
-      if (row.role === 'org_owner') return '-';
+      if (row.role === 'org_owner' && !isPlatformAdmin.value) return '-';
+      const actions = [
+        h(NButton, { size: 'small', quaternary: true, type: 'primary', onClick: () => openEdit(row) }, { default: () => '编辑' })
+      ];
+      if (isPlatformAdmin.value) {
+        actions.push(
+          h(NButton, { size: 'small', quaternary: true, type: 'warning', onClick: () => openMove(row) }, { default: () => '移动组织' })
+        );
+      }
+      if (row.status === 'active') {
+        actions.push(
+          h(
+            NPopconfirm,
+            { onPositiveClick: () => handleToggleStatus(row, 'disabled') },
+            {
+              trigger: () => h(NButton, { size: 'small', type: 'warning', quaternary: true }, { default: () => '禁用' }),
+              default: () => '禁用后该用户所有会话立即失效,确认禁用?'
+            }
+          )
+        );
+      } else {
+        actions.push(
+          h(NButton, { size: 'small', type: 'primary', quaternary: true, onClick: () => handleToggleStatus(row, 'active') }, { default: () => '启用' })
+        );
+      }
       return h(NSpace, { size: 4 }, {
-        default: () => [
-          h(NButton, { size: 'small', quaternary: true, type: 'primary', onClick: () => openEdit(row) }, { default: () => '编辑' }),
-          row.status === 'active'
-            ? h(
-                NPopconfirm,
-                { onPositiveClick: () => handleToggleStatus(row, 'disabled') },
-                {
-                  trigger: () => h(NButton, { size: 'small', type: 'warning', quaternary: true }, { default: () => '禁用' }),
-                  default: () => '禁用后该用户所有会话立即失效,确认禁用?'
-                }
-              )
-            : h(NButton, { size: 'small', type: 'primary', quaternary: true, onClick: () => handleToggleStatus(row, 'active') }, { default: () => '启用' })
-        ]
+        default: () => actions
       });
     }
   }
@@ -101,7 +129,7 @@ const columns: DataTableColumns<Api.Management.User> = [
 async function loadData() {
   loading.value = true;
   try {
-    const { data, error } = await fetchUsers();
+    const { data, error } = await fetchUsers(filterOrgId.value ?? undefined);
     if (!error && data) {
       list.value = data;
     }
@@ -110,11 +138,46 @@ async function loadData() {
   }
 }
 
+async function loadOrganizations() {
+  if (!isPlatformAdmin.value) return;
+  const { data, error } = await fetchOrganizations();
+  if (!error && data) {
+    orgOptions.value = data.map(item => ({ label: `${item.name} (${item.slug})`, value: item.id }));
+  }
+}
+
+function handleFilterOrg() {
+  void loadData();
+}
+
 function openCreate() {
   formModel.email = '';
   formModel.password = '';
   formModel.role = 'developer';
+  formModel.organization_id = null;
   showCreate.value = true;
+}
+
+function openMove(row: Api.Management.User) {
+  moveModel.id = row.id;
+  moveModel.email = row.email;
+  moveModel.organization_id = null;
+  showMove.value = true;
+}
+
+async function handleMove() {
+  await moveFormRef.value?.validate();
+  submittingMove.value = true;
+  try {
+    const { error } = await fetchUpdateUser(moveModel.id, { organization_id: moveModel.organization_id! });
+    if (!error) {
+      window.$message?.success('用户归属组织已更新');
+      showMove.value = false;
+      await loadData();
+    }
+  } finally {
+    submittingMove.value = false;
+  }
 }
 
 function openEdit(row: Api.Management.User) {
@@ -133,7 +196,8 @@ async function handleCreate() {
     const { error } = await fetchCreateUser({
       email: formModel.email.trim(),
       password: formModel.password,
-      role: formModel.role
+      role: formModel.role,
+      organization_id: formModel.organization_id ?? undefined
     });
     if (!error) {
       window.$message?.success('用户已创建');
@@ -170,6 +234,7 @@ async function handleToggleStatus(row: Api.Management.User, status: 'active' | '
 
 onMounted(() => {
   void loadData();
+  void loadOrganizations();
 });
 </script>
 
@@ -178,6 +243,15 @@ onMounted(() => {
     <NCard title="用户" :bordered="false" class="card-wrapper">
       <template #header-extra>
         <NSpace>
+          <NSelect
+            v-if="isPlatformAdmin"
+            v-model:value="filterOrgId"
+            :options="orgOptions"
+            clearable
+            placeholder="按组织筛选"
+            class="w-220px"
+            @update:value="handleFilterOrg"
+          />
           <NButton quaternary type="primary" :loading="loading" @click="loadData">刷新</NButton>
           <NButton type="primary" @click="openCreate">新建用户</NButton>
         </NSpace>
@@ -195,6 +269,9 @@ onMounted(() => {
         </NFormItem>
         <NFormItem label="角色" path="role">
           <NSelect v-model:value="formModel.role" :options="roleOptions" />
+        </NFormItem>
+        <NFormItem v-if="isPlatformAdmin" label="归属组织" path="organization_id">
+          <NSelect v-model:value="formModel.organization_id" :options="orgOptions" clearable placeholder="默认当前组织" />
         </NFormItem>
       </NForm>
       <template #footer>
@@ -219,6 +296,24 @@ onMounted(() => {
         <NSpace justify="end">
           <NButton @click="showEdit = false">取消</NButton>
           <NButton type="primary" :loading="submitting" @click="handleUpdate">重置密码</NButton>
+        </NSpace>
+      </template>
+    </NModal>
+
+    <NModal v-model:show="showMove" preset="card" title="移动组织" class="w-440px">
+      <NForm ref="moveFormRef" :model="moveModel" label-placement="left" label-width="100">
+        <NFormItem label="邮箱">
+          <NInput :value="moveModel.email" disabled />
+        </NFormItem>
+        <NFormItem label="目标组织" path="organization_id">
+          <NSelect v-model:value="moveModel.organization_id" :options="orgOptions" placeholder="选择用户归属组织" />
+        </NFormItem>
+        <NAlert type="info" :bordered="false">移动后该用户的会话仍然有效,下一次请求即按新组织鉴权。</NAlert>
+      </NForm>
+      <template #footer>
+        <NSpace justify="end">
+          <NButton @click="showMove = false">取消</NButton>
+          <NButton type="primary" :loading="submittingMove" @click="handleMove">移动</NButton>
         </NSpace>
       </template>
     </NModal>

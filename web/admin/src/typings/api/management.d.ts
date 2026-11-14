@@ -10,6 +10,22 @@ declare namespace Api {
       name: string;
     }
 
+    interface Organization {
+      id: string;
+      name: string;
+      slug: string;
+      created_at: string;
+    }
+
+    interface CreateOrganizationParams {
+      name: string;
+      slug: string;
+    }
+
+    interface UpdateOrganizationParams {
+      name: string;
+    }
+
     interface Project {
       id: string;
       name: string;
@@ -85,6 +101,7 @@ declare namespace Api {
       weight: number;
       input_cost_per_million: number;
       output_cost_per_million: number;
+      quality_score: number;
       status: string;
     }
 
@@ -105,6 +122,7 @@ declare namespace Api {
       weight: number;
       input_cost_per_million: number;
       output_cost_per_million: number;
+      quality_score: number;
     }
 
     interface CreateModelServiceParams {
@@ -230,12 +248,14 @@ declare namespace Api {
       email: string;
       password: string;
       role: string;
+      organization_id?: string;
     }
 
     interface UpdateUserParams {
       role?: string;
       status?: string;
       password?: string;
+      organization_id?: string;
     }
 
     interface Dashboard {

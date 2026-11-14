@@ -15,6 +15,21 @@ export function fetchDepartments() {
   return request<Api.Management.Department[]>({ url: '/departments' });
 }
 
+/** Get organizations; platform admins see all, others see their own */
+export function fetchOrganizations() {
+  return request<Api.Management.Organization[]>({ url: '/organizations' });
+}
+
+/** Create an organization; requires platform admin */
+export function fetchCreateOrganization(params: Api.Management.CreateOrganizationParams) {
+  return request<{ id: string }>({ url: '/organizations', method: 'post', data: params });
+}
+
+/** Update organization name; slug is immutable */
+export function fetchUpdateOrganization(id: string, params: Api.Management.UpdateOrganizationParams) {
+  return request({ url: `/organizations/${id}`, method: 'patch', data: params });
+}
+
 /** Create a project under a department */
 export function fetchCreateProject(params: Api.Management.CreateProjectParams) {
   return request<{ id: string }>({ url: '/projects', method: 'post', data: params });
@@ -176,9 +191,10 @@ export function fetchDeleteDepartment(id: string) {
   return request({ url: `/departments/${id}`, method: 'delete' });
 }
 
-/** Get users of the current organization; requires org owner */
-export function fetchUsers() {
-  return request<Api.Management.User[]>({ url: '/users' });
+/** Get users of the current organization; requires org owner. Platform admins may pass another organization id */
+export function fetchUsers(organizationId?: string) {
+  const query = organizationId ? `?organization_id=${organizationId}` : '';
+  return request<Api.Management.User[]>({ url: `/users${query}` });
 }
 
 /** Create a user; requires org owner */

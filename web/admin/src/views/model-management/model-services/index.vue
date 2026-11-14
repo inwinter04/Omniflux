@@ -23,6 +23,7 @@ interface CandidateForm {
   weight: number;
   input_cost_per_million: number;
   output_cost_per_million: number;
+  quality_score: number;
 }
 
 const loading = ref(true);
@@ -70,6 +71,7 @@ const candidateColumns: DataTableColumns<Api.Management.ModelCandidate> = [
   { title: '权重', key: 'weight', width: 80 },
   { title: '输入成本(/M)', key: 'input_cost_per_million', width: 120, render: row => formatCost(row.input_cost_per_million) },
   { title: '输出成本(/M)', key: 'output_cost_per_million', width: 120, render: row => formatCost(row.output_cost_per_million) },
+  { title: '质量分', key: 'quality_score', width: 90 },
   {
     title: '状态',
     key: 'status',
@@ -159,7 +161,8 @@ function makeCandidate(): CandidateForm {
     priority: 100,
     weight: 1,
     input_cost_per_million: 0,
-    output_cost_per_million: 0
+    output_cost_per_million: 0,
+    quality_score: 0.5
   };
 }
 
@@ -197,7 +200,8 @@ function openEdit(row: Api.Management.ModelService) {
     priority: item.priority,
     weight: item.weight,
     input_cost_per_million: item.input_cost_per_million,
-    output_cost_per_million: item.output_cost_per_million
+    output_cost_per_million: item.output_cost_per_million,
+    quality_score: item.quality_score
   }));
   showEdit.value = true;
 }
@@ -221,7 +225,8 @@ function toCandidateParams(candidates: CandidateForm[]) {
     priority: item.priority,
     weight: item.weight,
     input_cost_per_million: item.input_cost_per_million,
-    output_cost_per_million: item.output_cost_per_million
+    output_cost_per_million: item.output_cost_per_million,
+    quality_score: item.quality_score
   }));
 }
 
@@ -334,6 +339,11 @@ onMounted(() => {
                 <NInputNumber v-model:value="item.output_cost_per_million" :min="0" class="w-full" />
               </NFormItem>
             </NGi>
+            <NGi span="12 m:6">
+              <NFormItem label="质量分" label-placement="top">
+                <NInputNumber v-model:value="item.quality_score" :min="0" :max="1" :step="0.05" class="w-full" />
+              </NFormItem>
+            </NGi>
           </NGrid>
           <div class="flex justify-end">
             <NButton size="small" type="error" quaternary :disabled="formModel.candidates.length <= 1" @click="removeCandidate(index)">
@@ -391,6 +401,11 @@ onMounted(() => {
             <NGi span="12 m:6">
               <NFormItem label="输出成本(/M)" label-placement="top">
                 <NInputNumber v-model:value="item.output_cost_per_million" :min="0" class="w-full" />
+              </NFormItem>
+            </NGi>
+            <NGi span="12 m:6">
+              <NFormItem label="质量分" label-placement="top">
+                <NInputNumber v-model:value="item.quality_score" :min="0" :max="1" :step="0.05" class="w-full" />
               </NFormItem>
             </NGi>
           </NGrid>

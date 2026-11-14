@@ -37,6 +37,7 @@ declare module "@elegant-router/types" {
     "organization": "/organization";
     "organization_applications": "/organization/applications";
     "organization_departments": "/organization/departments";
+    "organization_organizations": "/organization/organizations";
     "organization_projects": "/organization/projects";
   };
 
@@ -111,6 +112,7 @@ declare module "@elegant-router/types" {
     | "observability_usage"
     | "organization_applications"
     | "organization_departments"
+    | "organization_organizations"
     | "organization_projects"
   >;
 

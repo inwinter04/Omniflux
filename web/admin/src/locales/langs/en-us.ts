@@ -234,6 +234,7 @@ const local: App.I18n.Schema = {
     organization_projects: 'Projects',
     organization_applications: 'Applications',
     organization_departments: 'Departments',
+    organization_organizations: 'Organizations',
     access: 'Access',
     access_users: 'Users',
     'access_api-keys': 'API Keys',

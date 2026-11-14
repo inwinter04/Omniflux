@@ -31,5 +31,6 @@ export const views: Record<LastLevelRouteKey, RouteComponent | (() => Promise<Ro
   observability_usage: () => import("@/views/observability/usage/index.vue"),
   organization_applications: () => import("@/views/organization/applications/index.vue"),
   organization_departments: () => import("@/views/organization/departments/index.vue"),
+  organization_organizations: () => import("@/views/organization/organizations/index.vue"),
   organization_projects: () => import("@/views/organization/projects/index.vue"),
 };

@@ -183,6 +183,7 @@ const routeMap: RouteMap = {
   "organization": "/organization",
   "organization_applications": "/organization/applications",
   "organization_departments": "/organization/departments",
+  "organization_organizations": "/organization/organizations",
   "organization_projects": "/organization/projects"
 };
 

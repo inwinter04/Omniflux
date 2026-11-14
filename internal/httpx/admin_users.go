@@ -29,15 +29,17 @@ type userResponse struct {
 }
 
 type createUserRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-	Role     string `json:"role"`
+	Email          string `json:"email"`
+	Password       string `json:"password"`
+	Role           string `json:"role"`
+	OrganizationID string `json:"organization_id"`
 }
 
 type updateUserRequest struct {
-	Role     *string `json:"role"`
-	Status   *string `json:"status"`
-	Password *string `json:"password"`
+	Role           *string `json:"role"`
+	Status         *string `json:"status"`
+	Password       *string `json:"password"`
+	OrganizationID *string `json:"organization_id"`
 }
 
 func timeStringPtr(src any) (*string, error) {
@@ -58,10 +60,22 @@ func (d ServerDeps) Users(w http.ResponseWriter, r *http.Request) {
 	if !ok || d.requireOwner(w, principal) != nil {
 		return
 	}
+	// platform_admin 可通过 organization_id 参数查看任意组织的用户;默认只看自己组织。
+	listOrgID := principal.OrganizationID
+	if isPlatformAdmin(principal) {
+		if orgParam := r.URL.Query().Get("organization_id"); orgParam != "" {
+			parsed, err := uuid.Parse(orgParam)
+			if err != nil {
+				adminError(w, http.StatusBadRequest, "USER_ORG_INVALID", "organization_id 不合法", nil)
+				return
+			}
+			listOrgID = parsed
+		}
+	}
 	rows, err := d.Pool.Query(r.Context(), `
 		SELECT id, email, role, status, last_login_at, created_at
 		FROM users WHERE organization_id = $1 ORDER BY created_at ASC
-	`, principal.OrganizationID)
+	`, listOrgID)
 	if err != nil {
 		adminError(w, http.StatusInternalServerError, "USER_LIST_FAILED", "无法查询用户", nil)
 		return
@@ -118,6 +132,29 @@ func (d ServerDeps) CreateUser(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusBadRequest, "USER_ROLE_INVALID", "角色仅支持 org_admin/project_admin/developer/viewer", nil)
 		return
 	}
+	// platform_admin 可把新用户直接归属到任意组织;其余角色只能在当前组织创建。
+	targetOrgID := principal.OrganizationID
+	if body.OrganizationID != "" {
+		if !isPlatformAdmin(principal) {
+			adminError(w, http.StatusForbidden, "PERMISSION_DENIED", "仅平台管理员可指定用户归属组织", nil)
+			return
+		}
+		parsed, err := uuid.Parse(body.OrganizationID)
+		if err != nil {
+			adminError(w, http.StatusBadRequest, "USER_ORG_INVALID", "organization_id 不合法", nil)
+			return
+		}
+		var orgCount int
+		if err := d.Pool.QueryRow(r.Context(), `SELECT count(*) FROM organizations WHERE id = $1`, parsed).Scan(&orgCount); err != nil {
+			adminError(w, http.StatusInternalServerError, "USER_CREATE_FAILED", "创建用户失败", nil)
+			return
+		}
+		if orgCount == 0 {
+			adminError(w, http.StatusBadRequest, "USER_ORG_NOT_FOUND", "目标组织不存在", nil)
+			return
+		}
+		targetOrgID = parsed
+	}
 	var count int
 	if err := d.Pool.QueryRow(r.Context(), `SELECT count(*) FROM users WHERE email = $1`, email).Scan(&count); err != nil {
 		adminError(w, http.StatusInternalServerError, "USER_CREATE_FAILED", "创建用户失败", nil)
@@ -136,14 +173,14 @@ func (d ServerDeps) CreateUser(w http.ResponseWriter, r *http.Request) {
 	if _, err := d.Pool.Exec(r.Context(), `
 		INSERT INTO users(id, organization_id, email, password_hash, role)
 		VALUES ($1,$2,$3,$4,$5)
-	`, userID, principal.OrganizationID, email, hash, body.Role); err != nil {
+	`, userID, targetOrgID, email, hash, body.Role); err != nil {
 		adminError(w, http.StatusInternalServerError, "USER_CREATE_FAILED", "创建用户失败", nil)
 		return
 	}
 	_, _ = d.Pool.Exec(r.Context(), `
 		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, after_state)
 		VALUES ($1,$2,'user','user.created','user',$3,$4)
-	`, principal.OrganizationID, principal.UserID, userID.String(), auditJSON(map[string]any{"email": email, "role": body.Role}))
+	`, targetOrgID, principal.UserID, userID.String(), auditJSON(map[string]any{"email": email, "role": body.Role}))
 	adminOK(w, map[string]string{"id": userID.String()})
 }
 
@@ -162,6 +199,29 @@ func (d ServerDeps) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusBadRequest, "USER_ID_INVALID", "用户 ID 不合法", nil)
 		return
 	}
+	// platform_admin 可把用户移动到任意组织;其余角色不允许调整归属。
+	var targetOrgID *uuid.UUID
+	if body.OrganizationID != nil {
+		if !isPlatformAdmin(principal) {
+			adminError(w, http.StatusForbidden, "PERMISSION_DENIED", "仅平台管理员可调整用户归属组织", nil)
+			return
+		}
+		parsed, err := uuid.Parse(*body.OrganizationID)
+		if err != nil {
+			adminError(w, http.StatusBadRequest, "USER_ORG_INVALID", "organization_id 不合法", nil)
+			return
+		}
+		var orgCount int
+		if err := d.Pool.QueryRow(r.Context(), `SELECT count(*) FROM organizations WHERE id = $1`, parsed).Scan(&orgCount); err != nil {
+			adminError(w, http.StatusInternalServerError, "USER_UPDATE_FAILED", "更新用户失败", nil)
+			return
+		}
+		if orgCount == 0 {
+			adminError(w, http.StatusBadRequest, "USER_ORG_NOT_FOUND", "目标组织不存在", nil)
+			return
+		}
+		targetOrgID = &parsed
+	}
 	if userID == principal.UserID && body.Status != nil && *body.Status != "active" {
 		adminError(w, http.StatusBadRequest, "USER_SELF_DISABLE", "不能禁用自己的账号", nil)
 		return
@@ -173,10 +233,17 @@ func (d ServerDeps) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	var current struct {
 		Role   string
 		Status string
+		OrgID  uuid.UUID
 	}
-	err = d.Pool.QueryRow(r.Context(), `
-		SELECT role, status FROM users WHERE id = $1 AND organization_id = $2
-	`, userID, principal.OrganizationID).Scan(&current.Role, &current.Status)
+	if isPlatformAdmin(principal) {
+		err = d.Pool.QueryRow(r.Context(), `
+			SELECT role, status, organization_id FROM users WHERE id = $1
+		`, userID).Scan(&current.Role, &current.Status, &current.OrgID)
+	} else {
+		err = d.Pool.QueryRow(r.Context(), `
+			SELECT role, status, organization_id FROM users WHERE id = $1 AND organization_id = $2
+		`, userID, principal.OrganizationID).Scan(&current.Role, &current.Status, &current.OrgID)
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		adminError(w, http.StatusNotFound, "USER_NOT_FOUND", "用户不存在或不属于当前组织", nil)
 		return
@@ -185,7 +252,7 @@ func (d ServerDeps) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusInternalServerError, "USER_UPDATE_FAILED", "更新用户失败", nil)
 		return
 	}
-	if current.Role == "org_owner" {
+	if current.Role == "org_owner" && !isPlatformAdmin(principal) {
 		adminError(w, http.StatusForbidden, "USER_OWNER_PROTECTED", "组织所有者账号不可修改", nil)
 		return
 	}
@@ -210,17 +277,36 @@ func (d ServerDeps) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		}
 		hash = newHash
 	}
-	// 禁用即吊销全部会话,保证立即失效。
+	// 禁用即吊销全部会话,保证立即失效;移动组织不吊销会话,principal 每次请求重建,下一请求即生效。
+	// 审计挂在用户归属组织(移动后)下,便于目标组织追溯成员变更。
+	auditOrgID := current.OrgID
+	if targetOrgID != nil {
+		auditOrgID = *targetOrgID
+	}
 	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(r.Context(), `
-			UPDATE users SET
-				role = COALESCE($3, role),
-				status = COALESCE($4, status),
-				password_hash = COALESCE($5, password_hash),
-				failed_login_count = 0, locked_until = NULL, updated_at = now()
-			WHERE id = $1 AND organization_id = $2
-		`, userID, principal.OrganizationID, body.Role, body.Status, hash); err != nil {
-			return err
+		var execErr error
+		if isPlatformAdmin(principal) {
+			_, execErr = tx.Exec(r.Context(), `
+				UPDATE users SET
+					role = COALESCE($2, role),
+					status = COALESCE($3, status),
+					password_hash = COALESCE($4, password_hash),
+					organization_id = COALESCE($5, organization_id),
+					failed_login_count = 0, locked_until = NULL, updated_at = now()
+				WHERE id = $1
+			`, userID, body.Role, body.Status, hash, targetOrgID)
+		} else {
+			_, execErr = tx.Exec(r.Context(), `
+				UPDATE users SET
+					role = COALESCE($3, role),
+					status = COALESCE($4, status),
+					password_hash = COALESCE($5, password_hash),
+					failed_login_count = 0, locked_until = NULL, updated_at = now()
+				WHERE id = $1 AND organization_id = $2
+			`, userID, principal.OrganizationID, body.Role, body.Status, hash)
+		}
+		if execErr != nil {
+			return execErr
 		}
 		if body.Status != nil && *body.Status == "disabled" {
 			if _, err := tx.Exec(r.Context(), `
@@ -233,7 +319,7 @@ func (d ServerDeps) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		_, err := tx.Exec(r.Context(), `
 			INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, before_state, after_state)
 			VALUES ($1,$2,'user','user.updated','user',$3,$4,$5)
-		`, principal.OrganizationID, principal.UserID, userID.String(),
+		`, auditOrgID, principal.UserID, userID.String(),
 			auditJSON(map[string]any{"role": current.Role, "status": current.Status}),
 			auditJSON(map[string]any{"role": body.Role, "status": body.Status, "password_reset": body.Password != nil}))
 		return err

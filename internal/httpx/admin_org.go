@@ -3,7 +3,9 @@ package httpx
 import (
 	"errors"
 	"net/http"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -401,10 +403,6 @@ func (d ServerDeps) UpdateApplication(w http.ResponseWriter, r *http.Request) {
 
 var _ = pgx.ErrNoRows
 
-
-
-
-
 type createDepartmentRequest struct {
 	Name string `json:"name"`
 }
@@ -536,5 +534,167 @@ func (d ServerDeps) DeleteDepartment(w http.ResponseWriter, r *http.Request) {
 		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id)
 		VALUES ($1,$2,'user','department.deleted','department',$3)
 	`, principal.OrganizationID, principal.UserID, departmentID.String())
+	adminOK(w, nil)
+}
+
+type organizationResponse struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Slug      string    `json:"slug"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type createOrganizationRequest struct {
+	Name string `json:"name"`
+	Slug string `json:"slug"`
+}
+
+type updateOrganizationRequest struct {
+	Name *string `json:"name"`
+}
+
+// organizationSlugPattern 约束 slug 为小写字母/数字/连字符,保证 URL 安全且跨系统兼容。
+var organizationSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+
+// isPlatformAdmin 判断当前账号是否为平台管理员(可跨组织管理组织与用户归属)。
+func isPlatformAdmin(principal auth.Principal) bool {
+	return principal.Role == "platform_admin"
+}
+
+// Organizations 返回组织列表:platform_admin 可见全部组织,其余角色仅可见自己所在组织。
+func (d ServerDeps) Organizations(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok || d.requireViewer(w, principal) != nil {
+		return
+	}
+	// platform_admin 返回全部组织;其余角色仅能看到自己所在组织。
+	query := `SELECT id, name, slug, created_at FROM organizations`
+	args := []any{}
+	if !isPlatformAdmin(principal) {
+		query += " WHERE id = $1"
+		args = append(args, principal.OrganizationID)
+	}
+	query += " ORDER BY created_at ASC"
+	rows, err := d.Pool.Query(r.Context(), query, args...)
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "ORG_LIST_FAILED", "无法查询组织", nil)
+		return
+	}
+	defer rows.Close()
+	list := []organizationResponse{}
+	for rows.Next() {
+		var item organizationResponse
+		var id uuid.UUID
+		if err := rows.Scan(&id, &item.Name, &item.Slug, &item.CreatedAt); err != nil {
+			adminError(w, http.StatusInternalServerError, "ORG_LIST_FAILED", "无法查询组织", nil)
+			return
+		}
+		item.ID = id.String()
+		list = append(list, item)
+	}
+	adminOK(w, list)
+}
+
+// CreateOrganization 创建组织;仅 platform_admin 可调用。
+// 新组织初始没有任何成员与业务数据,需通过用户管理将用户归属到该组织。
+func (d ServerDeps) CreateOrganization(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok {
+		adminFail(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	if !isPlatformAdmin(principal) {
+		adminError(w, http.StatusForbidden, "PERMISSION_DENIED", "需要平台管理员权限", nil)
+		return
+	}
+	var body createOrganizationRequest
+	if !d.decodeJSON(w, r, &body) {
+		return
+	}
+	body.Name = strings.TrimSpace(body.Name)
+	body.Slug = strings.TrimSpace(body.Slug)
+	if body.Name == "" {
+		adminError(w, http.StatusBadRequest, "ORG_NAME_REQUIRED", "请填写组织名称", nil)
+		return
+	}
+	if !organizationSlugPattern.MatchString(body.Slug) {
+		adminError(w, http.StatusBadRequest, "ORG_SLUG_INVALID",
+			"slug 仅支持小写字母、数字和连字符,长度 1-63,且以字母或数字开头", nil)
+		return
+	}
+	orgID := uuid.New()
+	if _, err := d.Pool.Exec(r.Context(), `
+		INSERT INTO organizations(id, name, slug) VALUES ($1,$2,$3)
+	`, orgID, body.Name, body.Slug); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.ConstraintName == "organizations_slug_key" {
+			adminError(w, http.StatusConflict, "ORG_SLUG_EXISTS", "同名 slug 已存在", nil)
+			return
+		}
+		adminError(w, http.StatusInternalServerError, "ORG_CREATE_FAILED", "创建组织失败", nil)
+		return
+	}
+	// 审计挂在发起者的组织下,记录被操作的目标组织。
+	_, _ = d.Pool.Exec(r.Context(), `
+		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, after_state)
+		VALUES ($1,$2,'user','organization.created','organization',$3,$4)
+	`, principal.OrganizationID, principal.UserID, orgID.String(),
+		auditJSON(map[string]any{"name": body.Name, "slug": body.Slug}))
+	adminOK(w, map[string]string{"id": orgID.String()})
+}
+
+// UpdateOrganization 修改组织名称;platform_admin 可改任意组织,
+// 组织内 org_admin 及以上仅可改自己所在组织。slug 创建后不可变更。
+func (d ServerDeps) UpdateOrganization(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok {
+		adminFail(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	orgID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		adminError(w, http.StatusBadRequest, "ORG_ID_INVALID", "组织 ID 不合法", nil)
+		return
+	}
+	if !isPlatformAdmin(principal) {
+		if d.requireAdmin(w, principal) != nil {
+			return
+		}
+		if orgID != principal.OrganizationID {
+			adminError(w, http.StatusForbidden, "PERMISSION_DENIED", "只能修改自己所在的组织", nil)
+			return
+		}
+	}
+	var body updateOrganizationRequest
+	if !d.decodeJSON(w, r, &body) {
+		return
+	}
+	if body.Name == nil || strings.TrimSpace(*body.Name) == "" {
+		adminError(w, http.StatusBadRequest, "ORG_NAME_REQUIRED", "请填写组织名称", nil)
+		return
+	}
+	name := strings.TrimSpace(*body.Name)
+	var oldName string
+	err = d.Pool.QueryRow(r.Context(), `SELECT name FROM organizations WHERE id = $1`, orgID).Scan(&oldName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		adminError(w, http.StatusNotFound, "ORG_NOT_FOUND", "组织不存在", nil)
+		return
+	}
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "ORG_UPDATE_FAILED", "更新组织失败", nil)
+		return
+	}
+	if _, err := d.Pool.Exec(r.Context(), `
+		UPDATE organizations SET name = $2 WHERE id = $1
+	`, orgID, name); err != nil {
+		adminError(w, http.StatusInternalServerError, "ORG_UPDATE_FAILED", "更新组织失败", nil)
+		return
+	}
+	_, _ = d.Pool.Exec(r.Context(), `
+		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, before_state, after_state)
+		VALUES ($1,$2,'user','organization.updated','organization',$3,$4,$5)
+	`, principal.OrganizationID, principal.UserID, orgID.String(),
+		auditJSON(map[string]any{"name": oldName}),
+		auditJSON(map[string]any{"name": name}))
 	adminOK(w, nil)
 }

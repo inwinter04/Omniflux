@@ -216,7 +216,7 @@ type adminUserInfoResponse struct {
 }
 
 func adminRoles(role string) []string {
-	if role == "org_owner" || role == "org_admin" {
+	if role == "platform_admin" || role == "org_owner" || role == "org_admin" {
 		return []string{"R_SUPER", role}
 	}
 	return []string{role}

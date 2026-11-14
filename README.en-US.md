@@ -35,6 +35,9 @@ Omniflux is under active development. Configuration, data models, and administra
 | `POST /api/v1/auth/login` | Administrator sign-in |
 | `GET /api/v1/auth/me` | Current administrator profile |
 | `POST /api/v1/auth/logout` | Sign out |
+| `GET /api/v1/organizations` | List organizations (platform admins see all, others see their own) |
+| `POST /api/v1/organizations` | Create an organization (platform admins only) |
+| `PATCH /api/v1/organizations/{id}` | Update organization name (slug is immutable) |
 
 The data-plane model APIs are under development.
 
