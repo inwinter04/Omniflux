@@ -29,7 +29,8 @@ type chatStreamChoice struct {
 // handleStream 调用上游并把流式 chunk 转成 SSE 输出;结束时定稿用量。
 // 客户端断开记 interrupted;上游报错记 failed 并在流内输出错误事件。
 func (d Deps) handleStream(bctx *schemas.BifrostContext, r *http.Request, w http.ResponseWriter,
-	requestID uuid.UUID, chain routeChain, requestedModel string, req *schemas.BifrostChatRequest, start time.Time) {
+	requestID uuid.UUID, keyCtx apiKeyContext, chain routeChain, requestedModel string,
+	req *schemas.BifrostChatRequest, start time.Time) {
 	stream, bifrostErr := d.Engine.Client().ChatCompletionStreamRequest(bctx, req)
 	if bifrostErr != nil {
 		d.recordFailure(r.Context(), requestID, chain, bifrostErr, start, nil, usageSnapshot{})
@@ -147,11 +148,11 @@ func (d Deps) handleStream(bctx *schemas.BifrostContext, r *http.Request, w http
 	_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	flusher.Flush()
 
-	d.recordStreamSuccess(r.Context(), requestID, chain, servedProvider, servedModel, start, firstTokenMS, snapshot)
+	d.recordStreamSuccess(r.Context(), requestID, keyCtx, chain, servedProvider, servedModel, start, firstTokenMS, snapshot)
 }
 
 // recordStreamSuccess 定稿一次成功的流式请求。
-func (d Deps) recordStreamSuccess(ctx context.Context, requestID uuid.UUID, chain routeChain,
+func (d Deps) recordStreamSuccess(ctx context.Context, requestID uuid.UUID, keyCtx apiKeyContext, chain routeChain,
 	servedProvider, servedModel string, start time.Time, firstTokenMS *int, snapshot usageSnapshot) {
 	total := int(time.Since(start).Milliseconds())
 	served, lookupErr := chain.findCandidate(servedProvider, servedModel)
@@ -183,6 +184,7 @@ func (d Deps) recordStreamSuccess(ctx context.Context, requestID uuid.UUID, chai
 	}); err != nil {
 		d.Logger.Warn("finalize stream usage failed", "request_id", requestID, "error", err)
 	}
+	d.settleBudget(context.WithoutCancel(ctx), keyCtx, requestID, cost)
 }
 
 // recordInterrupted 定稿一次客户端断开的流式请求。
@@ -218,3 +220,6 @@ func errorMessageOf(err *schemas.BifrostError) string {
 	}
 	return "upstream request failed"
 }
+
+
+

@@ -140,3 +140,23 @@ export function fetchUpdateRoutePolicy(id: string, params: Api.Management.Update
 export function fetchUpdateModelService(id: string, params: Api.Management.UpdateModelServiceParams) {
   return request({ url: `/model-services/${id}`, method: 'patch', data: params });
 }
+
+/** Get budget windows of the current organization */
+export function fetchBudgets() {
+  return request<Api.Management.Budget[]>({ url: '/budgets' });
+}
+
+/** Create a budget window */
+export function fetchCreateBudget(params: Api.Management.CreateBudgetParams) {
+  return request<{ id: string }>({ url: '/budgets', method: 'post', data: params });
+}
+
+/** Update budget limit */
+export function fetchUpdateBudget(id: string, limitAmount: string) {
+  return request({ url: `/budgets/${id}`, method: 'patch', data: { limit_amount: limitAmount } });
+}
+
+/** Delete a budget window; blocked when settlement records exist */
+export function fetchDeleteBudget(id: string) {
+  return request({ url: `/budgets/${id}`, method: 'delete' });
+}

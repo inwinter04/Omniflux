@@ -190,6 +190,17 @@ export const generatedRoutes: GeneratedRoute[] = [
         }
       },
       {
+        name: 'organization_budgets',
+        path: '/organization/budgets',
+        component: 'view.organization_budgets',
+        meta: {
+          title: 'organization_budgets',
+          i18nKey: 'route.organization_budgets',
+          order: 4,
+          icon: 'mdi:wallet-outline'
+        }
+      },
+      {
         name: 'organization_projects',
         path: '/organization/projects',
         component: 'view.organization_projects',

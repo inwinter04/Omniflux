@@ -85,13 +85,78 @@ type resolvedService struct {
 	Candidates []candidate
 }
 
-// routePolicy 是本阶段路由真正生效的两个字段;策略评分字段按默认权重生效,尚未参与计算。
-type routePolicy struct {
-	FallbackLimit     int
-	ProviderTimeoutMS int
+// parsePolicyWeights 解析 route_policies.weights JSON;缺省键按 0 处理,空对象返回空权重。
+func parsePolicyWeights(raw []byte) policyWeights {
+	var parsed struct {
+		Cost        *float64 `json:"cost"`
+		Quality     *float64 `json:"quality"`
+		Latency     *float64 `json:"latency"`
+		Reliability *float64 `json:"reliability"`
+	}
+	if len(raw) == 0 {
+		return policyWeights{}
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return policyWeights{}
+	}
+	w := policyWeights{}
+	if parsed.Cost != nil {
+		w.Cost = *parsed.Cost
+	}
+	if parsed.Quality != nil {
+		w.Quality = *parsed.Quality
+	}
+	if parsed.Latency != nil {
+		w.Latency = *parsed.Latency
+	}
+	if parsed.Reliability != nil {
+		w.Reliability = *parsed.Reliability
+	}
+	return w
 }
 
-var defaultPolicy = routePolicy{FallbackLimit: 2, ProviderTimeoutMS: 60000}
+// loadCandidateHealth 统计候选近 7 天的调用表现,用于 latency/reliability 评分。
+// 没有任何历史时返回空表,所有候选评分退化为等值(等价于旧的加权随机)。
+func (d Deps) loadCandidateHealth(ctx context.Context, orgID uuid.UUID, chain []candidate) *policyScores {
+	ids := make([]uuid.UUID, 0, len(chain))
+	for _, c := range chain {
+		if parsed := parseUUID(c.ID); parsed != uuid.Nil {
+			ids = append(ids, parsed)
+		}
+	}
+	if len(ids) == 0 {
+		return &policyScores{Health: map[uuid.UUID]candidateHealth{}}
+	}
+	rows, err := d.Pool.Query(ctx, `
+		SELECT model_candidate_id,
+		       avg(total_ms) FILTER (WHERE total_ms IS NOT NULL),
+		       count(*) FILTER (WHERE state = 'success'),
+		       count(*)
+		FROM usage_records
+		WHERE organization_id = $1 AND model_candidate_id = ANY($2)
+		  AND state <> 'pending' AND created_at >= now() - interval '7 days'
+		GROUP BY model_candidate_id
+	`, orgID, ids)
+	if err != nil {
+		return &policyScores{Health: map[uuid.UUID]candidateHealth{}}
+	}
+	defer rows.Close()
+	health := map[uuid.UUID]candidateHealth{}
+	for rows.Next() {
+		var id uuid.UUID
+		var h candidateHealth
+		var avgMS *float64
+		if err := rows.Scan(&id, &avgMS, &h.Successes, &h.Total); err != nil {
+			continue
+		}
+		if avgMS != nil {
+			h.AvgMS = *avgMS
+		}
+		health[id] = h
+	}
+	return &policyScores{Health: health}
+}
+
 
 // loadService 按 org + name 解析 active 模型服务、active 候选与绑定的路由策略。
 // 策略被禁用或不存在时回退到内置默认值。
@@ -110,15 +175,18 @@ func (d Deps) loadService(ctx context.Context, orgID uuid.UUID, name string) (re
 	}
 	svc.PolicyID = policyID
 	if policyID != nil {
+		var weightsRaw []byte
 		err = d.Pool.QueryRow(ctx, `
-			SELECT fallback_limit, provider_timeout_ms FROM route_policies
+			SELECT strategy, fallback_limit, provider_timeout_ms, weights FROM route_policies
 			WHERE id = $1 AND status = 'active'
-		`, *policyID).Scan(&svc.Policy.FallbackLimit, &svc.Policy.ProviderTimeoutMS)
+		`, *policyID).Scan(&svc.Policy.Strategy, &svc.Policy.FallbackLimit, &svc.Policy.ProviderTimeoutMS, &weightsRaw)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return svc, false, err
 		}
 		if errors.Is(err, pgx.ErrNoRows) {
 			svc.Policy = defaultPolicy
+		} else {
+			svc.Policy.Weights = parsePolicyWeights(weightsRaw)
 		}
 	} else {
 		svc.Policy = defaultPolicy
@@ -171,7 +239,11 @@ func (d Deps) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusNotFound, "model_not_found", "模型服务不存在或未启用: "+meta.Model)
 		return
 	}
-	chain := selectChain(svc.Candidates, svc.Policy.FallbackLimit)
+	if !d.checkBudgets(w, r, keyCtx) {
+		return
+	}
+	scores := d.loadCandidateHealth(r.Context(), keyCtx.OrganizationID, svc.Candidates)
+	chain := selectChain(svc.Candidates, svc.Policy, scores)
 	primary := chain[0]
 	requestID := uuid.New()
 
@@ -203,7 +275,7 @@ func (d Deps) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if meta.Stream {
-		d.handleStream(bctx, r, w, requestID, chain, meta.Model, req, start)
+		d.handleStream(bctx, r, w, requestID, keyCtx, chain, meta.Model, req, start)
 		return
 	}
 	d.handleNonStream(bctx, r, w, requestID, chain, meta.Model, req, start)
@@ -306,6 +378,7 @@ func (d Deps) handleNonStream(bctx *schemas.BifrostContext, r *http.Request, w h
 	if finalizeErr != nil {
 		d.Logger.Warn("finalize usage failed", "request_id", requestID, "error", finalizeErr)
 	}
+	d.settleBudget(context.WithoutCancel(r.Context()), keyFromContextOrEmpty(r), requestID, cost)
 }
 
 // recordFailure 在上游失败时定稿用量并记录失败明细。finalize 使用不受请求取消影响的 ctx。
@@ -362,3 +435,8 @@ func writeBifrostError(w http.ResponseWriter, bifrostErr *schemas.BifrostError) 
 	}
 	apiError(w, status, errType, message)
 }
+
+
+
+
+

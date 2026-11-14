@@ -288,5 +288,10 @@ func (d ServerDeps) UpdateProviderAccount(w http.ResponseWriter, r *http.Request
 		VALUES ($1,$2,'user','provider_account.updated','provider_account',$3,$4,$5)
 	`, principal.OrganizationID, principal.UserID, accountID.String(),
 		auditJSON(map[string]any{"name": oldName}), auditJSON(map[string]any{"name": body.Name, "region": body.Region, "base_url": body.BaseURL}))
+	// base_url/凭据相关配置变化需要重建上游引擎。
+	if !d.reloadEngine(w, r) {
+		return
+	}
 	adminOK(w, nil)
 }
+

@@ -212,6 +212,28 @@ declare namespace Api {
       total_ms: number | null;
     }
 
+    interface Budget {
+      id: string;
+      scope_type: 'organization' | 'project' | 'application' | 'api_key';
+      scope_id: string;
+      scope_name: string;
+      window_start: string;
+      window_end: string;
+      limit_amount: string;
+      spent_amount: string;
+      currency: string;
+      exceeded: boolean;
+    }
+
+    interface CreateBudgetParams {
+      scope_type: string;
+      scope_id: string;
+      window_start: string;
+      window_end: string;
+      limit_amount: string;
+      currency?: string;
+    }
+
     interface AuditEvent {
       id: string;
       created_at: string;
@@ -224,5 +246,6 @@ declare namespace Api {
     }
   }
 }
+
 
 

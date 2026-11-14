@@ -42,6 +42,18 @@ type createRoutePolicyRequest struct {
 
 var allowedStrategies = map[string]bool{"cost_first": true, "quality_first": true, "balanced": true}
 
+// strategyWeights 把策略类型映射为评分权重预设;调度读取 weights,strategy 是语义入口。
+func strategyWeights(strategy string) string {
+	switch strategy {
+	case "cost_first":
+		return `{"cost":0.7,"quality":0.1,"latency":0.1,"reliability":0.1}`
+	case "quality_first":
+		return `{"cost":0.1,"quality":0.7,"latency":0.1,"reliability":0.1}`
+	default:
+		return `{"cost":0.4,"quality":0.3,"latency":0.15,"reliability":0.15}`
+	}
+}
+
 // RoutePolicies 返回当前组织的路由策略列表。
 func (d ServerDeps) RoutePolicies(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
@@ -126,7 +138,8 @@ func (d ServerDeps) CreateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	weights := body.Weights
 	if len(weights) == 0 {
-		weights = json.RawMessage(`{"cost":0.4,"quality":0.3,"latency":0.15,"reliability":0.15}`)
+		// strategy 是权重预设入口:未显式给 weights 时按策略类型写入对应预设。
+		weights = json.RawMessage(strategyWeights(body.Strategy))
 	}
 	policyID := uuid.New()
 	if _, err := d.Pool.Exec(r.Context(), `
@@ -269,12 +282,14 @@ func (d ServerDeps) UpdateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 	tag, err := d.Pool.Exec(r.Context(), `
 		UPDATE route_policies SET
 			name = $3, strategy = $4,
-			fallback_limit = COALESCE($5, fallback_limit),
-			provider_timeout_ms = COALESCE($6, provider_timeout_ms),
-			first_token_timeout_ms = COALESCE($7, first_token_timeout_ms),
+			weights = $5::jsonb,
+			fallback_limit = COALESCE($6, fallback_limit),
+			provider_timeout_ms = COALESCE($7, provider_timeout_ms),
+			first_token_timeout_ms = COALESCE($8, first_token_timeout_ms),
 			version = version + 1, updated_at = now()
 		WHERE id = $1 AND organization_id = $2
 	`, policyID, principal.OrganizationID, body.Name, body.Strategy,
+		json.RawMessage(strategyWeights(body.Strategy)),
 		body.FallbackLimit, body.ProviderTimeoutMS, body.FirstTokenTimeoutMS)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -299,3 +314,4 @@ func (d ServerDeps) UpdateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 			"first_token_timeout_ms": body.FirstTokenTimeoutMS}))
 	adminOK(w, nil)
 }
+

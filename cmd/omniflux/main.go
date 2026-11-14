@@ -84,7 +84,8 @@ func run() error {
 		Logger: logger, Pool: pool, Redis: redisClient, Engine: engine,
 		Auth: authStore, Env: cfg.Env,
 		MasterKey: cfg.MasterKey, APIKeyPepper: cfg.APIKeyPepper,
-		ReloadEngine: reloadEngine,
+		ReloadEngine:    reloadEngine,
+		RateLimitPerMin: cfg.RateLimitPerMin,
 	})
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,

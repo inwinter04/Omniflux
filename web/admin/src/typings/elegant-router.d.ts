@@ -33,6 +33,7 @@ declare module "@elegant-router/types" {
     "organization": "/organization";
     "organization_api-keys": "/organization/api-keys";
     "organization_applications": "/organization/applications";
+    "organization_budgets": "/organization/budgets";
     "organization_projects": "/organization/projects";
   };
 
@@ -103,6 +104,7 @@ declare module "@elegant-router/types" {
     | "observability_usage"
     | "organization_api-keys"
     | "organization_applications"
+    | "organization_budgets"
     | "organization_projects"
   >;
 

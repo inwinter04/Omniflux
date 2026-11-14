@@ -20,15 +20,16 @@ import (
 )
 
 type ServerDeps struct {
-	Logger       *slog.Logger
-	Pool         *pgxpool.Pool
-	Redis        *redis.Client
-	Engine       *bifrostx.Engine
-	Auth         *auth.Store
-	Env          string
-	MasterKey    []byte
-	APIKeyPepper string
-	ReloadEngine func(context.Context) error
+	Logger          *slog.Logger
+	Pool            *pgxpool.Pool
+	Redis           *redis.Client
+	Engine          *bifrostx.Engine
+	Auth            *auth.Store
+	Env             string
+	MasterKey       []byte
+	APIKeyPepper    string
+	ReloadEngine    func(context.Context) error
+	RateLimitPerMin int
 }
 
 func New(deps ServerDeps) http.Handler {
@@ -71,9 +72,13 @@ func New(deps ServerDeps) http.Handler {
 		Engine:       deps.Engine,
 		APIKeyPepper: deps.APIKeyPepper,
 	}
+	plane.SetRateLimit(deps.Redis, deps.RateLimitPerMin)
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(plane.RequireAPIKey)
+		r.Use(plane.RateLimit)
+		r.Get("/models", plane.ListModels)
 		r.Post("/chat/completions", plane.ChatCompletions)
+		r.Post("/embeddings", plane.Embeddings)
 	})
 
 	// 管理 API:服务端会话认证,组织隔离。
@@ -89,6 +94,10 @@ func New(deps ServerDeps) http.Handler {
 		r.Group(func(r chi.Router) {
 			r.Use(func(next http.Handler) http.Handler { return RequireSession(deps, next) })
 			r.Get("/departments", deps.Departments)
+			r.Get("/budgets", deps.Budgets)
+			r.Post("/budgets", deps.CreateBudget)
+			r.Patch("/budgets/{id}", deps.UpdateBudget)
+			r.Delete("/budgets/{id}", deps.DeleteBudget)
 			r.Get("/projects", deps.Projects)
 			r.Patch("/projects/{id}", deps.UpdateProject)
 			r.Post("/projects", deps.CreateProject)
@@ -120,5 +129,4 @@ func New(deps ServerDeps) http.Handler {
 	})
 	return r
 }
-
 

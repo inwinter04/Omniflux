@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -18,6 +19,7 @@ type Config struct {
 	MasterKey         []byte
 	APIKeyPepper      string
 	OTLTEndpoint      string
+	RateLimitPerMin   int
 }
 
 func Load() (Config, error) {
@@ -30,6 +32,7 @@ func Load() (Config, error) {
 		BootstrapPassword: os.Getenv("OMNIFLUX_BOOTSTRAP_PASSWORD"),
 		APIKeyPepper:      os.Getenv("OMNIFLUX_API_KEY_PEPPER"),
 		OTLTEndpoint:      os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+		RateLimitPerMin:   getenvInt("OMNIFLUX_RATE_LIMIT_PER_MIN", 60),
 	}
 	masterKey, err := base64.StdEncoding.DecodeString(os.Getenv("OMNIFLUX_MASTER_KEY"))
 	if err != nil {
@@ -60,4 +63,16 @@ func getenv(key, fallback string) string {
 		return fallback
 	}
 	return v
+}
+
+func getenvInt(key string, fallback int) int {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	return n
 }
