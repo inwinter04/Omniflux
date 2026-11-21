@@ -20,6 +20,7 @@ func Seed(ctx context.Context, logger *slog.Logger, pool *pgxpool.Pool, cfg conf
 			return err
 		}
 		if count > 0 {
+			logger.Warn("bootstrap skipped, users already exist; bootstrap env vars ignored", "count", count)
 			return nil
 		}
 		hash, err := auth.HashPassword(cfg.BootstrapPassword)

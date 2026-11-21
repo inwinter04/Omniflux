@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -25,7 +26,34 @@ import (
 	"github.com/inwinter04/omniflux/internal/vault"
 )
 
+const usage = `Omniflux 服务与管理命令。
+
+Usage:
+  omniflux                     启动 HTTP 服务
+  omniflux reset-password      重置用户密码
+    --email <email>            目标用户邮箱
+    --password <new-password>  新密码,至少 16 字符
+  omniflux help                显示本帮助
+`
+
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "reset-password":
+			if err := runPasswordReset(os.Args[2:]); err != nil {
+				slog.Error("reset-password failed", "error", err)
+				os.Exit(1)
+			}
+			return
+		case "help", "-h", "--help":
+			fmt.Print(usage)
+			return
+		default:
+			slog.Error("unknown command", "command", os.Args[1])
+			fmt.Print(usage)
+			os.Exit(1)
+		}
+	}
 	if err := run(); err != nil {
 		slog.Error("omniflux exited", "error", err)
 		os.Exit(1)

@@ -45,7 +45,7 @@ export OMNIFLUX_BOOTSTRAP_PASSWORD="<strong-password>"
 ```
 
 ::: warning
-空数据库首次启动时会创建初始管理员。请勿在生产环境使用示例值。
+空数据库首次启动时会创建初始管理员,请勿在生产环境使用示例值。数据库已有用户时,`OMNIFLUX_BOOTSTRAP_EMAIL` 与 `OMNIFLUX_BOOTSTRAP_PASSWORD` 不会生效,启动日志会输出 `bootstrap skipped, users already exist; bootstrap env vars ignored`。
 :::
 
 ## 3. Docker 部署
@@ -94,3 +94,21 @@ http://127.0.0.1:8080/admin/
 ::: tip Provider base_url 约束
 openai / openai_compatible / anthropic 类 provider 的 base_url 不要以 `/v1` 结尾,网关会在其后自动拼接 `/v1/chat/completions`、`/v1/messages` 等路径。同一 provider 类型只允许一个 base_url,多个供应商请使用不同 provider 类型(例如 GLM 可走 anthropic 兼容端点)。
 :::
+
+## 6. 重置管理员密码
+
+管理员密码只在空数据库首次启动时由 `OMNIFLUX_BOOTSTRAP_PASSWORD` 创建,之后修改环境变量不会更新已有账号。忘记密码时使用 `reset-password` 子命令:
+
+```bash
+go run ./cmd/omniflux reset-password --email admin@example.com --password "<new-password>"
+```
+
+命令只依赖 `OMNIFLUX_DATABASE_URL`,新密码与初始密码一样要求至少 16 字符。目标邮箱不存在时命令报错退出,不会静默成功。
+
+Docker 部署时通过容器执行:
+
+```bash
+docker run --rm \
+  -e OMNIFLUX_DATABASE_URL="postgres://user:pass@host:5432/omniflux?sslmode=require" \
+  omniflux:latest reset-password --email admin@example.com --password "<new-password>"
+```
