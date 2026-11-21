@@ -64,6 +64,31 @@ declare namespace Api {
       updated_at: string;
     }
 
+    interface ProviderCatalogEntry {
+      id: string;
+      name: string;
+      group: string;
+      base_url: string;
+      website_url: string;
+      api_key_url: string;
+      balance_kind: string;
+      editable_url: boolean;
+    }
+
+    interface ProviderCatalogGroup {
+      group: string;
+      label: string;
+      entries: ProviderCatalogEntry[];
+    }
+
+    interface ProviderBalanceEntry {
+      label: string;
+      remaining: number | null;
+      total: number | null;
+      used: number | null;
+      unit: string;
+    }
+
     interface CreateProviderAccountParams {
       provider: string;
       name: string;

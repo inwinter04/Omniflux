@@ -61,6 +61,14 @@ export function fetchCreateProviderAccount(params: Api.Management.CreateProvider
 }
 
 /** Delete a provider account */
+export function fetchProviderCatalog() {
+  return request<Api.Management.ProviderCatalogGroup[]>({ url: '/provider-catalog' });
+}
+
+export function fetchProviderBalance(id: string) {
+  return request<{ balances: Api.Management.ProviderBalanceEntry[] }>({ url: `/provider-accounts/${id}/balance` });
+}
+
 export function fetchDeleteProviderAccount(id: string) {
   return request({ url: `/provider-accounts/${id}`, method: 'delete' });
 }

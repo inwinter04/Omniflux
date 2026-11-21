@@ -92,7 +92,7 @@ http://127.0.0.1:8080/admin/
 登录后按顺序完成接入配置:创建组织与项目 → 添加 Provider 账号 → 创建路由策略 → 创建模型服务与候选 → 签发 API Key,之后即可从数据面调用模型服务。
 
 ::: tip Provider base_url 约束
-openai / openai_compatible / anthropic 类 provider 的 base_url 不要以 `/v1` 结尾,网关会在其后自动拼接 `/v1/chat/completions`、`/v1/messages` 等路径。同一 provider 类型只允许一个 base_url,多个供应商请使用不同 provider 类型(例如 GLM 可走 anthropic 兼容端点)。
+厂商目录内的账号接口地址由系统内置,无需填写 base_url。仅「自定义 OpenAI 兼容」与本地自部署类(Ollama、LM Studio、vLLM 等)需要填写地址,此时地址不要以 `/v1` 结尾:网关会在其后自动拼接 `/v1/chat/completions` 等路径。
 :::
 
 ## 6. 重置管理员密码
@@ -112,3 +112,11 @@ docker run --rm \
   -e OMNIFLUX_DATABASE_URL="postgres://user:pass@host:5432/omniflux?sslmode=require" \
   omniflux:latest reset-password --email admin@example.com --password "<new-password>"
 ```
+
+## 7. Provider 厂商目录与余额查询
+
+新建 Provider 账号时按厂商选择即可,接口地址由服务端目录内置,用户只需填写 API Key 与账号名称。目录覆盖国内官方(智谱 GLM、DeepSeek、通义、Kimi、火山方舟、MiniMax 等)、海外与云、聚合平台、第三方服务与本地自部署端点,并包含各家 Coding Plan / Token Plan 套餐变体(例如 Kimi For Coding、火山 Coding Plan、百度千帆 Coding Plan 等)。
+
+同一厂商支持创建多个账号:多账号作为多个 Key 自动参与负载均衡与故障切换,适合按量付费与 Coding Plan 套餐并存、或套餐额度不足时切换的场景。
+
+部分厂商支持在管理台直接查询余额或套餐额度(当前支持 DeepSeek 账户余额、智谱 GLM 账户余额与 Coding Plan 套餐额度、StepFun、SiliconFlow、OpenRouter、Novita AI),在 Provider 账号列表点击「余额」即可查看,便于在余额或套餐额度不足时及时切换账号。按量付费账户查询套餐额度时,系统会自动回落展示账户余额。

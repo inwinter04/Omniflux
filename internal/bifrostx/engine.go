@@ -27,7 +27,12 @@ type Account struct {
 }
 
 // MapProvider 把数据库中的 provider 标识转换为 Bifrost 的 ModelProvider。
+// 厂商目录里的 ID 直接作为独立 provider key 使用(恒等映射);
+// 其余仍走协议级映射(openai_compatible -> openai 等)。
 func MapProvider(provider string) (schemas.ModelProvider, error) {
+	if VendorByID(provider) != nil {
+		return schemas.ModelProvider(provider), nil
+	}
 	return mapProvider(provider)
 }
 
@@ -50,11 +55,31 @@ func mapProvider(provider string) (schemas.ModelProvider, error) {
 	}
 }
 
+// resolveProviderKey 把数据库 provider 标识解析为引擎分组 key。
+// 厂商账号按厂商 ID 分组,协议账号沿用协议映射。
+func resolveProviderKey(provider string) (schemas.ModelProvider, error) {
+	return MapProvider(provider)
+}
+
+// providerBaseURL 计算某 provider key 的上游根地址:
+// 优先用账号自带 base_url(本地/自部署或存量数据),否则回落厂商目录预置。
+func providerBaseURL(key schemas.ModelProvider, specs []ProviderSpec) string {
+	for _, spec := range specs {
+		if spec.BaseURL != "" {
+			return spec.BaseURL
+		}
+	}
+	if vendor := VendorByID(string(key)); vendor != nil && vendor.BaseURL != "" {
+		return vendor.BaseURL
+	}
+	return ""
+}
+
 func NewAccount(specs []ProviderSpec) (*Account, error) {
 	byProvider := make(map[schemas.ModelProvider][]ProviderSpec)
 	baseURLs := make(map[schemas.ModelProvider]string)
 	for _, spec := range specs {
-		provider, err := mapProvider(spec.Provider)
+		provider, err := resolveProviderKey(spec.Provider)
 		if err != nil {
 			return nil, err
 		}
@@ -104,15 +129,9 @@ func (a *Account) GetConfigForProvider(provider schemas.ModelProvider) (*schemas
 	if len(specs) == 0 {
 		return nil, fmt.Errorf("provider %q is not configured", provider)
 	}
-	baseURL := ""
-	for _, spec := range specs {
-		if spec.BaseURL != "" {
-			if baseURL != "" && baseURL != spec.BaseURL {
-				return nil, fmt.Errorf("provider %s has conflicting base URLs", provider)
-			}
-			baseURL = spec.BaseURL
-		}
-	}
+	// 厂商目录条目委托给 openai 协议实现,并按厂商预置覆盖请求路径;
+	// 这样同一协议下可以并存多个厂商,各自持有独立 endpoint 与密钥。
+	baseURL := providerBaseURL(provider, specs)
 	timeout := 60
 	retries := 1
 	if specs[0].TimeoutSeconds > 0 {
@@ -121,7 +140,7 @@ func (a *Account) GetConfigForProvider(provider schemas.ModelProvider) (*schemas
 	if specs[0].MaxRetries >= 0 {
 		retries = specs[0].MaxRetries
 	}
-	return &schemas.ProviderConfig{
+	config := &schemas.ProviderConfig{
 		NetworkConfig: schemas.NetworkConfig{
 			BaseURL:                        baseURL,
 			DefaultRequestTimeoutInSeconds: timeout,
@@ -129,7 +148,25 @@ func (a *Account) GetConfigForProvider(provider schemas.ModelProvider) (*schemas
 			AllowPrivateNetwork:            strings.Contains(baseURL, "localhost") || strings.Contains(baseURL, "127.0.0.1"),
 		},
 		ConcurrencyAndBufferSize: schemas.DefaultConcurrencyAndBufferSize,
-	}, nil
+	}
+	if vendor := VendorByID(string(provider)); vendor != nil {
+		vendorBaseURL := vendor.BaseURL
+		if baseURL != "" {
+			vendorBaseURL = baseURL
+		}
+		config.NetworkConfig.BaseURL = vendorBaseURL
+		config.NetworkConfig.AllowPrivateNetwork = strings.Contains(vendorBaseURL, "localhost") || strings.Contains(vendorBaseURL, "127.0.0.1")
+		config.CustomProviderConfig = &schemas.CustomProviderConfig{
+			BaseProviderType: schemas.OpenAI,
+			RequestPathOverrides: map[schemas.RequestType]string{
+				schemas.ChatCompletionRequest:       vendor.ChatPath(),
+				schemas.ChatCompletionStreamRequest: vendor.ChatPath(),
+				schemas.EmbeddingRequest:            vendor.EmbeddingsPath(),
+				schemas.ListModelsRequest:           vendor.ModelsPath(),
+			},
+		}
+	}
+	return config, nil
 }
 
 type Engine struct {

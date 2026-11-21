@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { h, onMounted, reactive, ref } from 'vue';
 import { NButton, NPopconfirm, NSpace, NTag } from 'naive-ui';
-import type { DataTableColumns, FormInst, FormRules } from 'naive-ui';
-import { fetchCreateRoutePolicy, fetchDeleteRoutePolicy, fetchRoutePolicies, fetchUpdateRoutePolicy } from '@/service/api';
+import type { DataTableColumns, FormInst, FormRules, SelectOption } from 'naive-ui';
+import { fetchCreateRoutePolicy, fetchDeleteRoutePolicy, fetchProviderCatalog, fetchRoutePolicies, fetchUpdateRoutePolicy } from '@/service/api';
 import { formatTime, statusTagType, statusText } from '@/utils/admin-status';
 
 defineOptions({
@@ -15,7 +15,8 @@ const strategyOptions = [
   { label: '均衡 (balanced)', value: 'balanced' }
 ];
 
-const constraintProviderOptions = [
+// 厂商目录驱动的约束选项;目录加载失败时保留协议级兜底选项。
+const legacyProviderOptions = [
   { label: 'OpenAI', value: 'openai' },
   { label: 'Azure OpenAI', value: 'azure_openai' },
   { label: 'Anthropic', value: 'anthropic' },
@@ -24,6 +25,25 @@ const constraintProviderOptions = [
   { label: 'AWS Bedrock', value: 'bedrock' },
   { label: 'OpenAI Compatible', value: 'openai_compatible' }
 ];
+
+const constraintProviderOptions = ref<SelectOption[]>(legacyProviderOptions);
+
+async function loadCatalog() {
+  const { data, error } = await fetchProviderCatalog();
+  if (error || !data) return;
+  const options: SelectOption[] = [];
+  for (const group of data) {
+    if (group.group === 'custom') continue;
+    options.push({
+      type: 'group',
+      label: group.label,
+      key: group.group,
+      children: group.entries.map(entry => ({ label: entry.name, value: entry.id }))
+    });
+  }
+  options.push({ type: 'group', label: '自定义', key: 'custom', children: [{ label: '自定义 OpenAI 兼容', value: 'openai_compatible' }] });
+  constraintProviderOptions.value = options;
+}
 
 const loading = ref(true);
 const list = ref<Api.Management.RoutePolicy[]>([]);
@@ -201,6 +221,7 @@ async function handleDelete(id: string) {
 }
 
 onMounted(() => {
+  void loadCatalog();
   void loadData();
 });
 </script>

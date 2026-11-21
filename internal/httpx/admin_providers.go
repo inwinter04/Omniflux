@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/inwinter04/omniflux/internal/auth"
+	"github.com/inwinter04/omniflux/internal/bifrostx"
 	"github.com/inwinter04/omniflux/internal/vault"
 )
 
@@ -141,9 +142,17 @@ func (d ServerDeps) CreateProviderAccount(w http.ResponseWriter, r *http.Request
 	}
 	body.Provider = strings.TrimSpace(body.Provider)
 	body.Name = strings.TrimSpace(body.Name)
-	if !allowedProviders[body.Provider] {
+	if !allowedProviders[body.Provider] && bifrostx.VendorByID(body.Provider) == nil {
 		adminError(w, http.StatusBadRequest, "PROVIDER_UNSUPPORTED", "不支持的 provider 类型", nil)
 		return
+	}
+	// 厂商账号的接口地址由服务端目录内置;仅本地/自部署类厂商允许自定义 base_url。
+	if vendor := bifrostx.VendorByID(body.Provider); vendor != nil {
+		if body.BaseURL != nil && strings.TrimSpace(*body.BaseURL) != "" && !vendor.EditableURL {
+			adminError(w, http.StatusBadRequest, "PROVIDER_BASE_URL_NOT_ALLOWED",
+				"该厂商的接口地址由系统内置,无需填写 base_url", nil)
+			return
+		}
 	}
 	if body.Name == "" {
 		adminError(w, http.StatusBadRequest, "PROVIDER_NAME_REQUIRED", "请填写账号名称", nil)
@@ -336,6 +345,13 @@ func (d ServerDeps) UpdateProviderAccount(w http.ResponseWriter, r *http.Request
 		adminError(w, http.StatusInternalServerError, "PROVIDER_UPDATE_FAILED", "更新 Provider 账号失败", nil)
 		return
 	}
+	// 厂商账号的接口地址由服务端目录内置,不可修改。
+	if vendor := bifrostx.VendorByID(provider); vendor != nil && !vendor.EditableURL &&
+		body.BaseURL != nil && strings.TrimSpace(*body.BaseURL) != "" {
+		adminError(w, http.StatusBadRequest, "PROVIDER_BASE_URL_NOT_ALLOWED",
+			"该厂商的接口地址由系统内置,无法修改 base_url", nil)
+		return
+	}
 	// base_url 更新沿用创建时的约束:openai/anthropic 类 provider 不允许 /v1 结尾。
 	if v1PathProviders[provider] && baseURLHasV1Suffix(body.BaseURL) {
 		adminError(w, http.StatusBadRequest, "PROVIDER_BASE_URL_INVALID",
@@ -492,6 +508,13 @@ func providerProbeRequest(provider string, baseURL *string, apiKey string) (stri
 	case "gemini":
 		return "https://generativelanguage.googleapis.com/v1beta/models?key=" + apiKey, nil, nil
 	default:
+		if vendor := bifrostx.VendorByID(provider); vendor != nil {
+			base := vendor.BaseURL
+			if baseURL != nil && *baseURL != "" {
+				base = strings.TrimRight(*baseURL, "/")
+			}
+			return base + vendor.ModelsPath(), map[string]string{"Authorization": "Bearer " + apiKey}, nil
+		}
 		return "", nil, fmt.Errorf("provider %s does not support online probe", provider)
 	}
 }
