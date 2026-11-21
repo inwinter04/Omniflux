@@ -243,7 +243,7 @@ export const generatedRoutes: GeneratedRoute[] = [
           title: 'organization_organizations',
           i18nKey: 'route.organization_organizations',
           order: 0,
-          icon: 'mdi:domain-outline'
+          icon: 'mdi:office-building-outline'
         }
       },
       {
