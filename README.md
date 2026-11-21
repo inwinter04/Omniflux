@@ -5,106 +5,34 @@
   <a href="README.md">简体中文</a> · <a href="README.en-US.md">English</a>
 </p>
 
-Omniflux 是一个面向企业的 AI 服务控制平面，用于把分散在多个供应商和私有部署环境中的模型能力，纳入统一的治理、路由、计量、审计与可观测体系。
+<p align="center">
+  <a href="https://github.com/inwinter04/Omniflux/releases"><img src="https://img.shields.io/badge/Go-1.27%2B-00ADD8?logo=go&logoColor=white" alt="Go 1.27+"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache--2.0-blue" alt="License: Apache-2.0"></a>
+  <img src="https://img.shields.io/badge/PostgreSQL-17-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL 17">
+  <img src="https://img.shields.io/badge/Redis-8-DC382D?logo=redis&logoColor=white" alt="Redis 8">
+</p>
 
-项目正在积极开发中。首个稳定版本发布前，配置项、数据模型和管理 API 仍可能调整。
+Omniflux 是一个面向企业的 AI 服务控制平面,用于把分散在多个供应商和私有部署环境中的模型能力,纳入统一的治理、路由、计量、审计与可观测体系。
+
+项目正在积极开发中。首个稳定版本发布前,配置项、数据模型和管理 API 仍可能调整。
 
 ## 特性
 
-- **统一模型服务**：通过逻辑模型服务隔离业务调用与真实 Provider 模型。
-- **治理化路由**：基于硬约束、成本、质量、延迟与可靠性评分选择候选模型，并记录路由决策。
-- **多租户治理**：组织、部门、项目、应用、用户、角色与 API Key 分层管理。
-- **计量与归因**：按项目、应用、API Key、Provider 和模型归因请求、Token 与成本。
-- **审计与决策留痕**：管理操作、登录事件与 PolicyDecision 可追溯。
-- **可观测性**：内置 liveness/readiness 探针、结构化日志,以及覆盖请求数、延迟、Token 与成本的数据面 Prometheus 业务指标。
-- **现代管理台**：基于 Vue 3、TypeScript、Naive UI 和 SoybeanAdmin 的服务端会话管理后台。
+- **统一模型服务**:通过逻辑模型服务隔离业务调用与真实 Provider 模型。
+- **治理化路由**:基于硬约束、成本、质量、延迟与可靠性评分选择候选模型,并记录路由决策。
+- **多租户治理**:组织、部门、项目、应用、用户、角色与 API Key 分层管理。
+- **计量与归因**:按项目、应用、API Key、Provider 和模型归因请求、Token 与成本。
+- **审计与决策留痕**:管理操作、登录事件与 PolicyDecision 可追溯。
+- **可观测性**:内置 liveness/readiness 探针、结构化日志,以及数据面 Prometheus 业务指标。
+- **现代管理台**:基于 Vue 3、TypeScript、Naive UI 和 SoybeanAdmin 的服务端会话管理后台。
 
 ## 架构
 
 <p align="center">
   <img src="docs/assets/architecture.zh-CN.png" alt="Omniflux 架构图" width="100%" />
 </p>
-## 当前接口
-
-| 接口 | 说明 |
-| --- | --- |
-| `GET /livez` | 进程存活探针 |
-| `GET /readyz` | PostgreSQL、Redis 与关键依赖就绪检查 |
-| `GET /metrics` | Prometheus 指标(进程指标 + 数据面业务指标) |
-| `GET /admin/` | 管理控制台 |
-
-管理面(服务端会话认证,组织隔离):
-
-| 接口 | 说明 |
-| --- | --- |
-| `POST /api/v1/auth/login` | 管理员登录 |
-| `GET /api/v1/auth/me` | 获取当前管理员信息 |
-| `POST /api/v1/auth/logout` | 退出登录 |
-| `GET /api/v1/dashboard` | 首页统计概览 |
-| `GET /api/v1/organizations` | 组织列表(平台管理员可见全部,其余仅当前组织) |
-| `POST /api/v1/organizations` | 创建组织(仅平台管理员) |
-| `PATCH /api/v1/organizations/{id}` | 修改组织名称(slug 创建后不可变更) |
-| `GET /api/v1/departments` | 部门列表 |
-| `POST /api/v1/departments` | 创建部门 |
-| `PATCH /api/v1/departments/{id}` | 更新部门 |
-| `DELETE /api/v1/departments/{id}` | 删除部门(被项目引用时拒绝) |
-| `GET /api/v1/projects` | 项目列表 |
-| `POST /api/v1/projects` | 创建项目 |
-| `PATCH /api/v1/projects/{id}` | 更新项目 |
-| `DELETE /api/v1/projects/{id}` | 删除项目(存在应用/Key/用量时拒绝) |
-| `GET /api/v1/applications` | 应用列表 |
-| `POST /api/v1/applications` | 创建应用 |
-| `PATCH /api/v1/applications/{id}` | 更新应用 |
-| `DELETE /api/v1/applications/{id}` | 删除应用(存在 Key/用量时拒绝) |
-| `GET /api/v1/users` | 用户列表(需组织所有者;平台管理员可按 `organization_id` 过滤) |
-| `POST /api/v1/users` | 创建用户(平台管理员可指定归属组织) |
-| `PATCH /api/v1/users/{id}` | 更新角色/状态/密码/归属组织 |
-| `GET /api/v1/budgets` | 预算窗口列表 |
-| `POST /api/v1/budgets` | 创建预算窗口 |
-| `PATCH /api/v1/budgets/{id}` | 调整预算限额 |
-| `DELETE /api/v1/budgets/{id}` | 删除预算窗口 |
-| `GET /api/v1/provider-accounts` | Provider 账号列表(含近 24h 被动健康统计) |
-| `POST /api/v1/provider-accounts` | 创建 Provider 账号(凭据加密入库;openai/anthropic 类 base_url 不含 `/v1`,网关会自动拼接 `/v1/chat/completions` 等路径) |
-| `PATCH /api/v1/provider-accounts/{id}` | 更新 Provider 账号 |
-| `POST /api/v1/provider-accounts/{id}/test` | 手动连通性测试 |
-| `DELETE /api/v1/provider-accounts/{id}` | 删除 Provider 账号 |
-| `GET /api/v1/route-policies` | 路由策略列表 |
-| `POST /api/v1/route-policies` | 创建路由策略(含硬约束) |
-| `PATCH /api/v1/route-policies/{id}` | 更新策略参数(constraints 创建后不可改) |
-| `DELETE /api/v1/route-policies/{id}` | 删除路由策略 |
-| `GET /api/v1/model-services` | 模型服务列表(含候选) |
-| `POST /api/v1/model-services` | 创建模型服务与候选 |
-| `PATCH /api/v1/model-services/{id}` | 更新模型服务(候选全量替换) |
-| `DELETE /api/v1/model-services/{id}` | 删除模型服务 |
-| `GET /api/v1/api-keys` | API Key 列表 |
-| `POST /api/v1/api-keys` | 创建 API Key(明文仅返回一次,可设置 Key 级限流) |
-| `PATCH /api/v1/api-keys/{id}` | 更新状态与 Key 级限流 |
-| `DELETE /api/v1/api-keys/{id}` | 软删除 API Key |
-| `GET /api/v1/usage/summary` | 用量汇总 |
-| `GET /api/v1/usage/records` | 用量明细分页 |
-| `GET /api/v1/audit-events` | 审计事件分页 |
-| `GET /api/v1/audit-events/{id}` | 审计事件详情 |
-
-数据面(API Key Bearer 认证):
-
-| 接口 | 说明 |
-| --- | --- |
-| `GET /v1/models` | 可用模型服务列表 |
-| `POST /v1/chat/completions` | OpenAI 兼容对话接口(支持流式) |
-| `POST /v1/embeddings` | OpenAI 兼容向量化接口 |
-数据面按模型服务的候选配置路由:绑定路由策略时先应用硬约束(`constraints`:allowed/blocked providers、allowed/blocked upstream models、混合单价上限),被排除的候选不参与路由;剩余候选按 priority 升序分组,组内按 `weights`(cost/quality/latency/reliability)评分降序排列,评分并列时按 weight 加权随机。候选的 `quality_score`(0-1,默认 0.5)参与 quality 评分,latency 与 reliability 来自近 7 天用量统计;Provider 账号的健康可见性来自近 24 小时用量统计(路由已按成功率自动降权)。主候选之后的候选作为 fallback 链交给上游网关处理,`fallback_limit` 与 `provider_timeout_ms` 生效;流式请求的 `first_token_timeout_ms` 在未收到首个 token 时中断上游并按失败定稿。自动质量评估(EvaluationSet/EvaluationRun)将在后续版本实现。每次调用都会写入 `usage_records` 与 `policy_decisions`;服务中断遗留的 pending 用量由后台维护任务按失败对账。
-
-预算采用后付口径:请求前按已结算用量拦截,请求成功后累加实际成本,并发在途请求可能小幅越过限额(与主流开源网关一致)。API Key 可配置 Key 级限流(`rate_limit_per_min`),未设置时沿用全局默认阈值;限流基于 Redis 固定窗口实现。
 
 ## 快速开始
-
-### 环境要求
-
-- Go 1.27+
-- Node.js 20+
-- Corepack / pnpm
-- PostgreSQL 17
-- Redis 8
 
 ### 1. 启动基础设施
 
@@ -116,44 +44,22 @@ docker compose up -d
 
 | 变量 | 必填 | 说明 |
 | --- | --- | --- |
-| `OMNIFLUX_ENV` | 否 | 运行环境，默认 `development` |
-| `OMNIFLUX_HTTP_ADDR` | 否 | HTTP 监听地址，默认 `127.0.0.1:8080` |
 | `OMNIFLUX_DATABASE_URL` | 是 | PostgreSQL 连接串 |
-| `OMNIFLUX_REDIS_ADDR` | 否 | Redis 地址，默认 `localhost:6379` |
 | `OMNIFLUX_MASTER_KEY` | 是 | Base64 编码的 32 字节 AES 密钥 |
-| `OMNIFLUX_API_KEY_PEPPER` | 是 | API Key 哈希 pepper，至少 32 字符 |
+| `OMNIFLUX_API_KEY_PEPPER` | 是 | API Key 哈希 pepper,至少 32 字符 |
 | `OMNIFLUX_BOOTSTRAP_EMAIL` | 是 | 初始管理员邮箱 |
-| `OMNIFLUX_BOOTSTRAP_PASSWORD` | 是 | 初始管理员密码，至少 16 字符 |
-| `OMNIFLUX_RATE_LIMIT_PER_MIN` | 否 | 数据面全局默认限流(次/分钟),默认 `60`;API Key 的 `rate_limit_per_min` 可按 Key 覆盖 |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | 否 | OpenTelemetry OTLP endpoint |
+| `OMNIFLUX_BOOTSTRAP_PASSWORD` | 是 | 初始管理员密码,至少 16 字符 |
 
-示例：
+完整变量列表(监听地址、限流、OpenTelemetry 等)见[文档站 · 快速开始](https://inwinter04.github.io/Omniflux/guide/quick-start)。
 
-```bash
-export OMNIFLUX_DATABASE_URL="postgres://omniflux:omniflux@localhost:5432/omniflux?sslmode=disable"
-export OMNIFLUX_REDIS_ADDR="localhost:6379"
-export OMNIFLUX_MASTER_KEY="<base64-encoded-32-byte-key>"
-export OMNIFLUX_API_KEY_PEPPER="<random-pepper-at-least-32-characters>"
-export OMNIFLUX_BOOTSTRAP_EMAIL="admin@example.com"
-export OMNIFLUX_BOOTSTRAP_PASSWORD="<strong-password>"
-```
+### 3. 启动服务
 
-空数据库首次启动时会创建初始管理员。请勿在生产环境使用示例值。
-
-### 3. Docker 部署
-
-生产环境推荐使用镜像部署,一条命令完成管理台与服务端构建:
+使用 Docker:
 
 ```bash
 docker build -t omniflux:latest .
-```
-
-运行时通过环境变量注入配置:
-
-```bash
 docker run -d -p 8080:8080 \
   -e OMNIFLUX_DATABASE_URL="postgres://user:pass@host:5432/omniflux?sslmode=require" \
-  -e OMNIFLUX_REDIS_ADDR="host:6379" \
   -e OMNIFLUX_MASTER_KEY="<base64-encoded-32-byte-key>" \
   -e OMNIFLUX_API_KEY_PEPPER="<random-pepper-at-least-32-characters>" \
   -e OMNIFLUX_BOOTSTRAP_EMAIL="admin@example.com" \
@@ -161,70 +67,46 @@ docker run -d -p 8080:8080 \
   omniflux:latest
 ```
 
-会话 Cookie 为 `SameSite=Strict` + `HttpOnly`,生产环境请置于反向代理之后并启用 HTTPS(此时 Cookie 自动附加 `Secure`)。
-
-### 4. 构建管理台
-
-```bash
-corepack pnpm --dir web/admin install
-make build-admin
-```
-
-### 4. 启动服务
+或使用源码(管理台构建产物已内嵌,无需先构建前端):
 
 ```bash
 go run ./cmd/omniflux
 ```
 
-打开管理台：
+打开管理台 `http://127.0.0.1:8080/admin/`,用初始邮箱与密码登录。空数据库首次启动会自动创建平台管理员,请勿在生产环境使用示例值。
 
-```text
-http://127.0.0.1:8080/admin/
-```
+## 数据面 API
 
-默认服务只监听回环地址。若要对外暴露，请设置 `OMNIFLUX_HTTP_ADDR=0.0.0.0:8080`，并配合反向代理、认证与网络策略使用。
+业务系统使用 API Key(`Authorization: Bearer`)调用 OpenAI 兼容接口:
 
-## 前端开发
+| 接口 | 说明 |
+| --- | --- |
+| `GET /v1/models` | 可用模型服务列表 |
+| `POST /v1/chat/completions` | 对话接口(支持流式) |
+| `POST /v1/embeddings` | 向量化接口 |
 
-先启动后端：
+路由按候选配置执行:硬约束过滤 → 优先级分组 → 成本/质量/延迟/可靠性评分 → fallback;每次调用写入用量与决策留痕,预算与限流按 Key 生效。详见[文档站 · 数据面 API](https://inwinter04.github.io/Omniflux/api/dataplane)。
 
-```bash
-go run ./cmd/omniflux
-```
+完整管理面接口清单见[文档站 · 管理面 API](https://inwinter04.github.io/Omniflux/api/admin)。
 
-再启动 Vite 开发服务器：
-
-```bash
-make admin-dev
-```
-
-Vite 会将 `/api` 代理到 Go 服务。
-
-## 项目结构
-
-```text
-cmd/omniflux/           服务入口
-internal/               领域模块、迁移、存储与管理接口
-web/admin/              Vue 3 + Naive UI 管理台
-scripts/                构建辅助脚本
-docker-compose.yml      本地 PostgreSQL 与 Redis
-```
-
-## 开发验证
+## 开发
 
 ```bash
-go test -race ./...
-go vet ./...
-corepack pnpm --dir web/admin typecheck
-corepack pnpm --dir web/admin build
+make infra          # 启动本地 PostgreSQL 与 Redis
+make test           # go test -race ./...
+make vet            # go vet ./...
+make build-admin    # 构建管理台并同步到服务端
+make docs-build     # 构建文档站
 ```
+
+项目结构与前端开发说明见[文档站 · 开发](https://inwinter04.github.io/Omniflux/guide/development)。
 
 ## 安全说明
 
 - 管理员密码使用 Argon2id 哈希。
-- 管理台会话保存在服务端，Cookie 使用 `HttpOnly` 与 `SameSite=Strict`。
+- 管理台会话保存在服务端,Cookie 使用 `HttpOnly` 与 `SameSite=Strict`。
 - Provider 凭据使用 AES-256-GCM 加密存储。
-- API Key 只保存 keyed hash，明文只在创建时返回一次。
-- 审计事件采用追加式模型，应用层不提供更新与删除能力。
-- 请勿在日志、示例、提交信息或 issue 中提交真实密钥。
 
+## License
+
+[Apache-2.0](LICENSE)

@@ -1,4 +1,4 @@
-.PHONY: test vet tidy run infra infra-down admin-install admin-dev admin-build admin-sync build-admin docker-build
+.PHONY: test vet tidy run infra infra-down admin-install admin-dev admin-build admin-sync build-admin docker-build docs-install docs-dev docs-build
 test:
 	go test -race ./...
 vet:
@@ -20,5 +20,6 @@ admin-sync:
 	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sync-admin.ps1
 build-admin: admin-build admin-sync
 run:
-	go run ./cmd/omnifluxdocker-build:
+	go run ./cmd/omniflux
+docker-build:
 	docker build -t omniflux:latest .

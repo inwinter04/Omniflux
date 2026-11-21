@@ -5,6 +5,13 @@
   <a href="README.md">简体中文</a> · <a href="README.en-US.md">English</a>
 </p>
 
+<p align="center">
+  <a href="https://github.com/inwinter04/Omniflux/releases"><img src="https://img.shields.io/badge/Go-1.27%2B-00ADD8?logo=go&logoColor=white" alt="Go 1.27+"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache--2.0-blue" alt="License: Apache-2.0"></a>
+  <img src="https://img.shields.io/badge/PostgreSQL-17-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL 17">
+  <img src="https://img.shields.io/badge/Redis-8-DC382D?logo=redis&logoColor=white" alt="Redis 8">
+</p>
+
 Omniflux is an enterprise AI service control plane that brings model services from multiple providers and private deployments into a governed system for routing, metering, auditing, and observability.
 
 Omniflux is under active development. Configuration, data models, and administrative APIs may change before the first stable release.
@@ -24,40 +31,8 @@ Omniflux is under active development. Configuration, data models, and administra
 <p align="center">
   <img src="docs/assets/architecture.en-US.png" alt="Omniflux architecture diagram" width="100%" />
 </p>
-## API surface
-
-| Endpoint | Description |
-| --- | --- |
-| `GET /livez` | Liveness probe |
-| `GET /readyz` | Readiness check for PostgreSQL, Redis, and core dependencies |
-| `GET /metrics` | Prometheus metrics |
-| `GET /admin/` | Admin console |
-| `POST /api/v1/auth/login` | Administrator sign-in |
-| `GET /api/v1/auth/me` | Current administrator profile |
-| `POST /api/v1/auth/logout` | Sign out |
-| `GET /api/v1/organizations` | List organizations (platform admins see all, others see their own) |
-| `POST /api/v1/organizations` | Create an organization (platform admins only) |
-| `PATCH /api/v1/organizations/{id}` | Update organization name (slug is immutable) |
-
-Data plane (API key bearer auth):
-
-| Endpoint | Description |
-| --- | --- |
-| `GET /v1/models` | Available model services |
-| `POST /v1/chat/completions` | OpenAI-compatible chat (streaming supported) |
-| `POST /v1/embeddings` | OpenAI-compatible embeddings |
-
-Routing applies route-policy hard constraints before scoring candidates (allowed/blocked providers, allowed/blocked upstream models, blended cost ceiling). `first_token_timeout_ms` aborts streaming requests that produce no first token in time. Budgets are post-paid: requests are rejected based on settled spend, and in-flight concurrent requests may slightly overshoot the limit. API keys support per-key rate limits (`rate_limit_per_min`) overriding the global default. Usage abandoned by server interruptions is reconciled as failed by a background maintenance job.
 
 ## Quick start
-
-### Requirements
-
-- Go 1.27+
-- Node.js 20+
-- Corepack / pnpm
-- PostgreSQL 17
-- Redis 8
 
 ### 1. Start infrastructure
 
@@ -69,43 +44,22 @@ docker compose up -d
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `OMNIFLUX_ENV` | No | Runtime environment; defaults to `development` |
-| `OMNIFLUX_HTTP_ADDR` | No | HTTP listen address; defaults to `127.0.0.1:8080` |
 | `OMNIFLUX_DATABASE_URL` | Yes | PostgreSQL connection string |
-| `OMNIFLUX_REDIS_ADDR` | No | Redis address; defaults to `localhost:6379` |
 | `OMNIFLUX_MASTER_KEY` | Yes | Base64-encoded 32-byte AES key |
-| `OMNIFLUX_API_KEY_PEPPER` | Yes | API key hashing pepper, at least 32 characters |
+| `OMNIFLUX_API_KEY_PEPPER` | Yes | Pepper for API key hashing, at least 32 characters |
 | `OMNIFLUX_BOOTSTRAP_EMAIL` | Yes | Initial administrator email |
 | `OMNIFLUX_BOOTSTRAP_PASSWORD` | Yes | Initial administrator password, at least 16 characters |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | OpenTelemetry OTLP endpoint |
 
-Example:
+The full variable list (HTTP address, rate limiting, OpenTelemetry) is documented in the [docs site · Quick start](https://inwinter04.github.io/Omniflux/guide/quick-start) (Chinese).
 
-```bash
-export OMNIFLUX_DATABASE_URL="postgres://omniflux:omniflux@localhost:5432/omniflux?sslmode=disable"
-export OMNIFLUX_REDIS_ADDR="localhost:6379"
-export OMNIFLUX_MASTER_KEY="<base64-encoded-32-byte-key>"
-export OMNIFLUX_API_KEY_PEPPER="<random-pepper-at-least-32-characters>"
-export OMNIFLUX_BOOTSTRAP_EMAIL="admin@example.com"
-export OMNIFLUX_BOOTSTRAP_PASSWORD="<strong-password>"
-```
+### 3. Start the service
 
-The initial administrator is created only when the database is empty. Never use example credentials in production.
-
-### 3. Docker deployment
-
-For production, build the image which bundles the admin console and the server binary:
+With Docker:
 
 ```bash
 docker build -t omniflux:latest .
-```
-
-Then run it with environment variables:
-
-```bash
 docker run -d -p 8080:8080 \
   -e OMNIFLUX_DATABASE_URL="postgres://user:pass@host:5432/omniflux?sslmode=require" \
-  -e OMNIFLUX_REDIS_ADDR="host:6379" \
   -e OMNIFLUX_MASTER_KEY="<base64-encoded-32-byte-key>" \
   -e OMNIFLUX_API_KEY_PEPPER="<random-pepper-at-least-32-characters>" \
   -e OMNIFLUX_BOOTSTRAP_EMAIL="admin@example.com" \
@@ -113,68 +67,46 @@ docker run -d -p 8080:8080 \
   omniflux:latest
 ```
 
-Session cookies use `SameSite=Strict` + `HttpOnly`; put the service behind a reverse proxy with HTTPS in production (the cookie automatically gets the `Secure` flag).
-
-```bash
-corepack pnpm --dir web/admin install
-make build-admin
-```
-
-### 4. Start the service
+Or from source (the admin console build is embedded in the server binary):
 
 ```bash
 go run ./cmd/omniflux
 ```
 
-Open the console:
+Open the admin console at `http://127.0.0.1:8080/admin/` and sign in with the bootstrap credentials. An empty database is seeded with a platform administrator on first start; never use the sample values in production.
 
-```text
-http://127.0.0.1:8080/admin/
-```
+## Data plane API
 
-The service listens on loopback by default. To expose it externally, set `OMNIFLUX_HTTP_ADDR=0.0.0.0:8080` and place it behind a reverse proxy with authentication and network policy controls.
+Business systems call OpenAI-compatible endpoints with an API key (`Authorization: Bearer`):
 
-## Frontend development
+| Endpoint | Description |
+| --- | --- |
+| `GET /v1/models` | Available model services |
+| `POST /v1/chat/completions` | Chat completions (streaming supported) |
+| `POST /v1/embeddings` | Embeddings |
 
-Start the backend:
+Routing applies hard constraints, then priority groups, then cost/quality/latency/reliability scoring with fallback; every call is metered with decision records, budgets and per-key rate limits enforced. See the [docs site · Data plane API](https://inwinter04.github.io/Omniflux/api/dataplane) (Chinese).
 
-```bash
-go run ./cmd/omniflux
-```
+The full admin API reference is on the [docs site · Admin API](https://inwinter04.github.io/Omniflux/api/admin) (Chinese).
 
-Then start the Vite dev server:
-
-```bash
-make admin-dev
-```
-
-Vite proxies `/api` to the Go service.
-
-## Project layout
-
-```text
-cmd/omniflux/           Service entry point
-internal/               Domain modules, migrations, storage, and admin APIs
-web/admin/              Vue 3 + Naive UI admin console
-scripts/                Build support scripts
-docker-compose.yml      Local PostgreSQL and Redis
-```
-
-## Development checks
+## Development
 
 ```bash
-go test -race ./...
-go vet ./...
-corepack pnpm --dir web/admin typecheck
-corepack pnpm --dir web/admin build
+make infra          # start local PostgreSQL and Redis
+make test           # go test -race ./...
+make vet            # go vet ./...
+make build-admin    # build the admin console and sync it into the server
+make docs-build     # build the docs site
 ```
+
+Project layout and frontend development notes: [docs site · Development](https://inwinter04.github.io/Omniflux/guide/development) (Chinese).
 
 ## Security notes
 
 - Administrator passwords are hashed with Argon2id.
-- Admin sessions are stored server-side and issued with `HttpOnly`, `SameSite=Strict` cookies.
-- Provider credentials are encrypted with AES-256-GCM.
-- API keys store only a keyed hash; the plaintext is shown once at creation.
-- Audit events are append-only at the application layer.
-- Never commit or publish real keys in logs, examples, commit messages, or issues.
+- Admin sessions are stored server-side; cookies use `HttpOnly` and `SameSite=Strict`.
+- Provider credentials are encrypted at rest with AES-256-GCM.
 
+## License
+
+[Apache-2.0](LICENSE)
