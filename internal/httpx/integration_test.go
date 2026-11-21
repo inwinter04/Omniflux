@@ -257,7 +257,7 @@ func TestIntegrationGovernance(t *testing.T) {
 		// 准备 provider 账号 + 模型服务 + API Key
 		code, body := doJSON(t, admin, http.MethodPost, "/api/v1/provider-accounts", map[string]any{
 			"provider": "openai_compatible", "name": "it-upstream",
-			"base_url": "https://upstream.invalid/v1", "api_key": "sk-integration-0123456789abcdef",
+			"base_url": "https://upstream.invalid", "api_key": "sk-integration-0123456789abcdef",
 		})
 		if code != http.StatusOK {
 			t.Fatalf("create provider account status = %d body = %v", code, body)
