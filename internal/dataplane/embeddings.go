@@ -121,7 +121,7 @@ func (d Deps) Embeddings(w http.ResponseWriter, r *http.Request) {
 
 	resp, bifrostErr := d.Engine.Client().EmbeddingRequest(bctx, req)
 	if bifrostErr != nil {
-		d.recordFailure(r.Context(), requestID, chain, bifrostErr, start, nil, usageSnapshot{})
+		d.recordFailure(r.Context(), requestID, chain, bctx, bifrostErr, start, nil, usageSnapshot{})
 		writeBifrostError(w, bifrostErr)
 		return
 	}
@@ -172,7 +172,7 @@ func (d Deps) Embeddings(w http.ResponseWriter, r *http.Request) {
 		Cost:          cost,
 		TotalMS:       total,
 		UsageSource:   usageSource,
-		AttemptTrail:  attemptTrailJSON(chain, served, "success", ""),
+		AttemptTrail:  attemptTrailJSON(chain, served, "success", "", routingEngineLogs(bctx)),
 	}); err != nil {
 		d.Logger.Warn("finalize usage failed", "request_id", requestID, "error", err)
 	}

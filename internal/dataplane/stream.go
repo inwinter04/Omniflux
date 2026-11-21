@@ -36,12 +36,12 @@ func (d Deps) handleStream(bctx *schemas.BifrostContext, streamCtx context.Conte
 	if bifrostErr != nil {
 		// 看门狗在建立流阶段取消(非客户端断开):按首 token 超时定稿,不记上游错误。
 		if streamCtx.Err() != nil && r.Context().Err() == nil && firstTokenSeen != nil && !firstTokenSeen.Load() {
-			d.recordFirstTokenTimeout(r.Context(), requestID, chain, start)
+			d.recordFirstTokenTimeout(r.Context(), requestID, chain, start, routingEngineLogs(bctx))
 			apiError(w, http.StatusGatewayTimeout, "timeout",
 				"上游未在 first_token_timeout_ms 内返回首个 token")
 			return
 		}
-		d.recordFailure(r.Context(), requestID, chain, bifrostErr, start, nil, usageSnapshot{})
+		d.recordFailure(r.Context(), requestID, chain, bctx, bifrostErr, start, nil, usageSnapshot{})
 		writeBifrostError(w, bifrostErr)
 		return
 	}
@@ -123,12 +123,12 @@ func (d Deps) handleStream(bctx *schemas.BifrostContext, streamCtx context.Conte
 	}
 
 	if interrupted {
-		d.recordInterrupted(r.Context(), requestID, chain, start, firstTokenMS, snapshot)
+		d.recordInterrupted(r.Context(), requestID, chain, start, firstTokenMS, snapshot, routingEngineLogs(bctx))
 		return
 	}
 	if streamCtx.Err() != nil && firstTokenMS == nil {
 		// 看门狗取消且没有收到任何内容:按首 token 超时定稿并在流内输出错误事件。
-		d.recordFirstTokenTimeout(r.Context(), requestID, chain, start)
+		d.recordFirstTokenTimeout(r.Context(), requestID, chain, start, routingEngineLogs(bctx))
 		errorPayload, _ := json.Marshal(map[string]any{"error": map[string]any{
 			"type":    "timeout",
 			"message": "上游未在 first_token_timeout_ms 内返回首个 token",
@@ -147,7 +147,7 @@ func (d Deps) handleStream(bctx *schemas.BifrostContext, streamCtx context.Conte
 		_ = writeEvent(errorPayload)
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 		flusher.Flush()
-		d.recordFailure(r.Context(), requestID, chain, streamErr, start, firstTokenMS, snapshot)
+		d.recordFailure(r.Context(), requestID, chain, bctx, streamErr, start, firstTokenMS, snapshot)
 		return
 	}
 
@@ -169,11 +169,12 @@ func (d Deps) handleStream(bctx *schemas.BifrostContext, streamCtx context.Conte
 	_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	flusher.Flush()
 
-	d.recordStreamSuccess(r.Context(), requestID, keyCtx, chain, servedProvider, servedModel, start, firstTokenMS, snapshot)
+	d.recordStreamSuccess(r.Context(), requestID, keyCtx, chain, servedProvider, servedModel, start, firstTokenMS, snapshot, routingEngineLogs(bctx))
 }
 
 // recordFirstTokenTimeout 定稿一次首 token 超时的流式请求。
-func (d Deps) recordFirstTokenTimeout(ctx context.Context, requestID uuid.UUID, chain routeChain, start time.Time) {
+func (d Deps) recordFirstTokenTimeout(ctx context.Context, requestID uuid.UUID, chain routeChain,
+	start time.Time, logs []schemas.RoutingEngineLogEntry) {
 	total := int(time.Since(start).Milliseconds())
 	primary := chain[0]
 	store := usageStore{pool: d.Pool}
@@ -184,7 +185,7 @@ func (d Deps) recordFirstTokenTimeout(ctx context.Context, requestID uuid.UUID, 
 		TotalMS:      total,
 		ErrorType:    stringPtr("first_token_timeout"),
 		ErrorMessage: stringPtr("上游未在 first_token_timeout_ms 内返回首个 token"),
-		AttemptTrail: attemptTrailJSON(chain, candidate{}, "failed", "first_token_timeout"),
+		AttemptTrail: attemptTrailJSON(chain, candidate{}, "failed", "first_token_timeout", logs),
 	}); err != nil {
 		d.Logger.Warn("finalize first token timeout usage failed", "request_id", requestID, "error", err)
 	}
@@ -192,7 +193,8 @@ func (d Deps) recordFirstTokenTimeout(ctx context.Context, requestID uuid.UUID, 
 
 // recordStreamSuccess 定稿一次成功的流式请求。
 func (d Deps) recordStreamSuccess(ctx context.Context, requestID uuid.UUID, keyCtx apiKeyContext, chain routeChain,
-	servedProvider, servedModel string, start time.Time, firstTokenMS *int, snapshot usageSnapshot) {
+	servedProvider, servedModel string, start time.Time, firstTokenMS *int, snapshot usageSnapshot,
+	logs []schemas.RoutingEngineLogEntry) {
 	total := int(time.Since(start).Milliseconds())
 	served, lookupErr := chain.findCandidate(servedProvider, servedModel)
 	if lookupErr != nil {
@@ -219,7 +221,7 @@ func (d Deps) recordStreamSuccess(ctx context.Context, requestID uuid.UUID, keyC
 		FirstTokenMS:    firstTokenMS,
 		TotalMS:         total,
 		UsageSource:     stringPtrNil("computed", snapshot.hasTokens()),
-		AttemptTrail:    attemptTrailJSON(chain, served, "success", ""),
+		AttemptTrail:    attemptTrailJSON(chain, served, "success", "", logs),
 	}); err != nil {
 		d.Logger.Warn("finalize stream usage failed", "request_id", requestID, "error", err)
 	}
@@ -228,7 +230,7 @@ func (d Deps) recordStreamSuccess(ctx context.Context, requestID uuid.UUID, keyC
 
 // recordInterrupted 定稿一次客户端断开的流式请求。
 func (d Deps) recordInterrupted(ctx context.Context, requestID uuid.UUID, chain routeChain,
-	start time.Time, firstTokenMS *int, snapshot usageSnapshot) {
+	start time.Time, firstTokenMS *int, snapshot usageSnapshot, logs []schemas.RoutingEngineLogEntry) {
 	total := int(time.Since(start).Milliseconds())
 	store := usageStore{pool: d.Pool}
 	if err := store.finalize(context.WithoutCancel(ctx), requestID, finalUsage{
@@ -240,7 +242,7 @@ func (d Deps) recordInterrupted(ctx context.Context, requestID uuid.UUID, chain 
 		CachedTokens:    snapshot.CachedTokens,
 		ReasoningTokens: snapshot.ReasoningTokens,
 		UsageSource:     stringPtrNil("computed", snapshot.hasTokens()),
-		AttemptTrail:    attemptTrailJSON(chain, candidate{}, "interrupted", "client disconnected"),
+		AttemptTrail:    attemptTrailJSON(chain, candidate{}, "interrupted", "client disconnected", logs),
 	}); err != nil {
 		d.Logger.Warn("finalize interrupted usage failed", "request_id", requestID, "error", err)
 	}

@@ -45,8 +45,19 @@ func (u usageInfo) hasTokens() bool {
 	return usageSnapshot(u).hasTokens()
 }
 
-// attemptTrailJSON 生成 policy_decisions.attempt_trail:记录链路与最终结果一条摘要。
-func attemptTrailJSON(chain routeChain, served candidate, outcome, errorMessage string) []byte {
+// routingEngineLogs 读取 Bifrost 本次请求的路由引擎日志,
+// 包含主候选失败、每次 fallback/重试的尝试与错误摘要。
+func routingEngineLogs(bctx *schemas.BifrostContext) []schemas.RoutingEngineLogEntry {
+	if bctx == nil {
+		return nil
+	}
+	return bctx.GetRoutingEngineLogs()
+}
+
+// attemptTrailJSON 生成 policy_decisions.attempt_trail:
+//   - attempts: 最终结果摘要(成功记实际服务的候选,失败/中断记错误);
+//   - engine_logs: Bifrost 路由引擎的过程日志,保证 fallback 生效时主候选的失败原因可追溯。
+func attemptTrailJSON(chain routeChain, served candidate, outcome, errorMessage string, logs []schemas.RoutingEngineLogEntry) []byte {
 	trail := []map[string]any{}
 	if outcome == "success" {
 		trail = append(trail, map[string]any{
@@ -62,9 +73,18 @@ func attemptTrailJSON(chain routeChain, served candidate, outcome, errorMessage 
 		}
 		trail = append(trail, entry)
 	}
-	data, err := json.Marshal(trail)
+	engineLogs := make([]map[string]any, 0, len(logs))
+	for _, log := range logs {
+		engineLogs = append(engineLogs, map[string]any{
+			"engine":    log.Engine,
+			"level":     string(log.Level),
+			"message":   log.Message,
+			"timestamp": log.Timestamp,
+		})
+	}
+	data, err := json.Marshal(map[string]any{"attempts": trail, "engine_logs": engineLogs})
 	if err != nil {
-		return []byte("[]")
+		return []byte("{}")
 	}
 	return data
 }

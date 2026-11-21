@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -21,6 +22,12 @@ import (
 var allowedProviders = map[string]bool{
 	"openai": true, "azure_openai": true, "anthropic": true, "gemini": true,
 	"vertex": true, "bedrock": true, "openai_compatible": true,
+}
+
+// v1PathProviders 标记 Bifrost 会在 base_url 后拼接 /v1/... 路径的 provider;
+// 这类 provider 的 base_url 以 /v1 结尾时会拼出 /v1/v1/... 必然 404。
+var v1PathProviders = map[string]bool{
+	"openai": true, "openai_compatible": true, "anthropic": true,
 }
 
 type providerAccountResponse struct {
@@ -144,6 +151,12 @@ func (d ServerDeps) CreateProviderAccount(w http.ResponseWriter, r *http.Request
 	}
 	if strings.TrimSpace(body.APIKey) == "" {
 		adminError(w, http.StatusBadRequest, "PROVIDER_KEY_REQUIRED", "请填写 API Key", nil)
+		return
+	}
+	// Bifrost 会在 base_url 后自动拼接 /v1/... 路径;以 /v1 结尾会拼出 /v1/v1/... 必然 404。
+	if v1PathProviders[body.Provider] && baseURLHasV1Suffix(body.BaseURL) {
+		adminError(w, http.StatusBadRequest, "PROVIDER_BASE_URL_INVALID",
+			"base_url 不能以 /v1 结尾:网关会自动拼接 /v1/chat/completions 等路径,请填写不含 /v1 的地址", nil)
 		return
 	}
 	// 引擎要求同一 provider 的 base URL 不能冲突,创建前提前拦截并说明原因。
@@ -311,16 +324,22 @@ func (d ServerDeps) UpdateProviderAccount(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
-	var oldName string
+	var oldName, provider string
 	err = d.Pool.QueryRow(r.Context(), `
-		SELECT name FROM provider_accounts WHERE id = $1 AND organization_id = $2
-	`, accountID, principal.OrganizationID).Scan(&oldName)
+		SELECT name, provider FROM provider_accounts WHERE id = $1 AND organization_id = $2
+	`, accountID, principal.OrganizationID).Scan(&oldName, &provider)
 	if errors.Is(err, pgx.ErrNoRows) {
 		adminError(w, http.StatusNotFound, "PROVIDER_NOT_FOUND", "Provider 账号不存在或不属于当前组织", nil)
 		return
 	}
 	if err != nil {
 		adminError(w, http.StatusInternalServerError, "PROVIDER_UPDATE_FAILED", "更新 Provider 账号失败", nil)
+		return
+	}
+	// base_url 更新沿用创建时的约束:openai/anthropic 类 provider 不允许 /v1 结尾。
+	if v1PathProviders[provider] && baseURLHasV1Suffix(body.BaseURL) {
+		adminError(w, http.StatusBadRequest, "PROVIDER_BASE_URL_INVALID",
+			"base_url 不能以 /v1 结尾:网关会自动拼接 /v1/chat/completions 等路径,请填写不含 /v1 的地址", nil)
 		return
 	}
 	if _, err := d.Pool.Exec(r.Context(), `
@@ -429,20 +448,44 @@ func (d ServerDeps) TestProviderAccount(w http.ResponseWriter, r *http.Request) 
 		adminOK(w, providerTestResult{OK: false, Message: fmt.Sprintf("凭据被拒绝(HTTP %d),请检查 API Key", resp.StatusCode)})
 		return
 	}
+	if resp.StatusCode == http.StatusNotFound {
+		adminOK(w, providerTestResult{OK: false, Message: "上游返回 HTTP 404:请检查 base_url 是否多写了 /v1(网关会在 base_url 后自动拼接 /v1/... 路径)"})
+		return
+	}
 	adminOK(w, providerTestResult{OK: false, Message: fmt.Sprintf("上游返回 HTTP %d", resp.StatusCode)})
 }
 
+// baseURLHasV1Suffix 判断 base_url 的路径是否以 /v1 结尾。
+// Bifrost 会在 openai/anthropic 类 provider 的 base_url 后拼接 /v1/... 路径,
+// 以 /v1 结尾的地址会拼出 /v1/v1/... 必然 404;URL 解析失败时不判定,由实际调用暴露问题。
+func baseURLHasV1Suffix(baseURL *string) bool {
+	if baseURL == nil {
+		return false
+	}
+	parsed, err := url.Parse(strings.TrimRight(*baseURL, "/"))
+	if err != nil {
+		return false
+	}
+	return parsed.Path == "/v1" || strings.HasSuffix(parsed.Path, "/v1")
+}
+
 // providerProbeRequest 按 provider 构造轻量探测请求;不支持的 provider 返回错误。
+// 探测路径必须与数据面真实调用同前缀(openai 为 base + /v1/chat/completions,
+// anthropic 为 base + /v1/messages),否则会像旧版探测 /models 一样出现"测试通过但调用 404"。
 func providerProbeRequest(provider string, baseURL *string, apiKey string) (string, map[string]string, error) {
 	switch provider {
 	case "openai", "openai_compatible":
-		base := "https://api.openai.com/v1"
+		base := "https://api.openai.com"
 		if baseURL != nil && *baseURL != "" {
 			base = strings.TrimRight(*baseURL, "/")
 		}
-		return base + "/models", map[string]string{"Authorization": "Bearer " + apiKey}, nil
+		return base + "/v1/models", map[string]string{"Authorization": "Bearer " + apiKey}, nil
 	case "anthropic":
-		return "https://api.anthropic.com/v1/models", map[string]string{
+		base := "https://api.anthropic.com"
+		if baseURL != nil && *baseURL != "" {
+			base = strings.TrimRight(*baseURL, "/")
+		}
+		return base + "/v1/models", map[string]string{
 			"x-api-key":         apiKey,
 			"anthropic-version": "2023-06-01",
 		}, nil

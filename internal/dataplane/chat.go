@@ -368,7 +368,7 @@ func (d Deps) handleNonStream(bctx *schemas.BifrostContext, r *http.Request, w h
 	req *schemas.BifrostChatRequest, start time.Time) {
 	resp, bifrostErr := d.Engine.Client().ChatCompletionRequest(bctx, req)
 	if bifrostErr != nil {
-		d.recordFailure(r.Context(), requestID, chain, bifrostErr, start, nil, usageSnapshot{})
+		d.recordFailure(r.Context(), requestID, chain, bctx, bifrostErr, start, nil, usageSnapshot{})
 		writeBifrostError(w, bifrostErr)
 		return
 	}
@@ -406,7 +406,7 @@ func (d Deps) handleNonStream(bctx *schemas.BifrostContext, r *http.Request, w h
 		Cost:            cost,
 		TotalMS:         total,
 		UsageSource:     usageSource,
-		AttemptTrail:    attemptTrailJSON(chain, served, "success", ""),
+		AttemptTrail:    attemptTrailJSON(chain, served, "success", "", routingEngineLogs(bctx)),
 	})
 	if finalizeErr != nil {
 		d.Logger.Warn("finalize usage failed", "request_id", requestID, "error", finalizeErr)
@@ -415,8 +415,9 @@ func (d Deps) handleNonStream(bctx *schemas.BifrostContext, r *http.Request, w h
 }
 
 // recordFailure 在上游失败时定稿用量并记录失败明细。finalize 使用不受请求取消影响的 ctx。
+// bctx 用于读取 Bifrost 路由引擎日志,把每次失败尝试写入 attempt_trail。
 func (d Deps) recordFailure(ctx context.Context, requestID uuid.UUID, chain routeChain,
-	bifrostErr *schemas.BifrostError, start time.Time, firstTokenMS *int, partial usageSnapshot) {
+	bctx *schemas.BifrostContext, bifrostErr *schemas.BifrostError, start time.Time, firstTokenMS *int, partial usageSnapshot) {
 	total := int(time.Since(start).Milliseconds())
 	statusCode := http.StatusBadGateway
 	if bifrostErr.StatusCode != nil && *bifrostErr.StatusCode >= 400 && *bifrostErr.StatusCode < 600 {
@@ -432,11 +433,22 @@ func (d Deps) recordFailure(ctx context.Context, requestID uuid.UUID, chain rout
 	}
 	usageSource := stringPtrNil("computed", partial.hasTokens())
 
+	// 失败归因:错误响应携带实际尝试的 provider/model 时,定位链中对应候选,
+	// 让失败用量与汇总报表能归到具体上游,而不是留空。
+	attemptedProvider := string(bifrostErr.ExtraFields.RoutingInfo.Provider)
+	attempted, lookupErr := chain.findCandidate(attemptedProvider, bifrostErr.ExtraFields.RoutingInfo.Model)
+	var attemptedModel *string
+	if bifrostErr.ExtraFields.RoutingInfo.Model != "" {
+		attemptedModel = stringPtr(bifrostErr.ExtraFields.RoutingInfo.Model)
+	}
+
 	store := usageStore{pool: d.Pool}
 	if err := store.finalize(context.WithoutCancel(ctx), requestID, finalUsage{
 		State:           "failed",
 		StatusCode:      intPtr(statusCode),
-		Provider:        stringPtr(string(bifrostErr.ExtraFields.RoutingInfo.Provider)),
+		CandidateID:     uuidPtr(attempted.ID, lookupErr == nil),
+		Provider:        stringPtr(attemptedProvider),
+		UpstreamModel:   attemptedModel,
 		InputTokens:     partial.InputTokens,
 		OutputTokens:    partial.OutputTokens,
 		CachedTokens:    partial.CachedTokens,
@@ -446,7 +458,7 @@ func (d Deps) recordFailure(ctx context.Context, requestID uuid.UUID, chain rout
 		UsageSource:     usageSource,
 		ErrorType:       stringPtr(errType),
 		ErrorMessage:    stringPtr(message),
-		AttemptTrail:    attemptTrailJSON(chain, candidate{}, "failed", message),
+		AttemptTrail:    attemptTrailJSON(chain, attempted, "failed", message, routingEngineLogs(bctx)),
 	}); err != nil {
 		d.Logger.Warn("finalize failed usage error", "request_id", requestID, "error", err)
 	}

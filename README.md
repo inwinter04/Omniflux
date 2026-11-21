@@ -64,7 +64,7 @@ Omniflux 是一个面向企业的 AI 服务控制平面，用于把分散在多�
 | `PATCH /api/v1/budgets/{id}` | 调整预算限额 |
 | `DELETE /api/v1/budgets/{id}` | 删除预算窗口 |
 | `GET /api/v1/provider-accounts` | Provider 账号列表(含近 24h 被动健康统计) |
-| `POST /api/v1/provider-accounts` | 创建 Provider 账号(凭据加密入库) |
+| `POST /api/v1/provider-accounts` | 创建 Provider 账号(凭据加密入库;openai/anthropic 类 base_url 不含 `/v1`,网关会自动拼接 `/v1/chat/completions` 等路径) |
 | `PATCH /api/v1/provider-accounts/{id}` | 更新 Provider 账号 |
 | `POST /api/v1/provider-accounts/{id}/test` | 手动连通性测试 |
 | `DELETE /api/v1/provider-accounts/{id}` | 删除 Provider 账号 |
