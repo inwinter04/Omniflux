@@ -14,7 +14,7 @@
 
 Omniflux is an enterprise AI service control plane that brings model services from multiple providers and private deployments into a governed system for routing, metering, auditing, and observability.
 
-Omniflux is under active development. Configuration, data models, and administrative APIs may change before the first stable release.
+Starting from v0.1.0, Omniflux is in a stabilization phase; breaking changes to configuration, data models, and administrative APIs will be noted in the release notes.
 
 ## Features
 
