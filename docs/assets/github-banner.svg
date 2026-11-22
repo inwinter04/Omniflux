@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="360" viewBox="0 0 1280 360" role="img" aria-labelledby="title desc">
+  <title id="title">Omniflux — All intelligence, one current.</title>
+  <desc id="desc">A refined light-ocean banner with an Of vector lettermark and four layered waves.</desc>
+  <defs>
+    <linearGradient id="morningSea" x1="80" y1="0" x2="1160" y2="360" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E8F4EE"/>
+      <stop offset="0.56" stop-color="#BCE5DF"/>
+      <stop offset="1" stop-color="#7FCED1"/>
+    </linearGradient>
+    <linearGradient id="ofAir" x1="64" y1="0" x2="64" y2="128" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F3F8FC"/>
+      <stop offset="1" stop-color="#CDE5F2"/>
+    </linearGradient>
+    <clipPath id="ofClip"><circle cx="64" cy="64" r="62"/></clipPath>
+  </defs>
+  <rect width="1280" height="360" fill="url(#morningSea)"/>
+  <path d="M0 286C169 226 278 285 410 309C559 336 668 281 784 235C915 183 1030 202 1134 237C1193 257 1239 254 1280 237V360H0Z" fill="#65BEC6" opacity="0.32"/>
+  <path d="M0 320C159 264 278 315 410 337C553 361 674 317 792 272C916 225 1029 239 1137 271C1196 289 1242 286 1280 271V360H0Z" fill="#3BA5B3" opacity="0.23"/>
+  <path d="M0 347C166 300 280 342 414 358H0Z" fill="#228CA3" opacity="0.15"/>
+  <path d="M694 71C809 11 927 17 1022 57C1120 98 1198 86 1304 26" fill="none" stroke="#F3F8F2" stroke-width="1.25" opacity="0.48"/>
+  <path d="M721 91C823 39 924 43 1014 79C1114 119 1200 108 1304 51" fill="none" stroke="#F3F8F2" stroke-width="1.25" opacity="0.35"/>
+  <path d="M64 56H103" stroke="#2B8CA4" stroke-width="2"/>
+  <text x="119" y="60" fill="#316B78" font-family="Consolas, monospace" font-size="12" letter-spacing="2.3">AI SERVICE CONTROL PLANE</text>
+  <text x="60" y="197" fill="#123F58" font-family="'Trebuchet MS', sans-serif" font-size="90" font-weight="700" letter-spacing="-4">Omni</text>
+  <text x="265" y="197" fill="#17798F" font-family="'Trebuchet MS', sans-serif" font-size="90" font-weight="700" letter-spacing="-4">flux</text>
+  <text x="65" y="247" fill="#315F69" font-family="Georgia, serif" font-size="24">All intelligence, one current.</text>
+  <text x="67" y="306" fill="#3A7580" font-family="Consolas, monospace" font-size="10" letter-spacing="1.7">MANY INTELLIGENCES / ONE SEA</text>
+  <circle cx="1004" cy="185" r="153" fill="none" stroke="#EDF7F0" stroke-opacity="0.22" stroke-width="1.2"/>
+  <circle cx="1004" cy="185" r="166" fill="none" stroke="#EDF7F0" stroke-opacity="0.12" stroke-width="1"/>
+  <g transform="translate(862 43) scale(2.22)">
+    <circle cx="64" cy="64" r="62" fill="url(#ofAir)"/>
+    <g clip-path="url(#ofClip)">
+      <circle cx="46" cy="50" r="25.5" fill="none" stroke="#247FA7" stroke-width="9.5"/>
+      <path d="M26.47 33.61A25.5 25.5 0 0 1 58.75 27.92" fill="none" stroke="#72BCD6" stroke-width="3.5" stroke-linecap="round"/>
+      <g transform="translate(70 80) scale(.03808594 -.03808594)" fill="#174F70"><path d="M929 1271Q848 1307 790 1307Q646 1307 592 1071H838L813 870H561L401 -68Q375 -221 260 -320Q145 -419 -9 -420L-62 -254Q9 -238 66 -183Q123 -128 136 -58L303 870H152L185 1071H333Q436 1510 802 1510Q906 1510 979 1467Z"/></g>
+      <path d="M-9 87C13 68 34 68 54 81C75 95 95 96 114 81C124 72 134 70 141 71V140H-9Z" fill="#99D2E1"/>
+      <path d="M-9 86C13 67 34 67 54 80C75 94 95 95 114 80C124 71 134 69 141 70" fill="none" stroke="#F2F8FB" stroke-width="2.25"/>
+      <path d="M-10 102C13 83 36 84 56 97C77 111 98 110 117 95C126 87 135 85 142 86V140H-10Z" fill="#56AEC8"/>
+      <path d="M-10 101C13 82 36 83 56 96C77 110 98 109 117 94C126 86 135 84 142 85" fill="none" stroke="#CDE7F0" stroke-width="1.75"/>
+      <path d="M-9 118C15 100 37 101 58 113C79 126 100 124 119 111C128 104 136 102 142 103V140H-9Z" fill="#2C86A8"/>
+      <path d="M-9 132C16 115 39 116 60 127C82 139 103 137 121 125C130 119 137 117 143 118V140H-9Z" fill="#1B5F83"/>
+    </g>
+    <circle cx="64" cy="64" r="61.4" fill="none" stroke="#FFFFFF" stroke-opacity="0.86" stroke-width="1.2"/>
+  </g>
+</svg>

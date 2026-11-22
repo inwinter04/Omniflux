@@ -1,7 +1,8 @@
-# Omniflux
+<p align="center">
+  <img src="docs/assets/github-banner.svg" alt="Omniflux — All intelligence, one current." width="100%" />
+</p>
 
 <p align="center">
-  <b>All intelligence, one current.</b><br/>
   <a href="README.md">简体中文</a> · <a href="README.en-US.md">English</a>
 </p>
 

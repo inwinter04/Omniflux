@@ -12,6 +12,7 @@ export default defineConfig({
   // 站点构建时同样要排除,避免被发布。
   srcExclude: ['architecture/**'],
   themeConfig: {
+    logo: '/favicon.svg',
     siteTitle: 'Omniflux',
     nav: [
       { text: '指南', link: '/guide/quick-start' },

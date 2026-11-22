@@ -5,6 +5,9 @@ hero:
   name: Omniflux
   text: All intelligence, one current.
   tagline: 企业 AI 服务控制平面,把分散在多个供应商和私有部署环境中的模型能力,纳入统一的治理、路由、计量、审计与可观测体系。
+  image:
+    src: /omniflux-hero.svg
+    alt: Omniflux 海浪 Of 标志
   actions:
     - theme: brand
       text: 快速开始
