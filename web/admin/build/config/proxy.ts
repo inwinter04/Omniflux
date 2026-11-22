@@ -20,6 +20,10 @@ export function createViteProxy(env: Env.ImportMeta, enable: boolean) {
 
   const proxy: Record<string, ProxyOptions> = createProxyItem({ baseURL, proxyPattern }, isEnableProxyLog);
 
+  const healthTarget = new URL(baseURL).origin;
+  proxy['/livez'] = { target: healthTarget, changeOrigin: true };
+  proxy['/readyz'] = { target: healthTarget, changeOrigin: true };
+
   other.forEach(item => {
     Object.assign(proxy, createProxyItem(item, isEnableProxyLog));
   });
