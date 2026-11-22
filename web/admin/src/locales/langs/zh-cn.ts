@@ -239,6 +239,9 @@ const local: App.I18n.Schema = {
     'model-management_providers': 'Provider 账号',
     'model-management_route-policies': '路由策略',
     'model-management_model-services': '模型服务',
+    'asset-registry': '资产中心',
+    'asset-registry_prompt-templates': '提示词模板',
+    'asset-registry_evaluations': '测试集与评估',
     observability: '运营中心',
     observability_usage: '用量报表',
     observability_audit: '审计日志'

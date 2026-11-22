@@ -4,6 +4,12 @@ export function statusText(status: string) {
   switch (status) {
     case 'active':
       return '启用中';
+    case 'published':
+      return '已发布';
+    case 'draft':
+      return '草稿';
+    case 'archived':
+      return '已归档';
     case 'disabled':
       return '已停用';
     default:
@@ -15,6 +21,12 @@ export function statusTagType(status: string): 'success' | 'warning' | 'error' |
   switch (status) {
     case 'active':
       return 'success';
+    case 'published':
+      return 'success';
+    case 'draft':
+      return 'info';
+    case 'archived':
+      return 'default';
     case 'disabled':
       return 'default';
     default:
@@ -73,7 +85,16 @@ const actionTextMap: Record<string, string> = {
   'model_service.deleted': '删除模型服务',
   'api_key.created': '创建 API Key',
   'api_key.status_changed': '切换 API Key 状态',
-  'api_key.deleted': '删除 API Key'
+  'api_key.deleted': '删除 API Key',
+  'asset.created': '创建资产',
+  'asset.draft_created': '保存资产草稿',
+  'asset.published': '发布资产',
+  'asset.rolled_back': '回滚资产',
+  'asset.status_changed': '变更资产状态',
+  'asset_grant.upserted': '保存资产授权',
+  'asset_grant.revoked': '撤销资产授权',
+  'prompt_template.previewed': '预览 PromptTemplate',
+  'prompt_template.invoked': '调用 PromptTemplate'
 };
 
 export function auditActionText(action: string) {
@@ -88,7 +109,9 @@ const resourceTextMap: Record<string, string> = {
   model_service: '模型服务',
   api_key: 'API Key',
   user: '用户',
-  session: '会话'
+  session: '会话',
+  asset: '企业资产',
+  asset_grant: '资产授权'
 };
 
 export function auditResourceText(resourceType: string) {

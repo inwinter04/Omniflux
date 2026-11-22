@@ -17,6 +17,9 @@ API Key 在管理台"访问控制 → API Keys"中签发,明文仅创建时返�
 | `GET /v1/models` | 可用模型服务列表 |
 | `POST /v1/chat/completions` | OpenAI 兼容对话接口(支持流式) |
 | `POST /v1/embeddings` | OpenAI 兼容向量化接口 |
+| `GET /v1/prompt-templates` | 当前项目可读取或调用的已发布模板 |
+| `GET /v1/prompt-templates/{name}` | 读取已发布模板配置(需 `read` 授权) |
+| `POST /v1/prompt-templates/{name}/render` | 渲染当前发布版本(需 `invoke` 授权) |
 
 ## 调用示例
 
@@ -33,6 +36,19 @@ curl -N http://127.0.0.1:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"e2e-chat","stream":true,"messages":[{"role":"user","content":"你好"}]}'
 ```
+
+## PromptTemplate 渲染
+
+模板使用 Go Template 安全子集,通过 <code v-text="'{{ .variable }}'"></code> 引用已声明变量。变量支持 `string`、`number`、`integer`、`boolean`,可声明必填、默认值与描述;输入按 JSON Schema 严格校验,不允许未声明变量。模板可绑定一个模型服务作为默认执行目标,但渲染端点只返回文本,不会自动发起模型推理。
+
+```bash
+curl -sS http://127.0.0.1:8080/v1/prompt-templates/customer-service/render \
+  -H "Authorization: Bearer $OMNIFLUX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"variables":{"question":"如何申请退款？"}}'
+```
+
+渲染始终固定到当前发布版本。授权可通过组织、项目所属部门或项目本身授予;未发布、停用、归档或越权资产不可调用。成功调用和拒绝事件写入审计,变量值与渲染内容不会进入审计记录。
 
 ## 路由行为
 

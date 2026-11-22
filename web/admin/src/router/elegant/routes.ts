@@ -75,6 +75,41 @@ export const generatedRoutes: GeneratedRoute[] = [
     ]
   },
   {
+    name: 'asset-registry',
+    path: '/asset-registry',
+    component: 'layout.base',
+    meta: {
+      title: 'asset-registry',
+      i18nKey: 'route.asset-registry',
+      order: 4,
+      icon: 'mdi:archive-outline'
+    },
+    children: [
+      {
+        name: 'asset-registry_evaluations',
+        path: '/asset-registry/evaluations',
+        component: 'view.asset-registry_evaluations',
+        meta: {
+          title: 'asset-registry_evaluations',
+          i18nKey: 'route.asset-registry_evaluations',
+          order: 2,
+          icon: 'mdi:clipboard-check-outline'
+        }
+      },
+      {
+        name: 'asset-registry_prompt-templates',
+        path: '/asset-registry/prompt-templates',
+        component: 'view.asset-registry_prompt-templates',
+        meta: {
+          title: 'asset-registry_prompt-templates',
+          i18nKey: 'route.asset-registry_prompt-templates',
+          order: 1,
+          icon: 'mdi:file-document-edit-outline'
+        }
+      }
+    ]
+  },
+  {
     name: 'home',
     path: '/home',
     component: 'layout.base$view.home',

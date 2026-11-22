@@ -25,6 +25,7 @@ Starting from v0.1.0, Omniflux is in a stabilization phase; breaking changes to 
 - **Metering and attribution** — attribute requests, tokens, and cost to projects, applications, keys, providers, and models.
 - **Auditable decisions** — retain administrative actions, sign-in events, and policy decisions.
 - **Operational visibility** — liveness/readiness probes, structured logs, and Prometheus metrics.
+- **Enterprise asset governance** — immutable PromptTemplate versions, publishing, rollback, organization/department/project grants, Markdown editing, real model debugging, multi-model comparison, evaluation sets, and invocation audits.
 - **Modern admin console** — Vue 3, TypeScript, Naive UI, SoybeanAdmin, and server-backed sessions.
 
 ## Architecture

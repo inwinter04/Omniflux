@@ -229,3 +229,149 @@ export function fetchAuditEventDetail(id: string) {
 export function fetchDashboard() {
   return request<Api.Management.Dashboard>({ url: '/dashboard' });
 }
+
+/** List organization-scoped enterprise assets */
+export function fetchAssets() {
+  return request<Api.Management.Asset[]>({ url: '/assets' });
+}
+
+export function fetchAssetDetail(id: string) {
+  return request<Api.Management.AssetDetail>({ url: `/assets/${id}` });
+}
+
+export function fetchCreateAsset(params: Api.Management.CreateAssetParams) {
+  return request<{ id: string; version_id: string; version: number }>({ url: '/assets', method: 'post', data: params });
+}
+
+export function fetchUpdateAsset(id: string, params: Api.Management.UpdateAssetParams) {
+  return request<{ version_id: string; version: number }>({ url: `/assets/${id}`, method: 'patch', data: params });
+}
+
+export function fetchPublishAsset(id: string, versionId: string) {
+  return request({ url: `/assets/${id}/publish`, method: 'post', data: { version_id: versionId } });
+}
+
+export function fetchRollbackAsset(id: string, versionId: string, expectedVersion: number) {
+  return request<{ version_id: string; version: number }>({
+    url: `/assets/${id}/rollback`,
+    method: 'post',
+    data: { version_id: versionId, expected_version: expectedVersion }
+  });
+}
+
+export function fetchUpdateAssetStatus(id: string, status: Api.Management.AssetStatus) {
+  return request({ url: `/assets/${id}/status`, method: 'patch', data: { status } });
+}
+
+export function fetchAssetVersion(id: string, versionId: string) {
+  return request<Api.Management.AssetVersion>({ url: `/assets/${id}/versions/${versionId}` });
+}
+
+export function fetchAssetDiff(id: string, from: string, to: string) {
+  return request<{ from_version: number; to_version: number; diff: string }>({
+    url: `/assets/${id}/versions/diff`,
+    params: { from, to }
+  });
+}
+
+export function fetchRenderAssetPreview(id: string, versionId: string, variables: Record<string, unknown>) {
+  return request<Api.Management.PromptRenderResult>({
+    url: `/assets/${id}/render`,
+    method: 'post',
+    data: { version_id: versionId, variables }
+  });
+}
+
+export function fetchAssetGrants(id: string) {
+  return request<Api.Management.AssetGrant[]>({ url: `/assets/${id}/grants` });
+}
+
+export function fetchUpsertAssetGrant(id: string, params: Api.Management.UpsertAssetGrantParams) {
+  return request<{ id: string }>({ url: `/assets/${id}/grants`, method: 'post', data: params });
+}
+
+export function fetchRevokeAssetGrant(id: string, grantId: string) {
+  return request({ url: `/assets/${id}/grants/${grantId}`, method: 'delete' });
+}
+
+export function fetchRunPrompt(id: string, params: Api.Management.RunPromptParams) {
+  return request<Api.Management.RunPromptResult>({ url: `/assets/${id}/run`, method: 'post', data: params });
+}
+
+export function fetchPromptRunHistory(id: string) {
+  return request<Api.Management.PromptRun[]>({ url: `/assets/${id}/runs` });
+}
+
+export function fetchPromptEvaluationSets(id: string) {
+  return request<Api.Management.EvaluationSet[]>({ url: `/assets/${id}/evaluation-sets` });
+}
+
+export function fetchCreatePromptEvaluationSet(id: string, params: Api.Management.CreateEvaluationSetParams) {
+  return request<{ id: string }>({ url: `/assets/${id}/evaluation-sets`, method: 'post', data: params });
+}
+
+export function fetchDeletePromptEvaluationSet(id: string, setId: string) {
+  return request({ url: `/assets/${id}/evaluation-sets/${setId}`, method: 'delete' });
+}
+
+export function fetchEvaluatePrompt(id: string, params: { version_id: string; evaluation_set_id: string; model_service_ids?: string[] }) {
+  return request<{ group_id: string; runs: Api.Management.PromptRun[]; summary: Api.Management.EvaluationSummary }>({
+    url: `/assets/${id}/evaluate`, method: 'post', data: params
+  });
+}
+
+interface StreamPromptCallbacks {
+  onDelta: (delta: string) => void;
+  onResult: (result: Api.Management.PromptRun) => void;
+  onError: (result: Api.Management.PromptRun) => void;
+}
+
+export async function streamPromptRun(id: string, params: Api.Management.RunPromptParams, callbacks: StreamPromptCallbacks, signal?: AbortSignal) {
+  const baseURL = import.meta.env.VITE_HTTP_PROXY === 'Y' ? '/proxy-default' : import.meta.env.VITE_SERVICE_BASE_URL;
+  const response = await fetch(`${baseURL}/assets/${id}/run`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+    signal
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.msg || '模型运行请求失败');
+  }
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error('当前浏览器不支持流式响应');
+  const decoder = new TextDecoder();
+  let buffer = '';
+  const processBlock = (block: string) => {
+    let event = '';
+    let data = '';
+    for (const line of block.split('\n')) {
+      if (line.startsWith('event:')) event = line.slice(6).trim();
+      if (line.startsWith('data:')) data += line.slice(5).trim();
+    }
+    if (!data) return;
+    const payload = JSON.parse(data);
+    if (event === 'delta') callbacks.onDelta(payload.delta);
+    if (event === 'result') callbacks.onResult(payload);
+    if (event === 'error') callbacks.onError(payload);
+  };
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const blocks = buffer.split('\n\n');
+    buffer = blocks.pop() ?? '';
+    for (const block of blocks) processBlock(block);
+  }
+  buffer += decoder.decode();
+  if (buffer.trim()) processBlock(buffer);
+}
+
+export function fetchAllPromptEvaluationSets() {
+  return request<Api.Management.EvaluationSetOverview[]>({ url: '/evaluation-sets' });
+}
+
+export function fetchUpdatePromptEvaluationSet(assetId: string, setId: string, params: Api.Management.CreateEvaluationSetParams) {
+  return request({ url: `/assets/${assetId}/evaluation-sets/${setId}`, method: 'patch', data: params });
+}

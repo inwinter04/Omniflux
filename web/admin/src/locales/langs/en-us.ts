@@ -243,6 +243,9 @@ const local: App.I18n.Schema = {
     'model-management_providers': 'Provider Accounts',
     'model-management_route-policies': 'Route Policies',
     'model-management_model-services': 'Model Services',
+    'asset-registry': 'Asset Registry',
+    'asset-registry_prompt-templates': 'PromptTemplates',
+    'asset-registry_evaluations': 'Evaluation Sets',
     observability: 'Operations',
     observability_usage: 'Usage',
     observability_audit: 'Audit Log'

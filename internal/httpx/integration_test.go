@@ -28,8 +28,9 @@ import (
 const integrationDBEnv = "OMNIFLUX_TEST_DATABASE_URL"
 
 type integrationEnv struct {
-	srv  *httptest.Server
-	pool *pgxpool.Pool
+	srv    *httptest.Server
+	pool   *pgxpool.Pool
+	engine *bifrostx.Engine
 }
 
 var itEnv *integrationEnv
@@ -86,7 +87,10 @@ func setupIntegration(t *testing.T) *integrationEnv {
 	})
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	itEnv = &integrationEnv{srv: srv, pool: pool}
+	itEnv = &integrationEnv{srv: srv, pool: pool, engine: engine}
+	t.Cleanup(func() {
+		itEnv = nil
+	})
 	return itEnv
 }
 

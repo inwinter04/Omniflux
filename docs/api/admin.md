@@ -113,6 +113,40 @@
 | `PATCH /api/v1/api-keys/{id}` | 更新状态与 Key 级限流 |
 | `DELETE /api/v1/api-keys/{id}` | 软删除 API Key |
 
+## 企业资产
+
+当前资产类型为 `prompt_template`。资产始终按组织隔离;创建和更新生成不可变草稿版本,发布后才对数据面可见。更新与回滚需携带 `expected_version` 防止并发覆盖,回滚会把历史已发布版本复制为新版本,不会修改历史。
+
+| 接口 | 说明 |
+| --- | --- |
+| `GET /api/v1/assets` | 资产列表 |
+| `POST /api/v1/assets` | 创建 PromptTemplate 与草稿 v1 |
+| `GET /api/v1/assets/{id}` | 资产详情、最新配置与版本链 |
+| `PATCH /api/v1/assets/{id}` | 保存新草稿版本 |
+| `POST /api/v1/assets/{id}/publish` | 发布最新草稿 |
+| `POST /api/v1/assets/{id}/rollback` | 回滚并生成新的已发布版本 |
+| `PATCH /api/v1/assets/{id}/status` | 停用、重新启用或归档资产 |
+| `GET /api/v1/assets/{id}/versions/{versionID}` | 查询版本配置快照 |
+| `GET /api/v1/assets/{id}/versions/diff?from=...&to=...` | 获取两个版本的 unified diff |
+| `POST /api/v1/assets/{id}/render` | 使用指定版本渲染管理端预览 |
+| `POST /api/v1/assets/{id}/run` | 运行真实模型;单模型支持 SSE 流式,多模型执行对比 |
+| `GET /api/v1/assets/{id}/runs` | 查询最近 100 条模型运行记录 |
+| `GET /api/v1/assets/{id}/evaluation-sets` | 查询测试集与测试用例 |
+| `POST /api/v1/assets/{id}/evaluation-sets` | 创建测试集(1-50 个用例) |
+| `DELETE /api/v1/assets/{id}/evaluation-sets/{setID}` | 删除测试集,保留历史运行 |
+| `PATCH /api/v1/assets/{id}/evaluation-sets/{setID}` | 编辑测试集名称、说明和完整用例集 |
+| `GET /api/v1/evaluation-sets` | 组织级测试集治理列表,含归属模板、运行数、匹配率和最近运行 |
+| `POST /api/v1/assets/{id}/evaluate` | 批量运行测试集并输出匹配率、成本和延迟汇总 |
+| `GET /api/v1/assets/{id}/grants` | 查询有效授权 |
+| `POST /api/v1/assets/{id}/grants` | 新增或更新组织/部门/项目授权 |
+| `DELETE /api/v1/assets/{id}/grants/{grantID}` | 撤销授权 |
+
+`asset_grants.actions` 支持 `read` 与 `invoke`。数据面按 API Key 所属项目解析授权,`read` 控制配置读取,`invoke` 控制渲染;管理端写操作由 RBAC 控制。归档不可恢复,所有生命周期和授权变更都会写入审计。
+
+模型调试使用现有模型服务路由、fallback、超时和价格配置。单次流式运行返回 `started/delta/result/error` SSE 事件;对比一次最多 4 个模型。运行记录保存版本、Token、成本、延迟、Provider、结构校验和错误。`output_schema` 为标准 JSON Schema,禁止外部引用;模型输出会再次在服务端校验。
+
+批量评估支持 `exact`、`contains`、`regex` 三种确定性规则,一次最多 50 个用例、4 个模型,执行并发受限。测试结果可用于比较匹配率、成本和延迟,不代表开放语义下的人工或模型主观评分。
+
 ## 用量与审计
 
 | 接口 | 说明 |

@@ -226,6 +226,177 @@ declare namespace Api {
 
     type UpdateModelServiceParams = CreateModelServiceParams;
 
+    type AssetStatus = 'draft' | 'published' | 'disabled' | 'archived';
+
+    interface PromptVariable {
+      name: string;
+      type: 'string' | 'number' | 'integer' | 'boolean';
+      description?: string;
+      required: boolean;
+      default?: unknown;
+    }
+
+    interface PromptSpec {
+      template: string;
+      variables: PromptVariable[];
+      model_service_id?: string;
+      output_schema?: Record<string, unknown>;
+    }
+
+    interface Asset {
+      id: string;
+      asset_type: 'prompt_template';
+      name: string;
+      description: string;
+      owner_email: string;
+      status: AssetStatus;
+      latest_version: number;
+      current_version_id: string | null;
+      current_version: number | null;
+      has_draft: boolean;
+      created_at: string;
+      updated_at: string;
+    }
+
+    interface AssetVersion {
+      id: string;
+      version: number;
+      spec?: PromptSpec;
+      source_version_id: string | null;
+      created_by_email: string;
+      created_at: string;
+      published_by_email: string | null;
+      published_at: string | null;
+      current: boolean;
+    }
+
+    interface AssetDetail extends Asset {
+      spec: PromptSpec;
+      versions: AssetVersion[];
+    }
+
+    interface CreateAssetParams {
+      name: string;
+      description: string;
+      spec: PromptSpec;
+    }
+
+    interface UpdateAssetParams extends CreateAssetParams {
+      expected_version: number;
+    }
+
+    interface AssetGrant {
+      id: string;
+      asset_id: string;
+      subject_type: 'organization' | 'department' | 'project';
+      subject_id: string;
+      subject_name: string;
+      actions: ('read' | 'invoke')[];
+      created_at: string;
+      updated_at: string;
+    }
+
+    interface UpsertAssetGrantParams {
+      subject_type: 'organization' | 'department' | 'project';
+      subject_id: string;
+      actions: ('read' | 'invoke')[];
+    }
+
+    interface PromptRenderResult {
+      version_id: string;
+      version: number;
+      model_service_id: string;
+      rendered: string;
+    }
+
+    interface PromptRun {
+      id: string;
+      group_id: string;
+      kind: 'single' | 'compare' | 'evaluation';
+      status: 'running' | 'success' | 'failed' | 'interrupted';
+      version: number;
+      version_id: string;
+      model_service_id: string;
+      model_service_name: string;
+      rendered_prompt: string;
+      response: string;
+      structured_output?: unknown;
+      schema_valid: boolean | null;
+      error?: string;
+      provider: string;
+      upstream_model: string;
+      input_tokens: number;
+      output_tokens: number;
+      cached_tokens: number;
+      reasoning_tokens: number;
+      cost: number;
+      first_token_ms: number | null;
+      total_ms: number;
+      score: number | null;
+      matched: boolean | null;
+      evaluation_set_id: string | null;
+      evaluation_case_id: string | null;
+      created_at: string;
+    }
+
+    interface RunPromptParams {
+      version_id: string;
+      variables: Record<string, unknown>;
+      model_service_ids?: string[];
+      stream?: boolean;
+    }
+
+    interface RunPromptResult {
+      group_id: string;
+      kind: 'single' | 'compare';
+      runs: PromptRun[];
+    }
+
+    interface EvaluationCase {
+      id?: string;
+      input: Record<string, unknown>;
+      match_type: 'exact' | 'contains' | 'regex';
+      expected: string;
+    }
+
+    interface EvaluationSet {
+      id: string;
+      name: string;
+      description: string;
+      cases: EvaluationCase[];
+      created_at: string;
+      updated_at: string;
+    }
+
+    interface CreateEvaluationSetParams {
+      name: string;
+      description: string;
+      cases: EvaluationCase[];
+    }
+
+    interface EvaluationSetOverview {
+      id: string;
+      asset_id: string;
+      asset_name: string;
+      name: string;
+      description: string;
+      case_count: number;
+      run_count: number;
+      accuracy: number | null;
+      last_run_at: string | null;
+      created_at: string;
+      updated_at: string;
+    }
+
+    interface EvaluationSummary {
+      total: number;
+      successful: number;
+      matched: number;
+      accuracy: number;
+      average_latency_ms: number;
+      total_cost: number;
+    }
+
     interface Paged<T> {
       total: number;
       page: number;

@@ -25,6 +25,7 @@ Omniflux 是一个面向企业的 AI 服务控制平面,用于把分散在多个
 - **计量与归因**:按项目、应用、API Key、Provider 和模型归因请求、Token 与成本。
 - **审计与决策留痕**:管理操作、登录事件与 PolicyDecision 可追溯。
 - **可观测性**:内置 liveness/readiness 探针、结构化日志,以及数据面 Prometheus 业务指标。
+- **企业资产治理**:PromptTemplate 支持不可变版本、发布、回滚、组织/部门/项目授权、Markdown 编辑、真实模型调试、多模型对比、测试集评估与调用审计。
 - **现代管理台**:基于 Vue 3、TypeScript、Naive UI 和 SoybeanAdmin 的服务端会话管理后台。
 
 ## 架构
