@@ -10,17 +10,17 @@ import (
 
 // pendingUsage 是请求开始时写入 usage_records 与 policy_decisions 的最小事实。
 type pendingUsage struct {
-	RequestID     uuid.UUID
+	RequestID      uuid.UUID
 	OrganizationID uuid.UUID
-	ProjectID     uuid.UUID
-	ApplicationID uuid.UUID
-	APIKeyID      uuid.UUID
+	ProjectID      uuid.UUID
+	ApplicationID  uuid.UUID
+	APIKeyID       uuid.UUID
 	ModelServiceID uuid.UUID
-	RoutePolicyID *uuid.UUID
-	Reason        string
-	Candidates    []byte // jsonb: 配置的候选列表
-	SelectedID    *uuid.UUID
-	FallbackIDs   []uuid.UUID
+	RoutePolicyID  *uuid.UUID
+	Reason         string
+	Candidates     []byte // jsonb: 配置的候选列表
+	SelectedID     *uuid.UUID
+	FallbackIDs    []uuid.UUID
 }
 
 // finalUsage 是请求结束后对 usage_records 与 policy_decisions 的定稿更新。
@@ -35,6 +35,7 @@ type finalUsage struct {
 	CachedTokens    int64
 	ReasoningTokens int64
 	Cost            float64
+	Currency        string
 	FirstTokenMS    *int
 	TotalMS         int
 	UsageSource     *string
@@ -74,19 +75,23 @@ func (s usageStore) insertPending(ctx context.Context, p pendingUsage) error {
 func (s usageStore) finalize(ctx context.Context, requestID uuid.UUID, f finalUsage) error {
 	// 定稿是所有请求的唯一出口,业务指标在这里统一采集。
 	recordFinalizedMetrics(f)
+	currency := f.Currency
+	if currency == "" {
+		currency = "USD"
+	}
 	_, err := s.pool.Exec(ctx, `
 		UPDATE usage_records SET
 			state = $2, status_code = $3, model_candidate_id = $4,
 			provider = $5, upstream_model = $6,
 			input_tokens = $7, output_tokens = $8, cached_tokens = $9, reasoning_tokens = $10,
 			cost = $11, first_token_ms = $12, total_ms = $13, usage_source = $14,
-			error_type = $15, error_message = $16, finalized_at = now()
+			error_type = $15, error_message = $16, cost_currency = COALESCE($17, cost_currency), finalized_at = now()
 		WHERE request_id = $1 AND state = 'pending'
 	`, requestID, f.State, nullableInt(f.StatusCode), nullableUUID(f.CandidateID),
 		nullableString(f.Provider), nullableString(f.UpstreamModel),
 		f.InputTokens, f.OutputTokens, f.CachedTokens, f.ReasoningTokens,
 		f.Cost, nullableInt(f.FirstTokenMS), f.TotalMS, nullableString(f.UsageSource),
-		nullableString(f.ErrorType), nullableString(f.ErrorMessage))
+		nullableString(f.ErrorType), nullableString(f.ErrorMessage), nullableString(&currency))
 	if err != nil {
 		return err
 	}
@@ -117,4 +122,3 @@ func nullableInt(v *int) any {
 	}
 	return *v
 }
-

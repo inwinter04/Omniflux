@@ -243,9 +243,19 @@ declare namespace Api {
       output_schema?: Record<string, unknown>;
     }
 
+    interface AgentSpec {
+      prompt_template_id: string;
+      prompt_version_id: string;
+      model_service_id: string;
+      temperature?: number;
+      top_p?: number;
+      max_tokens?: number;
+      max_history_messages: number;
+    }
+
     interface Asset {
       id: string;
-      asset_type: 'prompt_template';
+      asset_type: 'prompt_template' | 'agent';
       name: string;
       description: string;
       owner_email: string;
@@ -258,10 +268,10 @@ declare namespace Api {
       updated_at: string;
     }
 
-    interface AssetVersion {
+    interface AssetVersion<S = PromptSpec> {
       id: string;
       version: number;
-      spec?: PromptSpec;
+      spec?: S;
       source_version_id: string | null;
       created_by_email: string;
       created_at: string;
@@ -270,18 +280,19 @@ declare namespace Api {
       current: boolean;
     }
 
-    interface AssetDetail extends Asset {
-      spec: PromptSpec;
-      versions: AssetVersion[];
+    interface AssetDetail<S = PromptSpec> extends Asset {
+      spec: S;
+      versions: AssetVersion<S>[];
     }
 
-    interface CreateAssetParams {
+    interface CreateAssetParams<S = PromptSpec> {
+      asset_type?: 'prompt_template' | 'agent';
       name: string;
       description: string;
-      spec: PromptSpec;
+      spec: S;
     }
 
-    interface UpdateAssetParams extends CreateAssetParams {
+    interface UpdateAssetParams<S = PromptSpec> extends CreateAssetParams<S> {
       expected_version: number;
     }
 
@@ -350,6 +361,55 @@ declare namespace Api {
       group_id: string;
       kind: 'single' | 'compare';
       runs: PromptRun[];
+    }
+
+    interface AgentSession {
+      id: string;
+      title: string;
+      version: number;
+      variables: Record<string, unknown>;
+      created_at: string;
+      updated_at: string;
+    }
+
+    interface AgentMessage {
+      id: string;
+      run_id: string | null;
+      role: 'user' | 'assistant';
+      content: string;
+      created_at: string;
+    }
+
+    interface AgentRun {
+      id: string;
+      session_id: string;
+      status: 'running' | 'success' | 'failed' | 'interrupted';
+      version: number;
+      version_id: string;
+      model_service_id: string;
+      model_service_name: string;
+      request: string;
+      response: string;
+      error?: string;
+      provider: string;
+      upstream_model: string;
+      input_tokens: number;
+      output_tokens: number;
+      cached_tokens: number;
+      reasoning_tokens: number;
+      cost: number;
+      cost_currency: string;
+      first_token_ms: number | null;
+      total_ms: number;
+      created_at: string;
+    }
+
+    interface AgentChatParams {
+      version_id?: string;
+      session_id?: string;
+      variables?: Record<string, unknown>;
+      message: string;
+      stream: boolean;
     }
 
     interface EvaluationCase {
@@ -433,9 +493,6 @@ declare namespace Api {
     interface UsageRecord {
       id: string;
       created_at: string;
-      project_name: string;
-      application_name: string;
-      key_name: string;
       model_service: string;
       state: string;
       status_code: number | null;

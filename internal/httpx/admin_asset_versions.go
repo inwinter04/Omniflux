@@ -130,7 +130,21 @@ func (d ServerDeps) AssetVersionDiff(w http.ResponseWriter, r *http.Request) {
 func prettyAssetSpec(raw json.RawMessage) (string, error) {
 	spec, err := asset.ParsePromptSpec(raw)
 	if err != nil {
-		return "", err
+		agentSpec, agentErr := asset.ParseAgentSpec(raw)
+		if agentErr != nil {
+			return "", err
+		}
+		var output strings.Builder
+		output.WriteString("智能体配置\n")
+		fmt.Fprintf(&output, "提示词模板: %s\n提示词版本: %s\n模型服务: %s\n", agentSpec.PromptTemplateID, agentSpec.PromptVersionID, agentSpec.ModelServiceID)
+		fmt.Fprintf(&output, "上下文消息数: %d\n最大输出 Token: %d\n", agentSpec.MaxHistoryMessages, agentSpec.MaxTokens)
+		if agentSpec.Temperature != nil {
+			fmt.Fprintf(&output, "温度: %.2f\n", *agentSpec.Temperature)
+		}
+		if agentSpec.TopP != nil {
+			fmt.Fprintf(&output, "Top P: %.2f\n", *agentSpec.TopP)
+		}
+		return output.String(), nil
 	}
 	var output strings.Builder
 	output.WriteString("模板内容\n")

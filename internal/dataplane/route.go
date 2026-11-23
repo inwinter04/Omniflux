@@ -21,6 +21,7 @@ type candidate struct {
 	Weight         float64
 	InputCostPerM  float64
 	OutputCostPerM float64
+	CostCurrency   string
 	Quality        float64
 }
 
@@ -92,6 +93,13 @@ func scoreOf(c candidate, all routeChain, scores *policyScores, w policyWeights)
 }
 
 // costRate 是每百万 token 的混合参考价(输入/输出等权)。
+func currencyOf(c candidate) string {
+	if c.CostCurrency == "" {
+		return "USD"
+	}
+	return c.CostCurrency
+}
+
 func costRate(c candidate) float64 {
 	return (c.InputCostPerM + c.OutputCostPerM) / 2
 }

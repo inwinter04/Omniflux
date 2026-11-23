@@ -170,12 +170,12 @@ func (d Deps) Embeddings(w http.ResponseWriter, r *http.Request) {
 		InputTokens:   inputTokens,
 		OutputTokens:  outputTokens,
 		Cost:          cost,
+		Currency:      currencyOf(served),
 		TotalMS:       total,
 		UsageSource:   usageSource,
 		AttemptTrail:  attemptTrailJSON(chain, served, "success", "", routingEngineLogs(bctx)),
 	}); err != nil {
 		d.Logger.Warn("finalize usage failed", "request_id", requestID, "error", err)
 	}
-	d.settleBudget(context.WithoutCancel(r.Context()), keyCtx, requestID, cost)
+	d.settleBudget(context.WithoutCancel(r.Context()), keyCtx, requestID, cost, currencyOf(served))
 }
-

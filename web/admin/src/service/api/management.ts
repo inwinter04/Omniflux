@@ -231,19 +231,19 @@ export function fetchDashboard() {
 }
 
 /** List organization-scoped enterprise assets */
-export function fetchAssets() {
-  return request<Api.Management.Asset[]>({ url: '/assets' });
+export function fetchAssets(type?: 'prompt_template' | 'agent') {
+  return request<Api.Management.Asset[]>({ url: '/assets', params: type ? { type } : undefined });
 }
 
-export function fetchAssetDetail(id: string) {
-  return request<Api.Management.AssetDetail>({ url: `/assets/${id}` });
+export function fetchAssetDetail<S = Api.Management.PromptSpec>(id: string) {
+  return request<Api.Management.AssetDetail<S>>({ url: `/assets/${id}` });
 }
 
-export function fetchCreateAsset(params: Api.Management.CreateAssetParams) {
+export function fetchCreateAsset<S = Api.Management.PromptSpec>(params: Api.Management.CreateAssetParams<S>) {
   return request<{ id: string; version_id: string; version: number }>({ url: '/assets', method: 'post', data: params });
 }
 
-export function fetchUpdateAsset(id: string, params: Api.Management.UpdateAssetParams) {
+export function fetchUpdateAsset<S = Api.Management.PromptSpec>(id: string, params: Api.Management.UpdateAssetParams<S>) {
   return request<{ version_id: string; version: number }>({ url: `/assets/${id}`, method: 'patch', data: params });
 }
 
@@ -375,3 +375,72 @@ export function fetchAllPromptEvaluationSets() {
 export function fetchUpdatePromptEvaluationSet(assetId: string, setId: string, params: Api.Management.CreateEvaluationSetParams) {
   return request({ url: `/assets/${assetId}/evaluation-sets/${setId}`, method: 'patch', data: params });
 }
+
+export function fetchAgentSessions(id: string) {
+  return request<Api.Management.AgentSession[]>({ url: `/assets/${id}/agent/sessions` });
+}
+
+export function fetchAgentSession(id: string, sessionId: string) {
+  return request<{ session: Api.Management.AgentSession; messages: Api.Management.AgentMessage[] }>({
+    url: `/assets/${id}/agent/sessions/${sessionId}`
+  });
+}
+
+export function fetchDeleteAgentSession(id: string, sessionId: string) {
+  return request({ url: `/assets/${id}/agent/sessions/${sessionId}`, method: 'delete' });
+}
+
+export function fetchAgentRuns(id: string) {
+  return request<Api.Management.AgentRun[]>({ url: `/assets/${id}/agent/runs` });
+}
+
+interface StreamAgentCallbacks {
+  onStarted: (value: { run_id: string; session_id: string; version: number }) => void;
+  onDelta: (delta: string) => void;
+  onResult: (result: Api.Management.AgentRun) => void;
+  onError: (message: string) => void;
+}
+
+export async function streamAgentChat(id: string, params: Api.Management.AgentChatParams, callbacks: StreamAgentCallbacks, signal?: AbortSignal) {
+  const baseURL = import.meta.env.VITE_HTTP_PROXY === 'Y' ? '/proxy-default' : import.meta.env.VITE_SERVICE_BASE_URL;
+  const response = await fetch(`${baseURL}/assets/${id}/agent/chat`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+    signal
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.msg || 'Agent 运行请求失败');
+  }
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error('当前浏览器不支持流式响应');
+  const decoder = new TextDecoder();
+  let buffer = '';
+  const processBlock = (block: string) => {
+    let event = '';
+    const dataLines: string[] = [];
+    for (const line of block.split('\n')) {
+      if (line.startsWith('event:')) event = line.slice(6).trim();
+      if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart());
+    }
+    if (!dataLines.length) return;
+    const payload = JSON.parse(dataLines.join('\n'));
+    if (event === 'started') callbacks.onStarted(payload);
+    if (event === 'delta') callbacks.onDelta(payload.delta);
+    if (event === 'result') callbacks.onResult(payload);
+    if (event === 'error') callbacks.onError(payload.error || 'Agent 运行失败');
+  };
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const blocks = buffer.split('\n\n');
+    buffer = blocks.pop() ?? '';
+    for (const block of blocks) processBlock(block);
+  }
+  buffer += decoder.decode();
+  if (buffer.trim()) processBlock(buffer);
+}
+

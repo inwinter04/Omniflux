@@ -3,7 +3,9 @@ package dataplane
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -32,21 +34,36 @@ type chatStreamChoice struct {
 func (d Deps) handleStream(bctx *schemas.BifrostContext, streamCtx context.Context, r *http.Request, w http.ResponseWriter,
 	requestID uuid.UUID, keyCtx apiKeyContext, chain routeChain, requestedModel string,
 	req *schemas.BifrostChatRequest, start time.Time, firstTokenSeen *atomic.Bool) {
+	d.handleStreamObserved(bctx, streamCtx, r, w, requestID, keyCtx, chain, requestedModel, req, start, firstTokenSeen, nil)
+}
+
+func (d Deps) handleStreamObserved(bctx *schemas.BifrostContext, streamCtx context.Context, r *http.Request, w http.ResponseWriter,
+	requestID uuid.UUID, keyCtx apiKeyContext, chain routeChain, requestedModel string,
+	req *schemas.BifrostChatRequest, start time.Time, firstTokenSeen *atomic.Bool, observer *completionObserver) {
 	stream, bifrostErr := d.Engine.Client().ChatCompletionStreamRequest(bctx, req)
 	if bifrostErr != nil {
 		// 看门狗在建立流阶段取消(非客户端断开):按首 token 超时定稿,不记上游错误。
 		if streamCtx.Err() != nil && r.Context().Err() == nil && firstTokenSeen != nil && !firstTokenSeen.Load() {
 			d.recordFirstTokenTimeout(r.Context(), requestID, chain, start, routingEngineLogs(bctx))
+			if observer != nil {
+				observer.onComplete("failed", DebugResult{TotalMS: int(time.Since(start).Milliseconds())}, context.DeadlineExceeded)
+			}
 			apiError(w, http.StatusGatewayTimeout, "timeout",
 				"上游未在 first_token_timeout_ms 内返回首个 token")
 			return
 		}
 		d.recordFailure(r.Context(), requestID, chain, bctx, bifrostErr, start, nil, usageSnapshot{})
+		if observer != nil {
+			observer.onComplete("failed", DebugResult{TotalMS: int(time.Since(start).Milliseconds())}, errors.New(errorMessageOf(bifrostErr)))
+		}
 		writeBifrostError(w, bifrostErr)
 		return
 	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
+		if observer != nil {
+			observer.onComplete("failed", DebugResult{TotalMS: int(time.Since(start).Milliseconds())}, errors.New("当前连接不支持流式响应"))
+		}
 		apiError(w, http.StatusInternalServerError, "internal_error", "当前连接不支持流式响应")
 		return
 	}
@@ -62,6 +79,24 @@ func (d Deps) handleStream(bctx *schemas.BifrostContext, streamCtx context.Conte
 	var chunkCreated int
 	var streamErr *schemas.BifrostError
 	interrupted := false
+	var content strings.Builder
+	finishObserver := func(status string, err error) {
+		if observer == nil {
+			return
+		}
+		cost := 0.0
+		currency := currencyOf(chain[0])
+		if served, lookupErr := chain.findCandidate(servedProvider, servedModel); lookupErr == nil {
+			cost = served.costUSD(snapshot.InputTokens, snapshot.OutputTokens)
+			currency = currencyOf(served)
+		}
+		observer.onComplete(status, DebugResult{
+			Response: content.String(), Provider: servedProvider, UpstreamModel: servedModel,
+			InputTokens: snapshot.InputTokens, OutputTokens: snapshot.OutputTokens,
+			CachedTokens: snapshot.CachedTokens, ReasoningTokens: snapshot.ReasoningTokens,
+			Cost: cost, Currency: currency, FirstTokenMS: firstTokenMS, TotalMS: int(time.Since(start).Milliseconds()),
+		}, err)
+	}
 
 	writeEvent := func(payload []byte) bool {
 		if _, err := w.Write(append(append([]byte("data: "), payload...), '\n', '\n')); err != nil {
@@ -71,64 +106,74 @@ func (d Deps) handleStream(bctx *schemas.BifrostContext, streamCtx context.Conte
 		return true
 	}
 
-	for chunk := range stream {
-		if r.Context().Err() != nil {
-			// 客户端已断开;Bifrost 的 ctx 派生自请求 ctx,上游会随之取消。
+streamLoop:
+	for {
+		select {
+		case <-r.Context().Done():
 			interrupted = true
-			break
-		}
-		if chunk.BifrostError != nil {
-			streamErr = chunk.BifrostError
-			break
-		}
-		resp := chunk.BifrostChatResponse
-		if resp == nil {
-			continue
-		}
-		if chunkID == "" {
-			chunkID = resp.ID
-			chunkCreated = resp.Created
-			servedProvider = string(resp.ExtraFields.RoutingInfo.Provider)
-			servedModel = resp.ExtraFields.RoutingInfo.Model
-		}
-		if u := usageFromBifrost(resp.Usage); u.hasTokens() {
-			// 用量在最终 chunk 上以累计值出现,这里直接覆盖为最新值。
-			snapshot = usageSnapshot(u)
-		}
-		outChunk := chatStreamChunk{
-			ID:      resp.ID,
-			Object:  "chat.completion.chunk",
-			Created: resp.Created,
-			Model:   requestedModel,
-			Choices: []chatStreamChoice{},
-		}
-		for i, choice := range resp.Choices {
-			if choice.Delta != nil && choice.Delta.Content != nil && *choice.Delta.Content != "" && firstTokenMS == nil {
-				elapsed := int(time.Since(start).Milliseconds())
-				firstTokenMS = &elapsed
-				firstTokenSeen.Store(true)
+			break streamLoop
+		case chunk, open := <-stream:
+			if !open {
+				break streamLoop
 			}
-			outChunk.Choices = append(outChunk.Choices, chatStreamChoice{Index: i, Delta: choice.Delta, FinishReason: choice.FinishReason})
-		}
-		payload, err := json.Marshal(outChunk)
-		if err != nil {
-			d.Logger.Warn("marshal stream chunk failed", "request_id", requestID, "error", err)
-			break
-		}
-		if !writeEvent(payload) {
-			// 写失败说明客户端连接已不可用。
-			interrupted = true
-			break
+			if chunk.BifrostError != nil {
+				streamErr = chunk.BifrostError
+				break streamLoop
+			}
+			resp := chunk.BifrostChatResponse
+			if resp == nil {
+				continue
+			}
+			if chunkID == "" {
+				chunkID = resp.ID
+				chunkCreated = resp.Created
+				servedProvider = string(resp.ExtraFields.RoutingInfo.Provider)
+				servedModel = resp.ExtraFields.RoutingInfo.Model
+			}
+			if u := usageFromBifrost(resp.Usage); u.hasTokens() {
+				// 用量在最终 chunk 上以累计值出现,这里直接覆盖为最新值。
+				snapshot = usageSnapshot(u)
+			}
+			outChunk := chatStreamChunk{
+				ID:      resp.ID,
+				Object:  "chat.completion.chunk",
+				Created: resp.Created,
+				Model:   requestedModel,
+				Choices: []chatStreamChoice{},
+			}
+			for i, choice := range resp.Choices {
+				if observer != nil && choice.Delta != nil && choice.Delta.Content != nil {
+					content.WriteString(*choice.Delta.Content)
+				}
+				if choice.Delta != nil && choice.Delta.Content != nil && *choice.Delta.Content != "" && firstTokenMS == nil {
+					elapsed := int(time.Since(start).Milliseconds())
+					firstTokenMS = &elapsed
+					firstTokenSeen.Store(true)
+				}
+				outChunk.Choices = append(outChunk.Choices, chatStreamChoice{Index: i, Delta: choice.Delta, FinishReason: choice.FinishReason})
+			}
+			payload, err := json.Marshal(outChunk)
+			if err != nil {
+				d.Logger.Warn("marshal stream chunk failed", "request_id", requestID, "error", err)
+				break streamLoop
+			}
+			if !writeEvent(payload) {
+				// 写失败说明客户端连接已不可用。
+				interrupted = true
+				break streamLoop
+			}
 		}
 	}
 
 	if interrupted {
 		d.recordInterrupted(r.Context(), requestID, chain, start, firstTokenMS, snapshot, routingEngineLogs(bctx))
+		finishObserver("interrupted", nil)
 		return
 	}
 	if streamCtx.Err() != nil && firstTokenMS == nil {
 		// 看门狗取消且没有收到任何内容:按首 token 超时定稿并在流内输出错误事件。
 		d.recordFirstTokenTimeout(r.Context(), requestID, chain, start, routingEngineLogs(bctx))
+		finishObserver("failed", context.DeadlineExceeded)
 		errorPayload, _ := json.Marshal(map[string]any{"error": map[string]any{
 			"type":    "timeout",
 			"message": "上游未在 first_token_timeout_ms 内返回首个 token",
@@ -148,6 +193,7 @@ func (d Deps) handleStream(bctx *schemas.BifrostContext, streamCtx context.Conte
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 		flusher.Flush()
 		d.recordFailure(r.Context(), requestID, chain, bctx, streamErr, start, firstTokenMS, snapshot)
+		finishObserver("failed", errors.New(errorMessageOf(streamErr)))
 		return
 	}
 
@@ -170,6 +216,7 @@ func (d Deps) handleStream(bctx *schemas.BifrostContext, streamCtx context.Conte
 	flusher.Flush()
 
 	d.recordStreamSuccess(r.Context(), requestID, keyCtx, chain, servedProvider, servedModel, start, firstTokenMS, snapshot, routingEngineLogs(bctx))
+	finishObserver("success", nil)
 }
 
 // recordFirstTokenTimeout 定稿一次首 token 超时的流式请求。
@@ -218,6 +265,7 @@ func (d Deps) recordStreamSuccess(ctx context.Context, requestID uuid.UUID, keyC
 		CachedTokens:    snapshot.CachedTokens,
 		ReasoningTokens: snapshot.ReasoningTokens,
 		Cost:            cost,
+		Currency:        currencyOf(served),
 		FirstTokenMS:    firstTokenMS,
 		TotalMS:         total,
 		UsageSource:     stringPtrNil("computed", snapshot.hasTokens()),
@@ -225,7 +273,7 @@ func (d Deps) recordStreamSuccess(ctx context.Context, requestID uuid.UUID, keyC
 	}); err != nil {
 		d.Logger.Warn("finalize stream usage failed", "request_id", requestID, "error", err)
 	}
-	d.settleBudget(context.WithoutCancel(ctx), keyCtx, requestID, cost)
+	d.settleBudget(context.WithoutCancel(ctx), keyCtx, requestID, cost, currencyOf(served))
 }
 
 // recordInterrupted 定稿一次客户端断开的流式请求。

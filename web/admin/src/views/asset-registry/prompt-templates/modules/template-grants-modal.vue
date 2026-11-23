@@ -28,6 +28,8 @@ const organizations = ref<Api.Management.Organization[]>([]);
 const departments = ref<Api.Management.Department[]>([]);
 const projects = ref<Api.Management.Project[]>([]);
 const isArchived = computed(() => props.asset?.status === 'archived');
+const isAgent = computed(() => props.asset?.asset_type === 'agent');
+const assetNoun = computed(() => isAgent.value ? '智能体' : '模板');
 
 const form = reactive({
   subject_type: 'project' as 'organization' | 'department' | 'project',
@@ -54,7 +56,7 @@ const columns: DataTableColumns<Api.Management.AssetGrant> = [
     key: 'actions',
     width: 200,
     render: row => h(NSpace, { size: 4 }, {
-      default: () => row.actions.map(action => h(NTag, { size: 'small', bordered: false, type: 'info' }, { default: () => action === 'invoke' ? '使用模板' : '查看内容' }))
+      default: () => row.actions.map(action => h(NTag, { size: 'small', bordered: false, type: 'info' }, { default: () => action === 'invoke' ? `使用${assetNoun.value}` : '查看内容' }))
     })
   },
   {
@@ -143,7 +145,7 @@ async function revoke(grantID: string) {
   >
     <NSpin :show="loading">
       <NAlert type="info" :bordered="false" class="mb-16px">
-        选择哪些组织、部门或项目可以查看和使用这个模板。业务系统会按照 API Key 所属项目检查访问范围。
+        选择哪些组织、部门或项目可以查看和使用这个{{ assetNoun }}。业务系统会按照 API Key 所属项目检查访问范围。
       </NAlert>
       <NForm label-placement="left" label-width="90">
         <NGrid cols="1 640:2" :x-gap="16">
@@ -156,7 +158,7 @@ async function revoke(grantID: string) {
         </NGrid>
         <NFormItem label="允许的操作">
           <NCheckboxGroup v-model:value="form.actions" :disabled="isArchived">
-            <NSpace><NCheckbox value="read">查看模板内容</NCheckbox><NCheckbox value="invoke">使用模板生成内容</NCheckbox></NSpace>
+            <NSpace><NCheckbox value="read">查看{{ assetNoun }}内容</NCheckbox><NCheckbox value="invoke">使用{{ assetNoun }}{{ isAgent ? '进行对话' : '生成内容' }}</NCheckbox></NSpace>
           </NCheckboxGroup>
         </NFormItem>
         <NButton type="primary" secondary :loading="saving" :disabled="isArchived" @click="save">保存授权</NButton>

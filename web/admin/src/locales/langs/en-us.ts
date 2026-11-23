@@ -244,6 +244,7 @@ const local: App.I18n.Schema = {
     'model-management_route-policies': 'Route Policies',
     'model-management_model-services': 'Model Services',
     'asset-registry': 'Asset Registry',
+    'asset-registry_agents': 'Agents',
     'asset-registry_prompt-templates': 'PromptTemplates',
     'asset-registry_evaluations': 'Evaluation Sets',
     observability: 'Operations',

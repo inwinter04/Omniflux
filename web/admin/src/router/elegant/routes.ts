@@ -86,13 +86,24 @@ export const generatedRoutes: GeneratedRoute[] = [
     },
     children: [
       {
+        name: 'asset-registry_agents',
+        path: '/asset-registry/agents',
+        component: 'view.asset-registry_agents',
+        meta: {
+          title: 'asset-registry_agents',
+          i18nKey: 'route.asset-registry_agents',
+          order: 1,
+          icon: 'mdi:robot-outline'
+        }
+      },
+      {
         name: 'asset-registry_evaluations',
         path: '/asset-registry/evaluations',
         component: 'view.asset-registry_evaluations',
         meta: {
           title: 'asset-registry_evaluations',
           i18nKey: 'route.asset-registry_evaluations',
-          order: 2,
+          order: 3,
           icon: 'mdi:clipboard-check-outline'
         }
       },
@@ -103,7 +114,7 @@ export const generatedRoutes: GeneratedRoute[] = [
         meta: {
           title: 'asset-registry_prompt-templates',
           i18nKey: 'route.asset-registry_prompt-templates',
-          order: 1,
+          order: 2,
           icon: 'mdi:file-document-edit-outline'
         }
       }

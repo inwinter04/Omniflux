@@ -26,6 +26,7 @@ type DebugResult struct {
 	CachedTokens    int64
 	ReasoningTokens int64
 	Cost            float64
+	Currency        string
 	FirstTokenMS    *int
 	TotalMS         int
 }
@@ -37,7 +38,13 @@ type DebugStreamEvent struct {
 }
 
 func (d Deps) DebugCompletion(ctx context.Context, organizationID, serviceID uuid.UUID, prompt string, outputSchema json.RawMessage) (DebugResult, error) {
-	chain, bctx, request, start, err := d.prepareDebugRequest(ctx, organizationID, serviceID, prompt, outputSchema)
+	content := schemas.ChatMessageContent{ContentStr: &prompt}
+	params := debugPromptParams(outputSchema)
+	return d.DebugConversation(ctx, organizationID, serviceID, []schemas.ChatMessage{{Role: schemas.ChatMessageRoleUser, Content: &content}}, params)
+}
+
+func (d Deps) DebugConversation(ctx context.Context, organizationID, serviceID uuid.UUID, messages []schemas.ChatMessage, params *schemas.ChatParameters) (DebugResult, error) {
+	chain, bctx, request, start, err := d.prepareConversationRequest(ctx, organizationID, serviceID, messages, params)
 	if err != nil {
 		return DebugResult{}, err
 	}
@@ -53,12 +60,19 @@ func (d Deps) DebugCompletion(ctx context.Context, organizationID, serviceID uui
 	result.InputTokens, result.OutputTokens, result.CachedTokens, result.ReasoningTokens = usage.tokens()
 	if served, err := chain.findCandidate(result.Provider, result.UpstreamModel); err == nil {
 		result.Cost = served.costUSD(result.InputTokens, result.OutputTokens)
+		result.Currency = currencyOf(served)
 	}
 	return result, nil
 }
 
 func (d Deps) DebugCompletionStream(ctx context.Context, organizationID, serviceID uuid.UUID, prompt string, outputSchema json.RawMessage) (<-chan DebugStreamEvent, error) {
-	chain, bctx, request, start, err := d.prepareDebugRequest(ctx, organizationID, serviceID, prompt, outputSchema)
+	content := schemas.ChatMessageContent{ContentStr: &prompt}
+	params := debugPromptParams(outputSchema)
+	return d.DebugConversationStream(ctx, organizationID, serviceID, []schemas.ChatMessage{{Role: schemas.ChatMessageRoleUser, Content: &content}}, params)
+}
+
+func (d Deps) DebugConversationStream(ctx context.Context, organizationID, serviceID uuid.UUID, messages []schemas.ChatMessage, params *schemas.ChatParameters) (<-chan DebugStreamEvent, error) {
+	chain, bctx, request, start, err := d.prepareConversationRequest(ctx, organizationID, serviceID, messages, params)
 	if err != nil {
 		return nil, err
 	}
@@ -112,13 +126,22 @@ func (d Deps) DebugCompletionStream(ctx context.Context, organizationID, service
 		result.InputTokens, result.OutputTokens, result.CachedTokens, result.ReasoningTokens = snapshot.InputTokens, snapshot.OutputTokens, snapshot.CachedTokens, snapshot.ReasoningTokens
 		if served, err := chain.findCandidate(result.Provider, result.UpstreamModel); err == nil {
 			result.Cost = served.costUSD(result.InputTokens, result.OutputTokens)
+			result.Currency = currencyOf(served)
 		}
 		sendDebugStreamEvent(ctx, events, DebugStreamEvent{Result: &result})
 	}()
 	return events, nil
 }
 
-func (d Deps) prepareDebugRequest(ctx context.Context, organizationID, serviceID uuid.UUID, prompt string, outputSchema json.RawMessage) (routeChain, *schemas.BifrostContext, *schemas.BifrostChatRequest, time.Time, error) {
+func debugPromptParams(outputSchema json.RawMessage) *schemas.ChatParameters {
+	params := &schemas.ChatParameters{}
+	if format, ok := asset.StructuredResponseFormat(asset.PromptSpec{OutputSchema: outputSchema}); ok {
+		params.ResponseFormat = &format
+	}
+	return params
+}
+
+func (d Deps) prepareConversationRequest(ctx context.Context, organizationID, serviceID uuid.UUID, messages []schemas.ChatMessage, params *schemas.ChatParameters) (routeChain, *schemas.BifrostContext, *schemas.BifrostChatRequest, time.Time, error) {
 	var name string
 	if err := d.Pool.QueryRow(ctx, `SELECT name FROM model_services WHERE id = $1 AND organization_id = $2 AND status = 'active'`, serviceID, organizationID).Scan(&name); err != nil {
 		return nil, nil, nil, time.Time{}, fmt.Errorf("模型服务不存在或未启用")
@@ -134,15 +157,10 @@ func (d Deps) prepareDebugRequest(ctx context.Context, organizationID, serviceID
 	if err != nil {
 		return nil, nil, nil, time.Time{}, err
 	}
-	params := &schemas.ChatParameters{}
-	if format, ok := asset.StructuredResponseFormat(asset.PromptSpec{OutputSchema: outputSchema}); ok {
-		params.ResponseFormat = &format
-	}
-	content := schemas.ChatMessageContent{ContentStr: &prompt}
 	request := &schemas.BifrostChatRequest{
 		Provider:  provider,
 		Model:     primary.UpstreamModel,
-		Input:     []schemas.ChatMessage{{Role: schemas.ChatMessageRoleUser, Content: &content}},
+		Input:     messages,
 		Params:    params,
 		Fallbacks: fallbackSpecs(chain),
 	}

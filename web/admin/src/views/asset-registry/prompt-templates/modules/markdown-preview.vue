@@ -6,6 +6,7 @@ import 'github-markdown-css/github-markdown.css';
 
 const props = defineProps<{
   source: string;
+  compact?: boolean;
 }>();
 
 const parser = new MarkdownIt({
@@ -27,7 +28,12 @@ const content = computed(() => DOMPurify.sanitize(parser.render(props.source), {
 </script>
 
 <template>
-  <div v-if="source.trim()" class="markdown-body prompt-markdown-preview" v-html="content" />
+  <div
+    v-if="source.trim()"
+    class="markdown-body prompt-markdown-preview"
+    :style="props.compact ? { minHeight: '0', maxHeight: 'none', padding: '0' } : undefined"
+    v-html="content"
+  />
   <NEmpty v-else description="暂无内容" />
 </template>
 

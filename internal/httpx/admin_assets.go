@@ -52,6 +52,7 @@ type assetDetailResponse struct {
 }
 
 type createAssetRequest struct {
+	AssetType   string          `json:"asset_type"`
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	Spec        json.RawMessage `json:"spec"`
@@ -112,11 +113,28 @@ func normalizeAssetSpec(raw json.RawMessage) (asset.PromptSpec, []byte, error) {
 	return spec, canonical, nil
 }
 
-func validateAssetModelService(ctx context.Context, q rowQuerier, organizationID uuid.UUID, spec asset.PromptSpec) error {
-	if spec.ModelServiceID == "" {
+func normalizeTypedAssetSpec(assetType string, raw json.RawMessage) ([]byte, string, error) {
+	switch assetType {
+	case "prompt_template":
+		spec, canonical, err := normalizeAssetSpec(raw)
+		return canonical, spec.ModelServiceID, err
+	case "agent":
+		spec, err := asset.ParseAgentSpec(raw)
+		if err != nil {
+			return nil, "", assetError(http.StatusBadRequest, "AGENT_SPEC_INVALID", err.Error())
+		}
+		canonical, err := json.Marshal(spec)
+		return canonical, spec.ModelServiceID, err
+	default:
+		return nil, "", assetError(http.StatusBadRequest, "ASSET_TYPE_INVALID", "资产类型仅支持 prompt_template、agent")
+	}
+}
+
+func validateAssetModelService(ctx context.Context, q rowQuerier, organizationID uuid.UUID, modelServiceID string) error {
+	if modelServiceID == "" {
 		return nil
 	}
-	serviceID, _ := uuid.Parse(spec.ModelServiceID)
+	serviceID, _ := uuid.Parse(modelServiceID)
 	var exists bool
 	if err := q.QueryRow(ctx, `
 		SELECT EXISTS (
@@ -127,6 +145,33 @@ func validateAssetModelService(ctx context.Context, q rowQuerier, organizationID
 	}
 	if !exists {
 		return assetError(http.StatusBadRequest, "ASSET_MODEL_SERVICE_NOT_FOUND", "绑定的模型服务不存在或不属于当前组织")
+	}
+	return nil
+}
+
+func validateTypedAssetReferences(ctx context.Context, q rowQuerier, organizationID uuid.UUID, assetType string, raw json.RawMessage) error {
+	if assetType != "agent" {
+		return nil
+	}
+	spec, err := asset.ParseAgentSpec(raw)
+	if err != nil {
+		return assetError(http.StatusBadRequest, "AGENT_SPEC_INVALID", err.Error())
+	}
+	var exists bool
+	promptID, _ := uuid.Parse(spec.PromptTemplateID)
+	versionID, _ := uuid.Parse(spec.PromptVersionID)
+	if err := q.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM asset_versions v
+			JOIN assets a ON a.id = v.asset_id
+			WHERE v.id = $1 AND a.id = $2 AND a.organization_id = $3
+			  AND a.asset_type = 'prompt_template' AND a.status <> 'archived'
+		)
+	`, versionID, promptID, organizationID).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return assetError(http.StatusBadRequest, "AGENT_PROMPT_VERSION_NOT_FOUND", "引用的提示词版本不存在、已归档或不属于当前组织")
 	}
 	return nil
 }
@@ -159,15 +204,20 @@ func (d ServerDeps) Assets(w http.ResponseWriter, r *http.Request) {
 	if !ok || d.requireViewer(w, principal) != nil {
 		return
 	}
+	assetType := r.URL.Query().Get("type")
+	if assetType != "" && assetType != "prompt_template" && assetType != "agent" {
+		adminError(w, http.StatusBadRequest, "ASSET_TYPE_INVALID", "资产类型仅支持 prompt_template、agent", nil)
+		return
+	}
 	rows, err := d.Pool.Query(r.Context(), `
 		SELECT a.id, a.asset_type, a.name, a.description, u.email, a.status,
 		       a.latest_version, cv.id, cv.version, a.created_at, a.updated_at
 		FROM assets a
 		JOIN users u ON u.id = a.owner_user_id
 		LEFT JOIN asset_versions cv ON cv.id = a.current_version_id
-		WHERE a.organization_id = $1
+		WHERE a.organization_id = $1 AND ($2 = '' OR a.asset_type = $2)
 		ORDER BY a.updated_at DESC
-	`, principal.OrganizationID)
+	`, principal.OrganizationID, assetType)
 	if err != nil {
 		adminError(w, http.StatusInternalServerError, "ASSET_LIST_FAILED", "无法查询资产", nil)
 		return
@@ -291,12 +341,20 @@ func (d ServerDeps) CreateAsset(w http.ResponseWriter, r *http.Request) {
 		writeAssetError(w, err, "ASSET_CREATE_FAILED", "创建资产失败")
 		return
 	}
-	spec, canonical, err := normalizeAssetSpec(body.Spec)
+	assetType := body.AssetType
+	if assetType == "" {
+		assetType = "prompt_template"
+	}
+	canonical, modelServiceID, err := normalizeTypedAssetSpec(assetType, body.Spec)
 	if err != nil {
 		writeAssetError(w, err, "ASSET_CREATE_FAILED", "创建资产失败")
 		return
 	}
-	if err := validateAssetModelService(r.Context(), d.Pool, principal.OrganizationID, spec); err != nil {
+	if err := validateAssetModelService(r.Context(), d.Pool, principal.OrganizationID, modelServiceID); err != nil {
+		writeAssetError(w, err, "ASSET_CREATE_FAILED", "创建资产失败")
+		return
+	}
+	if err := validateTypedAssetReferences(r.Context(), d.Pool, principal.OrganizationID, assetType, canonical); err != nil {
 		writeAssetError(w, err, "ASSET_CREATE_FAILED", "创建资产失败")
 		return
 	}
@@ -304,8 +362,8 @@ func (d ServerDeps) CreateAsset(w http.ResponseWriter, r *http.Request) {
 	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(r.Context(), `
 			INSERT INTO assets(id, organization_id, asset_type, name, description, owner_user_id, latest_version)
-			VALUES ($1,$2,'prompt_template',$3,$4,$5,1)
-		`, assetID, principal.OrganizationID, name, description, principal.UserID); err != nil {
+			VALUES ($1,$2,$3,$4,$5,$6,1)
+		`, assetID, principal.OrganizationID, assetType, name, description, principal.UserID); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(r.Context(), `
@@ -318,14 +376,14 @@ func (d ServerDeps) CreateAsset(w http.ResponseWriter, r *http.Request) {
 			INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, after_state)
 			VALUES ($1,$2,'user','asset.created','asset',$3,$4)
 		`, principal.OrganizationID, principal.UserID, assetID.String(), auditJSON(map[string]any{
-			"asset_type": "prompt_template", "name": name, "description": description, "version": 1,
+			"asset_type": assetType, "name": name, "description": description, "version": 1,
 		}))
 		return err
 	})
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.ConstraintName == "assets_organization_id_asset_type_name_key" {
-			adminError(w, http.StatusConflict, "ASSET_NAME_EXISTS", "同名 PromptTemplate 已存在", nil)
+			adminError(w, http.StatusConflict, "ASSET_NAME_EXISTS", "当前类型下已存在同名资产", nil)
 			return
 		}
 		writeAssetError(w, err, "ASSET_CREATE_FAILED", "创建资产失败")
@@ -353,12 +411,26 @@ func (d ServerDeps) UpdateAsset(w http.ResponseWriter, r *http.Request) {
 		writeAssetError(w, err, "ASSET_UPDATE_FAILED", "更新资产失败")
 		return
 	}
-	spec, canonical, err := normalizeAssetSpec(body.Spec)
+	var assetType string
+	err = d.Pool.QueryRow(r.Context(), `SELECT asset_type FROM assets WHERE id = $1 AND organization_id = $2`, assetID, principal.OrganizationID).Scan(&assetType)
+	if errors.Is(err, pgx.ErrNoRows) {
+		adminError(w, http.StatusNotFound, "ASSET_NOT_FOUND", "资产不存在或不属于当前组织", nil)
+		return
+	}
 	if err != nil {
 		writeAssetError(w, err, "ASSET_UPDATE_FAILED", "更新资产失败")
 		return
 	}
-	if err := validateAssetModelService(r.Context(), d.Pool, principal.OrganizationID, spec); err != nil {
+	canonical, modelServiceID, err := normalizeTypedAssetSpec(assetType, body.Spec)
+	if err != nil {
+		writeAssetError(w, err, "ASSET_UPDATE_FAILED", "更新资产失败")
+		return
+	}
+	if err := validateAssetModelService(r.Context(), d.Pool, principal.OrganizationID, modelServiceID); err != nil {
+		writeAssetError(w, err, "ASSET_UPDATE_FAILED", "更新资产失败")
+		return
+	}
+	if err := validateTypedAssetReferences(r.Context(), d.Pool, principal.OrganizationID, assetType, canonical); err != nil {
 		writeAssetError(w, err, "ASSET_UPDATE_FAILED", "更新资产失败")
 		return
 	}

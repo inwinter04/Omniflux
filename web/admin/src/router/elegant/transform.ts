@@ -170,6 +170,7 @@ const routeMap: RouteMap = {
   "access_api-keys": "/access/api-keys",
   "access_users": "/access/users",
   "asset-registry": "/asset-registry",
+  "asset-registry_agents": "/asset-registry/agents",
   "asset-registry_evaluations": "/asset-registry/evaluations",
   "asset-registry_prompt-templates": "/asset-registry/prompt-templates",
   "home": "/home",

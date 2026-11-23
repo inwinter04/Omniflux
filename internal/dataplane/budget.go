@@ -88,14 +88,17 @@ func (d Deps) checkBudgets(w http.ResponseWriter, r *http.Request, keyCtx apiKey
 // 预算采用后付口径:请求前按已结算金额拦截,请求后累加实际成本。
 // 并发在途请求可能小幅越过限额(与 LiteLLM 等主流网关一致),
 // 不做前置预留以避免失败退还/超时释放的额外复杂度;budget_reservations 仅作结算审计。
-func (d Deps) settleBudget(ctx context.Context, keyCtx apiKeyContext, requestID uuid.UUID, cost float64) {
+func (d Deps) settleBudget(ctx context.Context, keyCtx apiKeyContext, requestID uuid.UUID, cost float64, currency string) {
+	if currency == "" {
+		currency = "USD"
+	}
 	if cost <= 0 {
 		return
 	}
 	err := pgx.BeginFunc(ctx, d.Pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `
 			UPDATE budget_windows SET spent_amount = spent_amount + $1, updated_at = now()
-			WHERE organization_id = $2
+			WHERE organization_id = $2 AND currency = $6
 			  AND now() >= window_start AND now() < window_end
 			  AND (
 			    scope_type = 'organization'
@@ -103,14 +106,14 @@ func (d Deps) settleBudget(ctx context.Context, keyCtx apiKeyContext, requestID 
 			    OR (scope_type = 'application' AND scope_id = $4)
 			    OR (scope_type = 'api_key' AND scope_id = $5)
 			  )
-		`, cost, keyCtx.OrganizationID, keyCtx.ProjectID, keyCtx.ApplicationID, keyCtx.KeyID); err != nil {
+		`, cost, keyCtx.OrganizationID, keyCtx.ProjectID, keyCtx.ApplicationID, keyCtx.KeyID, currency); err != nil {
 			return err
 		}
 		_, err := tx.Exec(ctx, `
 			INSERT INTO budget_reservations(budget_window_id, request_id, estimated_amount, final_amount, state, settled_at)
 			SELECT id, $1, 0, $2, 'settled', now()
 			FROM budget_windows
-			WHERE organization_id = $3
+			WHERE organization_id = $3 AND currency = $7
 			  AND now() >= window_start AND now() < window_end
 			  AND (
 			    scope_type = 'organization'
@@ -119,7 +122,7 @@ func (d Deps) settleBudget(ctx context.Context, keyCtx apiKeyContext, requestID 
 			    OR (scope_type = 'api_key' AND scope_id = $6)
 			  )
 			ON CONFLICT (budget_window_id, request_id) DO NOTHING
-		`, requestID, cost, keyCtx.OrganizationID, keyCtx.ProjectID, keyCtx.ApplicationID, keyCtx.KeyID)
+		`, requestID, cost, keyCtx.OrganizationID, keyCtx.ProjectID, keyCtx.ApplicationID, keyCtx.KeyID, currency)
 		return err
 	})
 	if err != nil {

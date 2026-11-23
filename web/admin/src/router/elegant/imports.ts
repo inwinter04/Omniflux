@@ -22,6 +22,7 @@ export const views: Record<LastLevelRouteKey, RouteComponent | (() => Promise<Ro
   login: () => import("@/views/_builtin/login/index.vue"),
   "access_api-keys": () => import("@/views/access/api-keys/index.vue"),
   access_users: () => import("@/views/access/users/index.vue"),
+  "asset-registry_agents": () => import("@/views/asset-registry/agents/index.vue"),
   "asset-registry_evaluations": () => import("@/views/asset-registry/evaluations/index.vue"),
   "asset-registry_prompt-templates": () => import("@/views/asset-registry/prompt-templates/index.vue"),
   home: () => import("@/views/home/index.vue"),

@@ -196,7 +196,7 @@ func (d Deps) loadService(ctx context.Context, orgID uuid.UUID, name string) (re
 	}
 	rows, err := d.Pool.Query(ctx, `
 		SELECT c.id, a.provider, a.id, c.upstream_model, c.priority, c.weight,
-		       c.input_cost_per_million, c.output_cost_per_million, c.quality_score
+		       c.input_cost_per_million, c.output_cost_per_million, c.cost_currency, c.quality_score
 		FROM model_candidates c
 		JOIN provider_accounts a ON a.id = c.provider_account_id
 		WHERE c.model_service_id = $1 AND c.status = 'active' AND a.status = 'active'
@@ -209,7 +209,7 @@ func (d Deps) loadService(ctx context.Context, orgID uuid.UUID, name string) (re
 	for rows.Next() {
 		var c candidate
 		if err := rows.Scan(&c.ID, &c.Provider, &c.AccountID, &c.UpstreamModel,
-			&c.Priority, &c.Weight, &c.InputCostPerM, &c.OutputCostPerM, &c.Quality); err != nil {
+			&c.Priority, &c.Weight, &c.InputCostPerM, &c.OutputCostPerM, &c.CostCurrency, &c.Quality); err != nil {
 			return svc, false, err
 		}
 		svc.Candidates = append(svc.Candidates, c)
@@ -362,13 +362,26 @@ func (d Deps) recordPending(ctx context.Context, requestID uuid.UUID, keyCtx api
 	})
 }
 
-// handleNonStream 调用上游并返回完整响应。
+type completionObserver struct {
+	onComplete func(status string, result DebugResult, err error)
+}
+
 func (d Deps) handleNonStream(bctx *schemas.BifrostContext, r *http.Request, w http.ResponseWriter,
 	requestID uuid.UUID, chain routeChain, requestedModel string,
 	req *schemas.BifrostChatRequest, start time.Time) {
+	d.handleNonStreamObserved(bctx, r, w, requestID, chain, requestedModel, req, start, nil)
+}
+
+// handleNonStream 调用上游并返回完整响应。
+func (d Deps) handleNonStreamObserved(bctx *schemas.BifrostContext, r *http.Request, w http.ResponseWriter,
+	requestID uuid.UUID, chain routeChain, requestedModel string,
+	req *schemas.BifrostChatRequest, start time.Time, observer *completionObserver) {
 	resp, bifrostErr := d.Engine.Client().ChatCompletionRequest(bctx, req)
 	if bifrostErr != nil {
 		d.recordFailure(r.Context(), requestID, chain, bctx, bifrostErr, start, nil, usageSnapshot{})
+		if observer != nil {
+			observer.onComplete("failed", DebugResult{TotalMS: int(time.Since(start).Milliseconds())}, errors.New(errorMessageOf(bifrostErr)))
+		}
 		writeBifrostError(w, bifrostErr)
 		return
 	}
@@ -404,6 +417,7 @@ func (d Deps) handleNonStream(bctx *schemas.BifrostContext, r *http.Request, w h
 		CachedTokens:    cachedTokens,
 		ReasoningTokens: reasoningTokens,
 		Cost:            cost,
+		Currency:        currencyOf(served),
 		TotalMS:         total,
 		UsageSource:     usageSource,
 		AttemptTrail:    attemptTrailJSON(chain, served, "success", "", routingEngineLogs(bctx)),
@@ -411,7 +425,14 @@ func (d Deps) handleNonStream(bctx *schemas.BifrostContext, r *http.Request, w h
 	if finalizeErr != nil {
 		d.Logger.Warn("finalize usage failed", "request_id", requestID, "error", finalizeErr)
 	}
-	d.settleBudget(context.WithoutCancel(r.Context()), keyFromContextOrEmpty(r), requestID, cost)
+	d.settleBudget(context.WithoutCancel(r.Context()), keyFromContextOrEmpty(r), requestID, cost, currencyOf(served))
+	if observer != nil {
+		observer.onComplete("success", DebugResult{
+			Response: debugResponseContent(resp), Provider: servedProvider, UpstreamModel: servedModel,
+			InputTokens: inputTokens, OutputTokens: outputTokens, CachedTokens: cachedTokens,
+			ReasoningTokens: reasoningTokens, Cost: cost, Currency: currencyOf(served), TotalMS: total,
+		}, nil)
+	}
 }
 
 // recordFailure 在上游失败时定稿用量并记录失败明细。finalize 使用不受请求取消影响的 ctx。
