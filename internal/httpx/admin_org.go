@@ -41,7 +41,7 @@ func (d ServerDeps) Departments(w http.ResponseWriter, r *http.Request) {
 		WHERE organization_id = $1 ORDER BY created_at ASC
 	`, principal.OrganizationID)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "DEPARTMENT_LIST_FAILED", "无法查询部门", nil)
+		adminError(w, http.StatusInternalServerError, "DEPARTMENT_LIST_FAILED", "failed-to-query-departments", nil)
 		return
 	}
 	defer rows.Close()
@@ -50,7 +50,7 @@ func (d ServerDeps) Departments(w http.ResponseWriter, r *http.Request) {
 		var item departmentResponse
 		var id uuid.UUID
 		if err := rows.Scan(&id, &item.Name); err != nil {
-			adminError(w, http.StatusInternalServerError, "DEPARTMENT_LIST_FAILED", "无法查询部门", nil)
+			adminError(w, http.StatusInternalServerError, "DEPARTMENT_LIST_FAILED", "failed-to-query-departments", nil)
 			return
 		}
 		item.ID = id.String()
@@ -71,23 +71,23 @@ func (d ServerDeps) CreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	body.Name = strings.TrimSpace(body.Name)
 	if body.Name == "" {
-		adminError(w, http.StatusBadRequest, "PROJECT_NAME_REQUIRED", "请填写项目名称", nil)
+		adminError(w, http.StatusBadRequest, "PROJECT_NAME_REQUIRED", "enter-a-project-name", nil)
 		return
 	}
 	departmentID, err := uuid.Parse(body.DepartmentID)
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "PROJECT_DEPARTMENT_INVALID", "department_id 不合法", nil)
+		adminError(w, http.StatusBadRequest, "PROJECT_DEPARTMENT_INVALID", "invalid-department-id-j8crm", nil)
 		return
 	}
 	var deptCount int
 	if err := d.Pool.QueryRow(r.Context(), `
 		SELECT count(*) FROM departments WHERE id = $1 AND organization_id = $2
 	`, departmentID, principal.OrganizationID).Scan(&deptCount); err != nil {
-		adminError(w, http.StatusInternalServerError, "PROJECT_CREATE_FAILED", "创建项目失败", nil)
+		adminError(w, http.StatusInternalServerError, "PROJECT_CREATE_FAILED", "failed-to-create-the-project", nil)
 		return
 	}
 	if deptCount == 0 {
-		adminError(w, http.StatusBadRequest, "PROJECT_DEPARTMENT_NOT_FOUND", "部门不存在或不属于当前组织", nil)
+		adminError(w, http.StatusBadRequest, "PROJECT_DEPARTMENT_NOT_FOUND", "department-does-not-exist-or-does", nil)
 		return
 	}
 	projectID := uuid.New()
@@ -97,10 +97,10 @@ func (d ServerDeps) CreateProject(w http.ResponseWriter, r *http.Request) {
 	`, projectID, principal.OrganizationID, departmentID, body.Name); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.ConstraintName == "projects_organization_id_name_key" {
-			adminError(w, http.StatusConflict, "PROJECT_NAME_EXISTS", "同名项目已存在", nil)
+			adminError(w, http.StatusConflict, "PROJECT_NAME_EXISTS", "a-project-with-the-same-name", nil)
 			return
 		}
-		adminError(w, http.StatusInternalServerError, "PROJECT_CREATE_FAILED", "创建项目失败", nil)
+		adminError(w, http.StatusInternalServerError, "PROJECT_CREATE_FAILED", "failed-to-create-the-project", nil)
 		return
 	}
 	_, _ = d.Pool.Exec(r.Context(), `
@@ -118,58 +118,58 @@ func (d ServerDeps) DeleteProject(w http.ResponseWriter, r *http.Request) {
 	}
 	projectID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "PROJECT_ID_INVALID", "项目 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "PROJECT_ID_INVALID", "invalid-project-id", nil)
 		return
 	}
 	var exists bool
 	if err := d.Pool.QueryRow(r.Context(), `
 		SELECT EXISTS (SELECT 1 FROM projects WHERE id = $1 AND organization_id = $2)
 	`, projectID, principal.OrganizationID).Scan(&exists); err != nil {
-		adminError(w, http.StatusInternalServerError, "PROJECT_DELETE_FAILED", "删除项目失败", nil)
+		adminError(w, http.StatusInternalServerError, "PROJECT_DELETE_FAILED", "failed-to-delete-the-project", nil)
 		return
 	}
 	if !exists {
-		adminError(w, http.StatusNotFound, "PROJECT_NOT_FOUND", "项目不存在或不属于当前组织", nil)
+		adminError(w, http.StatusNotFound, "PROJECT_NOT_FOUND", "project-does-not-exist-or-does", nil)
 		return
 	}
 	var appCount int
 	if err := d.Pool.QueryRow(r.Context(), `
 		SELECT count(*) FROM applications WHERE project_id = $1
 	`, projectID).Scan(&appCount); err != nil {
-		adminError(w, http.StatusInternalServerError, "PROJECT_DELETE_FAILED", "删除项目失败", nil)
+		adminError(w, http.StatusInternalServerError, "PROJECT_DELETE_FAILED", "failed-to-delete-the-project", nil)
 		return
 	}
 	if appCount > 0 {
 		adminError(w, http.StatusConflict, "PROJECT_HAS_APPLICATIONS",
-			"项目下存在应用,请先删除应用后再删除项目", nil)
+			"project-has-applications", nil)
 		return
 	}
 	var keyCount int
 	if err := d.Pool.QueryRow(r.Context(), `
 		SELECT count(*) FROM api_keys WHERE project_id = $1 AND deleted_at IS NULL
 	`, projectID).Scan(&keyCount); err != nil {
-		adminError(w, http.StatusInternalServerError, "PROJECT_DELETE_FAILED", "删除项目失败", nil)
+		adminError(w, http.StatusInternalServerError, "PROJECT_DELETE_FAILED", "failed-to-delete-the-project", nil)
 		return
 	}
 	if keyCount > 0 {
 		adminError(w, http.StatusConflict, "PROJECT_HAS_API_KEYS",
-			"项目下存在 API Key,请先禁用并移除后再删除项目", nil)
+			"project-has-api-keys", nil)
 		return
 	}
 	var usageCount int
 	if err := d.Pool.QueryRow(r.Context(), `
 		SELECT count(*) FROM usage_records WHERE project_id = $1
 	`, projectID).Scan(&usageCount); err != nil {
-		adminError(w, http.StatusInternalServerError, "PROJECT_DELETE_FAILED", "删除项目失败", nil)
+		adminError(w, http.StatusInternalServerError, "PROJECT_DELETE_FAILED", "failed-to-delete-the-project", nil)
 		return
 	}
 	if usageCount > 0 {
 		adminError(w, http.StatusConflict, "PROJECT_HAS_USAGE",
-			"项目存在用量记录,为保留审计数据无法删除", nil)
+			"project-has-usage", nil)
 		return
 	}
 	if _, err := d.Pool.Exec(r.Context(), `DELETE FROM projects WHERE id = $1`, projectID); err != nil {
-		adminError(w, http.StatusInternalServerError, "PROJECT_DELETE_FAILED", "删除项目失败", nil)
+		adminError(w, http.StatusInternalServerError, "PROJECT_DELETE_FAILED", "failed-to-delete-the-project", nil)
 		return
 	}
 	_, _ = d.Pool.Exec(r.Context(), `
@@ -191,23 +191,23 @@ func (d ServerDeps) CreateApplication(w http.ResponseWriter, r *http.Request) {
 	}
 	body.Name = strings.TrimSpace(body.Name)
 	if body.Name == "" {
-		adminError(w, http.StatusBadRequest, "APPLICATION_NAME_REQUIRED", "请填写应用名称", nil)
+		adminError(w, http.StatusBadRequest, "APPLICATION_NAME_REQUIRED", "enter-an-application-name", nil)
 		return
 	}
 	projectID, err := uuid.Parse(body.ProjectID)
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "APPLICATION_PROJECT_INVALID", "project_id 不合法", nil)
+		adminError(w, http.StatusBadRequest, "APPLICATION_PROJECT_INVALID", "invalid-project-id-bcvapn", nil)
 		return
 	}
 	var projectCount int
 	if err := d.Pool.QueryRow(r.Context(), `
 		SELECT count(*) FROM projects WHERE id = $1 AND organization_id = $2
 	`, projectID, principal.OrganizationID).Scan(&projectCount); err != nil {
-		adminError(w, http.StatusInternalServerError, "APPLICATION_CREATE_FAILED", "创建应用失败", nil)
+		adminError(w, http.StatusInternalServerError, "APPLICATION_CREATE_FAILED", "failed-to-create-the-application", nil)
 		return
 	}
 	if projectCount == 0 {
-		adminError(w, http.StatusBadRequest, "APPLICATION_PROJECT_NOT_FOUND", "项目不存在或不属于当前组织", nil)
+		adminError(w, http.StatusBadRequest, "APPLICATION_PROJECT_NOT_FOUND", "project-does-not-exist-or-does", nil)
 		return
 	}
 	applicationID := uuid.New()
@@ -217,10 +217,10 @@ func (d ServerDeps) CreateApplication(w http.ResponseWriter, r *http.Request) {
 	`, applicationID, principal.OrganizationID, projectID, body.Name); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.ConstraintName == "applications_project_id_name_key" {
-			adminError(w, http.StatusConflict, "APPLICATION_NAME_EXISTS", "该项目下同名应用已存在", nil)
+			adminError(w, http.StatusConflict, "APPLICATION_NAME_EXISTS", "an-application-with-the-same-name", nil)
 			return
 		}
-		adminError(w, http.StatusInternalServerError, "APPLICATION_CREATE_FAILED", "创建应用失败", nil)
+		adminError(w, http.StatusInternalServerError, "APPLICATION_CREATE_FAILED", "failed-to-create-the-application", nil)
 		return
 	}
 	_, _ = d.Pool.Exec(r.Context(), `
@@ -238,7 +238,7 @@ func (d ServerDeps) DeleteApplication(w http.ResponseWriter, r *http.Request) {
 	}
 	applicationID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "APPLICATION_ID_INVALID", "应用 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "APPLICATION_ID_INVALID", "invalid-application-id", nil)
 		return
 	}
 	var exists bool
@@ -249,39 +249,39 @@ func (d ServerDeps) DeleteApplication(w http.ResponseWriter, r *http.Request) {
 			WHERE a.id = $1 AND p.organization_id = $2
 		)
 	`, applicationID, principal.OrganizationID).Scan(&exists); err != nil {
-		adminError(w, http.StatusInternalServerError, "APPLICATION_DELETE_FAILED", "删除应用失败", nil)
+		adminError(w, http.StatusInternalServerError, "APPLICATION_DELETE_FAILED", "failed-to-delete-the-application", nil)
 		return
 	}
 	if !exists {
-		adminError(w, http.StatusNotFound, "APPLICATION_NOT_FOUND", "应用不存在或不属于当前组织", nil)
+		adminError(w, http.StatusNotFound, "APPLICATION_NOT_FOUND", "application-does-not-exist-or-does", nil)
 		return
 	}
 	var keyCount int
 	if err := d.Pool.QueryRow(r.Context(), `
 		SELECT count(*) FROM api_keys WHERE application_id = $1 AND deleted_at IS NULL
 	`, applicationID).Scan(&keyCount); err != nil {
-		adminError(w, http.StatusInternalServerError, "APPLICATION_DELETE_FAILED", "删除应用失败", nil)
+		adminError(w, http.StatusInternalServerError, "APPLICATION_DELETE_FAILED", "failed-to-delete-the-application", nil)
 		return
 	}
 	if keyCount > 0 {
 		adminError(w, http.StatusConflict, "APPLICATION_HAS_API_KEYS",
-			"应用下存在 API Key,请先禁用并移除后再删除应用", nil)
+			"application-has-api-keys", nil)
 		return
 	}
 	var usageCount int
 	if err := d.Pool.QueryRow(r.Context(), `
 		SELECT count(*) FROM usage_records WHERE application_id = $1
 	`, applicationID).Scan(&usageCount); err != nil {
-		adminError(w, http.StatusInternalServerError, "APPLICATION_DELETE_FAILED", "删除应用失败", nil)
+		adminError(w, http.StatusInternalServerError, "APPLICATION_DELETE_FAILED", "failed-to-delete-the-application", nil)
 		return
 	}
 	if usageCount > 0 {
 		adminError(w, http.StatusConflict, "APPLICATION_HAS_USAGE",
-			"应用存在用量记录,为保留审计数据无法删除", nil)
+			"application-has-usage", nil)
 		return
 	}
 	if _, err := d.Pool.Exec(r.Context(), `DELETE FROM applications WHERE id = $1`, applicationID); err != nil {
-		adminError(w, http.StatusInternalServerError, "APPLICATION_DELETE_FAILED", "删除应用失败", nil)
+		adminError(w, http.StatusInternalServerError, "APPLICATION_DELETE_FAILED", "failed-to-delete-the-application", nil)
 		return
 	}
 	_, _ = d.Pool.Exec(r.Context(), `
@@ -307,12 +307,12 @@ func (d ServerDeps) UpdateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	body.Name = strings.TrimSpace(body.Name)
 	if body.Name == "" {
-		adminError(w, http.StatusBadRequest, "PROJECT_NAME_REQUIRED", "请填写项目名称", nil)
+		adminError(w, http.StatusBadRequest, "PROJECT_NAME_REQUIRED", "enter-a-project-name", nil)
 		return
 	}
 	projectID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "PROJECT_ID_INVALID", "项目 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "PROJECT_ID_INVALID", "invalid-project-id", nil)
 		return
 	}
 	var oldName string
@@ -320,11 +320,11 @@ func (d ServerDeps) UpdateProject(w http.ResponseWriter, r *http.Request) {
 		SELECT name FROM projects WHERE id = $1 AND organization_id = $2
 	`, projectID, principal.OrganizationID).Scan(&oldName)
 	if errors.Is(err, pgx.ErrNoRows) {
-		adminError(w, http.StatusNotFound, "PROJECT_NOT_FOUND", "项目不存在或不属于当前组织", nil)
+		adminError(w, http.StatusNotFound, "PROJECT_NOT_FOUND", "project-does-not-exist-or-does", nil)
 		return
 	}
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "PROJECT_UPDATE_FAILED", "更新项目失败", nil)
+		adminError(w, http.StatusInternalServerError, "PROJECT_UPDATE_FAILED", "failed-to-update-the-project", nil)
 		return
 	}
 	if _, err := d.Pool.Exec(r.Context(), `
@@ -332,10 +332,10 @@ func (d ServerDeps) UpdateProject(w http.ResponseWriter, r *http.Request) {
 	`, projectID, principal.OrganizationID, body.Name); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.ConstraintName == "projects_organization_id_name_key" {
-			adminError(w, http.StatusConflict, "PROJECT_NAME_EXISTS", "同名项目已存在", nil)
+			adminError(w, http.StatusConflict, "PROJECT_NAME_EXISTS", "a-project-with-the-same-name", nil)
 			return
 		}
-		adminError(w, http.StatusInternalServerError, "PROJECT_UPDATE_FAILED", "更新项目失败", nil)
+		adminError(w, http.StatusInternalServerError, "PROJECT_UPDATE_FAILED", "failed-to-update-the-project", nil)
 		return
 	}
 	_, _ = d.Pool.Exec(r.Context(), `
@@ -361,12 +361,12 @@ func (d ServerDeps) UpdateApplication(w http.ResponseWriter, r *http.Request) {
 	}
 	body.Name = strings.TrimSpace(body.Name)
 	if body.Name == "" {
-		adminError(w, http.StatusBadRequest, "APPLICATION_NAME_REQUIRED", "请填写应用名称", nil)
+		adminError(w, http.StatusBadRequest, "APPLICATION_NAME_REQUIRED", "enter-an-application-name", nil)
 		return
 	}
 	applicationID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "APPLICATION_ID_INVALID", "应用 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "APPLICATION_ID_INVALID", "invalid-application-id", nil)
 		return
 	}
 	var oldName string
@@ -376,11 +376,11 @@ func (d ServerDeps) UpdateApplication(w http.ResponseWriter, r *http.Request) {
 		WHERE a.id = $1 AND p.organization_id = $2
 	`, applicationID, principal.OrganizationID).Scan(&oldName)
 	if errors.Is(err, pgx.ErrNoRows) {
-		adminError(w, http.StatusNotFound, "APPLICATION_NOT_FOUND", "应用不存在或不属于当前组织", nil)
+		adminError(w, http.StatusNotFound, "APPLICATION_NOT_FOUND", "application-does-not-exist-or-does", nil)
 		return
 	}
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "APPLICATION_UPDATE_FAILED", "更新应用失败", nil)
+		adminError(w, http.StatusInternalServerError, "APPLICATION_UPDATE_FAILED", "failed-to-update-the-application", nil)
 		return
 	}
 	if _, err := d.Pool.Exec(r.Context(), `
@@ -388,10 +388,10 @@ func (d ServerDeps) UpdateApplication(w http.ResponseWriter, r *http.Request) {
 	`, applicationID, body.Name); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.ConstraintName == "applications_project_id_name_key" {
-			adminError(w, http.StatusConflict, "APPLICATION_NAME_EXISTS", "该项目下同名应用已存在", nil)
+			adminError(w, http.StatusConflict, "APPLICATION_NAME_EXISTS", "an-application-with-the-same-name", nil)
 			return
 		}
-		adminError(w, http.StatusInternalServerError, "APPLICATION_UPDATE_FAILED", "更新应用失败", nil)
+		adminError(w, http.StatusInternalServerError, "APPLICATION_UPDATE_FAILED", "failed-to-update-the-application", nil)
 		return
 	}
 	_, _ = d.Pool.Exec(r.Context(), `
@@ -419,7 +419,7 @@ func (d ServerDeps) CreateDepartment(w http.ResponseWriter, r *http.Request) {
 	}
 	body.Name = strings.TrimSpace(body.Name)
 	if body.Name == "" {
-		adminError(w, http.StatusBadRequest, "DEPARTMENT_NAME_REQUIRED", "请填写部门名称", nil)
+		adminError(w, http.StatusBadRequest, "DEPARTMENT_NAME_REQUIRED", "enter-a-department-name", nil)
 		return
 	}
 	departmentID := uuid.New()
@@ -428,10 +428,10 @@ func (d ServerDeps) CreateDepartment(w http.ResponseWriter, r *http.Request) {
 	`, departmentID, principal.OrganizationID, body.Name); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.ConstraintName == "departments_organization_id_name_key" {
-			adminError(w, http.StatusConflict, "DEPARTMENT_NAME_EXISTS", "同名部门已存在", nil)
+			adminError(w, http.StatusConflict, "DEPARTMENT_NAME_EXISTS", "a-department-with-the-same-name", nil)
 			return
 		}
-		adminError(w, http.StatusInternalServerError, "DEPARTMENT_CREATE_FAILED", "创建部门失败", nil)
+		adminError(w, http.StatusInternalServerError, "DEPARTMENT_CREATE_FAILED", "failed-to-create-the-department", nil)
 		return
 	}
 	_, _ = d.Pool.Exec(r.Context(), `
@@ -453,12 +453,12 @@ func (d ServerDeps) UpdateDepartment(w http.ResponseWriter, r *http.Request) {
 	}
 	body.Name = strings.TrimSpace(body.Name)
 	if body.Name == "" {
-		adminError(w, http.StatusBadRequest, "DEPARTMENT_NAME_REQUIRED", "请填写部门名称", nil)
+		adminError(w, http.StatusBadRequest, "DEPARTMENT_NAME_REQUIRED", "enter-a-department-name", nil)
 		return
 	}
 	departmentID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "DEPARTMENT_ID_INVALID", "部门 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "DEPARTMENT_ID_INVALID", "invalid-department-id", nil)
 		return
 	}
 	var oldName string
@@ -466,11 +466,11 @@ func (d ServerDeps) UpdateDepartment(w http.ResponseWriter, r *http.Request) {
 		SELECT name FROM departments WHERE id = $1 AND organization_id = $2
 	`, departmentID, principal.OrganizationID).Scan(&oldName)
 	if errors.Is(err, pgx.ErrNoRows) {
-		adminError(w, http.StatusNotFound, "DEPARTMENT_NOT_FOUND", "部门不存在或不属于当前组织", nil)
+		adminError(w, http.StatusNotFound, "DEPARTMENT_NOT_FOUND", "department-does-not-exist-or-does", nil)
 		return
 	}
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "DEPARTMENT_UPDATE_FAILED", "更新部门失败", nil)
+		adminError(w, http.StatusInternalServerError, "DEPARTMENT_UPDATE_FAILED", "failed-to-update-the-department", nil)
 		return
 	}
 	if _, err := d.Pool.Exec(r.Context(), `
@@ -478,10 +478,10 @@ func (d ServerDeps) UpdateDepartment(w http.ResponseWriter, r *http.Request) {
 	`, departmentID, principal.OrganizationID, body.Name); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.ConstraintName == "departments_organization_id_name_key" {
-			adminError(w, http.StatusConflict, "DEPARTMENT_NAME_EXISTS", "同名部门已存在", nil)
+			adminError(w, http.StatusConflict, "DEPARTMENT_NAME_EXISTS", "a-department-with-the-same-name", nil)
 			return
 		}
-		adminError(w, http.StatusInternalServerError, "DEPARTMENT_UPDATE_FAILED", "更新部门失败", nil)
+		adminError(w, http.StatusInternalServerError, "DEPARTMENT_UPDATE_FAILED", "failed-to-update-the-department", nil)
 		return
 	}
 	_, _ = d.Pool.Exec(r.Context(), `
@@ -500,34 +500,34 @@ func (d ServerDeps) DeleteDepartment(w http.ResponseWriter, r *http.Request) {
 	}
 	departmentID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "DEPARTMENT_ID_INVALID", "部门 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "DEPARTMENT_ID_INVALID", "invalid-department-id", nil)
 		return
 	}
 	var exists bool
 	if err := d.Pool.QueryRow(r.Context(), `
 		SELECT EXISTS (SELECT 1 FROM departments WHERE id = $1 AND organization_id = $2)
 	`, departmentID, principal.OrganizationID).Scan(&exists); err != nil {
-		adminError(w, http.StatusInternalServerError, "DEPARTMENT_DELETE_FAILED", "删除部门失败", nil)
+		adminError(w, http.StatusInternalServerError, "DEPARTMENT_DELETE_FAILED", "failed-to-delete-the-department", nil)
 		return
 	}
 	if !exists {
-		adminError(w, http.StatusNotFound, "DEPARTMENT_NOT_FOUND", "部门不存在或不属于当前组织", nil)
+		adminError(w, http.StatusNotFound, "DEPARTMENT_NOT_FOUND", "department-does-not-exist-or-does", nil)
 		return
 	}
 	var projectCount int
 	if err := d.Pool.QueryRow(r.Context(), `
 		SELECT count(*) FROM projects WHERE department_id = $1
 	`, departmentID).Scan(&projectCount); err != nil {
-		adminError(w, http.StatusInternalServerError, "DEPARTMENT_DELETE_FAILED", "删除部门失败", nil)
+		adminError(w, http.StatusInternalServerError, "DEPARTMENT_DELETE_FAILED", "failed-to-delete-the-department", nil)
 		return
 	}
 	if projectCount > 0 {
 		adminError(w, http.StatusConflict, "DEPARTMENT_HAS_PROJECTS",
-			"部门下存在项目,请先处理项目后再删除部门", nil)
+			"department-has-projects", nil)
 		return
 	}
 	if _, err := d.Pool.Exec(r.Context(), `DELETE FROM departments WHERE id = $1`, departmentID); err != nil {
-		adminError(w, http.StatusInternalServerError, "DEPARTMENT_DELETE_FAILED", "删除部门失败", nil)
+		adminError(w, http.StatusInternalServerError, "DEPARTMENT_DELETE_FAILED", "failed-to-delete-the-department", nil)
 		return
 	}
 	_, _ = d.Pool.Exec(r.Context(), `
@@ -577,7 +577,7 @@ func (d ServerDeps) Organizations(w http.ResponseWriter, r *http.Request) {
 	query += " ORDER BY created_at ASC"
 	rows, err := d.Pool.Query(r.Context(), query, args...)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "ORG_LIST_FAILED", "无法查询组织", nil)
+		adminError(w, http.StatusInternalServerError, "ORG_LIST_FAILED", "failed-to-query-organizations", nil)
 		return
 	}
 	defer rows.Close()
@@ -586,7 +586,7 @@ func (d ServerDeps) Organizations(w http.ResponseWriter, r *http.Request) {
 		var item organizationResponse
 		var id uuid.UUID
 		if err := rows.Scan(&id, &item.Name, &item.Slug, &item.CreatedAt); err != nil {
-			adminError(w, http.StatusInternalServerError, "ORG_LIST_FAILED", "无法查询组织", nil)
+			adminError(w, http.StatusInternalServerError, "ORG_LIST_FAILED", "failed-to-query-organizations", nil)
 			return
 		}
 		item.ID = id.String()
@@ -600,11 +600,11 @@ func (d ServerDeps) Organizations(w http.ResponseWriter, r *http.Request) {
 func (d ServerDeps) CreateOrganization(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
 	if !ok {
-		adminFail(w, http.StatusUnauthorized, "authentication required")
+		adminFail(w, http.StatusUnauthorized, "authentication-required")
 		return
 	}
 	if !isPlatformAdmin(principal) {
-		adminError(w, http.StatusForbidden, "PERMISSION_DENIED", "需要平台管理员权限", nil)
+		adminError(w, http.StatusForbidden, "PERMISSION_DENIED", "platform-admin-permission-is-required", nil)
 		return
 	}
 	var body createOrganizationRequest
@@ -614,12 +614,12 @@ func (d ServerDeps) CreateOrganization(w http.ResponseWriter, r *http.Request) {
 	body.Name = strings.TrimSpace(body.Name)
 	body.Slug = strings.TrimSpace(body.Slug)
 	if body.Name == "" {
-		adminError(w, http.StatusBadRequest, "ORG_NAME_REQUIRED", "请填写组织名称", nil)
+		adminError(w, http.StatusBadRequest, "ORG_NAME_REQUIRED", "enter-an-organization-name", nil)
 		return
 	}
 	if !organizationSlugPattern.MatchString(body.Slug) {
 		adminError(w, http.StatusBadRequest, "ORG_SLUG_INVALID",
-			"slug 仅支持小写字母、数字和连字符,长度 1-63,且以字母或数字开头", nil)
+			"org-slug-invalid", nil)
 		return
 	}
 	orgID := uuid.New()
@@ -628,10 +628,10 @@ func (d ServerDeps) CreateOrganization(w http.ResponseWriter, r *http.Request) {
 	`, orgID, body.Name, body.Slug); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.ConstraintName == "organizations_slug_key" {
-			adminError(w, http.StatusConflict, "ORG_SLUG_EXISTS", "同名 slug 已存在", nil)
+			adminError(w, http.StatusConflict, "ORG_SLUG_EXISTS", "this-slug-is-already-in-use", nil)
 			return
 		}
-		adminError(w, http.StatusInternalServerError, "ORG_CREATE_FAILED", "创建组织失败", nil)
+		adminError(w, http.StatusInternalServerError, "ORG_CREATE_FAILED", "failed-to-create-the-organization", nil)
 		return
 	}
 	// 审计挂在发起者的组织下,记录被操作的目标组织。
@@ -648,12 +648,12 @@ func (d ServerDeps) CreateOrganization(w http.ResponseWriter, r *http.Request) {
 func (d ServerDeps) UpdateOrganization(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
 	if !ok {
-		adminFail(w, http.StatusUnauthorized, "authentication required")
+		adminFail(w, http.StatusUnauthorized, "authentication-required")
 		return
 	}
 	orgID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "ORG_ID_INVALID", "组织 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "ORG_ID_INVALID", "invalid-organization-id", nil)
 		return
 	}
 	if !isPlatformAdmin(principal) {
@@ -661,7 +661,7 @@ func (d ServerDeps) UpdateOrganization(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if orgID != principal.OrganizationID {
-			adminError(w, http.StatusForbidden, "PERMISSION_DENIED", "只能修改自己所在的组织", nil)
+			adminError(w, http.StatusForbidden, "PERMISSION_DENIED", "you-can-only-modify-your-own", nil)
 			return
 		}
 	}
@@ -670,24 +670,24 @@ func (d ServerDeps) UpdateOrganization(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Name == nil || strings.TrimSpace(*body.Name) == "" {
-		adminError(w, http.StatusBadRequest, "ORG_NAME_REQUIRED", "请填写组织名称", nil)
+		adminError(w, http.StatusBadRequest, "ORG_NAME_REQUIRED", "enter-an-organization-name", nil)
 		return
 	}
 	name := strings.TrimSpace(*body.Name)
 	var oldName string
 	err = d.Pool.QueryRow(r.Context(), `SELECT name FROM organizations WHERE id = $1`, orgID).Scan(&oldName)
 	if errors.Is(err, pgx.ErrNoRows) {
-		adminError(w, http.StatusNotFound, "ORG_NOT_FOUND", "组织不存在", nil)
+		adminError(w, http.StatusNotFound, "ORG_NOT_FOUND", "organization-does-not-exist", nil)
 		return
 	}
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "ORG_UPDATE_FAILED", "更新组织失败", nil)
+		adminError(w, http.StatusInternalServerError, "ORG_UPDATE_FAILED", "failed-to-update-the-organization", nil)
 		return
 	}
 	if _, err := d.Pool.Exec(r.Context(), `
 		UPDATE organizations SET name = $2 WHERE id = $1
 	`, orgID, name); err != nil {
-		adminError(w, http.StatusInternalServerError, "ORG_UPDATE_FAILED", "更新组织失败", nil)
+		adminError(w, http.StatusInternalServerError, "ORG_UPDATE_FAILED", "failed-to-update-the-organization", nil)
 		return
 	}
 	_, _ = d.Pool.Exec(r.Context(), `

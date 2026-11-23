@@ -71,7 +71,7 @@ func (d ServerDeps) RunPromptAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	assetID, err := parseAssetID(r)
 	if err != nil {
-		writeAssetError(w, err, "PROMPT_RUN_FAILED", "模型运行失败")
+		writeAssetError(w, err, "PROMPT_RUN_FAILED", "model-run-failed")
 		return
 	}
 	var body promptRunRequest
@@ -80,7 +80,7 @@ func (d ServerDeps) RunPromptAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	runContext, err := d.preparePromptRun(r.Context(), principal, assetID, body.VersionID, body.Variables, body.ModelServiceIDs)
 	if err != nil {
-		writeAssetError(w, err, "PROMPT_RUN_FAILED", "模型运行失败")
+		writeAssetError(w, err, "PROMPT_RUN_FAILED", "model-run-failed")
 		return
 	}
 	kind := "single"
@@ -89,7 +89,7 @@ func (d ServerDeps) RunPromptAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Stream {
 		if len(runContext.serviceIDs) != 1 {
-			adminError(w, http.StatusBadRequest, "PROMPT_STREAM_SINGLE_MODEL", "流式运行请选择一个模型服务", nil)
+			adminError(w, http.StatusBadRequest, "PROMPT_STREAM_SINGLE_MODEL", "select-one-model-service-for-streaming", nil)
 			return
 		}
 		d.streamPromptRun(w, r, principal, assetID, runContext)
@@ -124,7 +124,7 @@ func (d ServerDeps) preparePromptRun(ctx context.Context, principal auth.Princip
 	if versionID != "" {
 		result.versionID, err = uuid.Parse(versionID)
 		if err != nil {
-			return result, assetError(http.StatusBadRequest, "ASSET_VERSION_ID_INVALID", "版本 ID 不合法")
+			return result, assetError(http.StatusBadRequest, "ASSET_VERSION_ID_INVALID", "invalid-version-id")
 		}
 		err = d.Pool.QueryRow(ctx, `
 			SELECT v.id, v.version, v.spec FROM asset_versions v
@@ -139,33 +139,33 @@ func (d ServerDeps) preparePromptRun(ctx context.Context, principal auth.Princip
 		`, assetID, principal.OrganizationID).Scan(&result.versionID, &result.version, &rawSpec)
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
-		return result, assetError(http.StatusNotFound, "ASSET_VERSION_NOT_FOUND", "版本不存在或不属于当前组织")
+		return result, assetError(http.StatusNotFound, "ASSET_VERSION_NOT_FOUND", "version-does-not-exist-or-does")
 	}
 	if err != nil {
 		return result, err
 	}
 	result.spec, err = asset.ParsePromptSpec(rawSpec)
 	if err != nil {
-		return result, assetError(http.StatusBadRequest, "PROMPT_SPEC_INVALID", err.Error())
+		return result, assetError(http.StatusBadRequest, "PROMPT_SPEC_INVALID", "promptSpecInvalid")
 	}
 	result.rendered, err = asset.RenderPrompt(result.spec, variables)
 	if err != nil {
-		return result, assetError(http.StatusBadRequest, "PROMPT_RENDER_INVALID", err.Error())
+		return result, assetError(http.StatusBadRequest, "PROMPT_RENDER_INVALID", "promptRenderInvalid")
 	}
 	if len(modelIDs) == 0 {
 		if result.spec.ModelServiceID == "" {
-			return result, assetError(http.StatusBadRequest, "PROMPT_MODEL_REQUIRED", "请选择至少一个模型服务")
+			return result, assetError(http.StatusBadRequest, "PROMPT_MODEL_REQUIRED", "select-at-least-one-model-service")
 		}
 		modelIDs = []string{result.spec.ModelServiceID}
 	}
 	if len(modelIDs) > 4 {
-		return result, assetError(http.StatusBadRequest, "PROMPT_MODEL_LIMIT", "一次最多比较 4 个模型服务")
+		return result, assetError(http.StatusBadRequest, "PROMPT_MODEL_LIMIT", "at-most-4-model-services-can")
 	}
 	seen := map[uuid.UUID]bool{}
 	for _, value := range modelIDs {
 		id, parseErr := uuid.Parse(value)
 		if parseErr != nil {
-			return result, assetError(http.StatusBadRequest, "SERVICE_ID_INVALID", "模型服务 ID 不合法")
+			return result, assetError(http.StatusBadRequest, "SERVICE_ID_INVALID", "invalid-model-service-id")
 		}
 		if seen[id] {
 			continue
@@ -178,7 +178,7 @@ func (d ServerDeps) preparePromptRun(ctx context.Context, principal auth.Princip
 		return result, err
 	}
 	if count != len(result.serviceIDs) {
-		return result, assetError(http.StatusBadRequest, "SERVICE_NOT_FOUND", "模型服务不存在、未启用或不属于当前组织")
+		return result, assetError(http.StatusBadRequest, "SERVICE_NOT_FOUND", "model-service-does-not-exist-is")
 	}
 	return result, nil
 }
@@ -200,7 +200,7 @@ func (d ServerDeps) executePromptRun(ctx context.Context, principal auth.Princip
 	`, runID, groupID, principal.OrganizationID, assetID, runContext.versionID, evaluationSetID, evaluationCaseID,
 		principal.UserID, response.Kind, serviceID, runContext.rendered); err != nil {
 		response.Status = "failed"
-		response.Error = "无法创建运行记录"
+		response.Error = "failed-to-create-a-run-record"
 		return response
 	}
 	plane := dataplane.Deps{Logger: d.Logger, Pool: d.Pool, Engine: d.Engine}
@@ -234,7 +234,7 @@ func (d ServerDeps) executePromptRun(ctx context.Context, principal auth.Princip
 	}
 	if err := d.finalizePromptRun(ctx, runID, response); err != nil {
 		response.Status = "failed"
-		response.Error = "运行结果保存失败: " + err.Error()
+		response.Error = "prompt_run_finalize_failed"
 	}
 	return response
 }
@@ -263,7 +263,7 @@ func (d ServerDeps) finalizePromptRun(ctx context.Context, runID uuid.UUID, resp
 func (d ServerDeps) streamPromptRun(w http.ResponseWriter, r *http.Request, principal auth.Principal, assetID uuid.UUID, runContext promptRunContext) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		adminError(w, http.StatusInternalServerError, "PROMPT_STREAM_UNSUPPORTED", "当前连接不支持流式响应", nil)
+		adminError(w, http.StatusInternalServerError, "PROMPT_STREAM_UNSUPPORTED", "the-current-connection-does-not-support", nil)
 		return
 	}
 	groupID, runID := uuid.New(), uuid.New()
@@ -272,7 +272,7 @@ func (d ServerDeps) streamPromptRun(w http.ResponseWriter, r *http.Request, prin
 		INSERT INTO prompt_runs(id, group_id, organization_id, asset_id, version_id, actor_user_id, kind, model_service_id, rendered_prompt)
 		VALUES ($1,$2,$3,$4,$5,$6,'single',$7,$8)
 	`, runID, groupID, principal.OrganizationID, assetID, runContext.versionID, principal.UserID, serviceID, runContext.rendered); err != nil {
-		adminError(w, http.StatusInternalServerError, "PROMPT_RUN_CREATE_FAILED", "无法创建运行记录", nil)
+		adminError(w, http.StatusInternalServerError, "PROMPT_RUN_CREATE_FAILED", "failed-to-create-a-run-record", nil)
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -348,7 +348,7 @@ func (d ServerDeps) PromptRunHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	assetID, err := parseAssetID(r)
 	if err != nil {
-		writeAssetError(w, err, "PROMPT_RUN_HISTORY_FAILED", "查询运行记录失败")
+		writeAssetError(w, err, "PROMPT_RUN_HISTORY_FAILED", "failed-to-query-run-records")
 		return
 	}
 	rows, err := d.Pool.Query(r.Context(), `
@@ -363,7 +363,7 @@ func (d ServerDeps) PromptRunHistory(w http.ResponseWriter, r *http.Request) {
 		ORDER BY r.created_at DESC LIMIT 100
 	`, principal.OrganizationID, assetID)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "PROMPT_RUN_HISTORY_FAILED", "查询运行记录失败", nil)
+		adminError(w, http.StatusInternalServerError, "PROMPT_RUN_HISTORY_FAILED", "failed-to-query-run-records", nil)
 		return
 	}
 	defer rows.Close()
@@ -375,7 +375,7 @@ func (d ServerDeps) PromptRunHistory(w http.ResponseWriter, r *http.Request) {
 			&item.RenderedPrompt, &item.Response, &item.StructuredOutput, &item.SchemaValid, &item.Error, &item.Provider, &item.UpstreamModel,
 			&item.InputTokens, &item.OutputTokens, &item.CachedTokens, &item.ReasoningTokens, &item.Cost, &item.CostCurrency, &item.FirstTokenMS, &item.TotalMS,
 			&item.Score, &item.Matched, &item.EvaluationSetID, &item.EvaluationCaseID, &item.CreatedAt); err != nil {
-			adminError(w, http.StatusInternalServerError, "PROMPT_RUN_HISTORY_FAILED", "读取运行记录失败", nil)
+			adminError(w, http.StatusInternalServerError, "PROMPT_RUN_HISTORY_FAILED", "failed-to-read-run-records", nil)
 			return
 		}
 		item.ID, item.GroupID, item.VersionID, item.ModelServiceID = id.String(), groupID.String(), versionID.String(), serviceID.String()

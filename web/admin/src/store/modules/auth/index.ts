@@ -4,6 +4,7 @@ import { defineStore } from 'pinia';
 import { useLoading } from '@sa/hooks';
 import { localStg } from '@/utils/storage';
 import { fetchGetUserInfo, fetchLogin, fetchLogout } from '@/service/api';
+import { translateBackendError } from '@/service/request/backend-error';
 import { $t } from '@/locales';
 import { useRouterPush } from '@/hooks/common/router';
 import { SetupStoreId } from '@/enum';
@@ -18,10 +19,9 @@ interface LoginResult {
 
 interface LoginErrorPayload {
   code?: string;
-  msg?: string;
-  data?: {
-    retry_after_seconds?: number;
-  };
+  reason?: string;
+  params?: Record<string, unknown>;
+  detail?: string;
 }
 
 export const useAuthStore = defineStore(SetupStoreId.Auth, () => {
@@ -128,12 +128,14 @@ export const useAuthStore = defineStore(SetupStoreId.Auth, () => {
 
     const axiosError = error as { response?: { data?: LoginErrorPayload } };
     const payload = axiosError.response?.data;
-    let message = payload?.msg || $t('business.login-failed-please-try-again');
+    let message = payload?.reason
+      ? translateBackendError(payload.reason, payload.params, payload.detail)
+      : $t('business.login-failed-please-try-again');
 
     if (payload?.code === 'AUTH_INVALID_CREDENTIALS') {
       message = $t('business.incorrect-email-or-password');
     } else if (payload?.code === 'AUTH_ACCOUNT_LOCKED') {
-      const retryAfter = payload.data?.retry_after_seconds || 0;
+      const retryAfter = Number(payload.params?.retry_after_seconds ?? 0);
 
       if (retryAfter >= 60) {
         message = $t('business.accountLockedMinutes', {

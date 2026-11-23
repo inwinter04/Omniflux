@@ -104,9 +104,10 @@ func TestIntegrationAssetRegistry(t *testing.T) {
 
 	code, body = doJSON(t, admin, http.MethodGet, "/api/v1/assets/"+assetID+"/versions/diff?from="+version1ID+"&to="+version2ID, nil)
 	assertAssetStatus(t, code, body, http.StatusOK)
-	diff := assetDataMap(t, body)["diff"].(string)
-	if !strings.Contains(diff, "Hello") || !strings.Contains(diff, "Welcome") {
-		t.Fatalf("diff missing template changes: %s", diff)
+	fromSpec := assetDataMap(t, body)["from_spec"].(map[string]any)
+	toSpec := assetDataMap(t, body)["to_spec"].(map[string]any)
+	if !strings.Contains(fromSpec["template"].(string), "Hello") || !strings.Contains(toSpec["template"].(string), "Welcome") {
+		t.Fatalf("structured diff missing template changes: %#v -> %#v", fromSpec, toSpec)
 	}
 
 	code, body = doJSON(t, admin, http.MethodPost, "/api/v1/assets/"+assetID+"/publish", map[string]any{"version_id": version2ID})

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -77,24 +76,30 @@ type updateAssetStatusRequest struct {
 }
 
 type assetAPIError struct {
-	status  int
-	code    string
-	message string
+	status int
+	code   string
+	reason string
+	params map[string]any
+	detail string
 }
 
-func (e *assetAPIError) Error() string { return e.message }
+func (e *assetAPIError) Error() string { return e.reason }
 
-func assetError(status int, code, message string) error {
-	return &assetAPIError{status: status, code: code, message: message}
+func assetError(status int, code, reason string, params ...map[string]any) error {
+	apiErr := &assetAPIError{status: status, code: code, reason: reason}
+	if len(params) > 0 {
+		apiErr.params = params[0]
+	}
+	return apiErr
 }
 
-func writeAssetError(w http.ResponseWriter, err error, fallbackCode, fallbackMessage string) {
+func writeAssetError(w http.ResponseWriter, err error, fallbackCode, fallbackReason string) {
 	var apiErr *assetAPIError
 	if errors.As(err, &apiErr) {
-		adminError(w, apiErr.status, apiErr.code, apiErr.message, nil)
+		adminError(w, apiErr.status, apiErr.code, apiErr.reason, apiErr.params, apiErr.detail)
 		return
 	}
-	adminError(w, http.StatusInternalServerError, fallbackCode, fallbackMessage, nil)
+	adminError(w, http.StatusInternalServerError, fallbackCode, fallbackReason, nil)
 }
 
 type rowQuerier interface {
@@ -104,7 +109,7 @@ type rowQuerier interface {
 func normalizeAssetSpec(raw json.RawMessage) (asset.PromptSpec, []byte, error) {
 	spec, err := asset.ParsePromptSpec(raw)
 	if err != nil {
-		return spec, nil, assetError(http.StatusBadRequest, "PROMPT_SPEC_INVALID", err.Error())
+		return spec, nil, assetError(http.StatusBadRequest, "PROMPT_SPEC_INVALID", "promptSpecInvalid")
 	}
 	canonical, err := json.Marshal(spec)
 	if err != nil {
@@ -121,12 +126,12 @@ func normalizeTypedAssetSpec(assetType string, raw json.RawMessage) ([]byte, str
 	case "agent":
 		spec, err := asset.ParseAgentSpec(raw)
 		if err != nil {
-			return nil, "", assetError(http.StatusBadRequest, "AGENT_SPEC_INVALID", err.Error())
+			return nil, "", assetError(http.StatusBadRequest, "AGENT_SPEC_INVALID", "agentSpecInvalid")
 		}
 		canonical, err := json.Marshal(spec)
 		return canonical, spec.ModelServiceID, err
 	default:
-		return nil, "", assetError(http.StatusBadRequest, "ASSET_TYPE_INVALID", "资产类型仅支持 prompt_template、agent")
+		return nil, "", assetError(http.StatusBadRequest, "ASSET_TYPE_INVALID", "asset-types-support-only-prompt-template")
 	}
 }
 
@@ -144,7 +149,7 @@ func validateAssetModelService(ctx context.Context, q rowQuerier, organizationID
 		return err
 	}
 	if !exists {
-		return assetError(http.StatusBadRequest, "ASSET_MODEL_SERVICE_NOT_FOUND", "绑定的模型服务不存在或不属于当前组织")
+		return assetError(http.StatusBadRequest, "ASSET_MODEL_SERVICE_NOT_FOUND", "the-bound-model-service-does-not")
 	}
 	return nil
 }
@@ -155,7 +160,7 @@ func validateTypedAssetReferences(ctx context.Context, q rowQuerier, organizatio
 	}
 	spec, err := asset.ParseAgentSpec(raw)
 	if err != nil {
-		return assetError(http.StatusBadRequest, "AGENT_SPEC_INVALID", err.Error())
+		return assetError(http.StatusBadRequest, "AGENT_SPEC_INVALID", "agentSpecInvalid")
 	}
 	var exists bool
 	promptID, _ := uuid.Parse(spec.PromptTemplateID)
@@ -171,7 +176,7 @@ func validateTypedAssetReferences(ctx context.Context, q rowQuerier, organizatio
 		return err
 	}
 	if !exists {
-		return assetError(http.StatusBadRequest, "AGENT_PROMPT_VERSION_NOT_FOUND", "引用的提示词版本不存在、已归档或不属于当前组织")
+		return assetError(http.StatusBadRequest, "AGENT_PROMPT_VERSION_NOT_FOUND", "the-referenced-prompt-version-does-not")
 	}
 	return nil
 }
@@ -180,13 +185,13 @@ func validateAssetMetadata(name, description string) (string, string, error) {
 	name = strings.TrimSpace(name)
 	description = strings.TrimSpace(description)
 	if name == "" {
-		return "", "", assetError(http.StatusBadRequest, "ASSET_NAME_REQUIRED", "请填写资产名称")
+		return "", "", assetError(http.StatusBadRequest, "ASSET_NAME_REQUIRED", "enter-an-asset-name")
 	}
 	if len([]rune(name)) > 120 {
-		return "", "", assetError(http.StatusBadRequest, "ASSET_NAME_TOO_LONG", "资产名称不能超过 120 字符")
+		return "", "", assetError(http.StatusBadRequest, "ASSET_NAME_TOO_LONG", "asset-name-cannot-exceed-120-characters")
 	}
 	if len([]rune(description)) > 2000 {
-		return "", "", assetError(http.StatusBadRequest, "ASSET_DESCRIPTION_TOO_LONG", "资产描述不能超过 2000 字符")
+		return "", "", assetError(http.StatusBadRequest, "ASSET_DESCRIPTION_TOO_LONG", "asset-description-cannot-exceed-2000-characters")
 	}
 	return name, description, nil
 }
@@ -194,7 +199,7 @@ func validateAssetMetadata(name, description string) (string, string, error) {
 func parseAssetID(r *http.Request) (uuid.UUID, error) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		return uuid.Nil, assetError(http.StatusBadRequest, "ASSET_ID_INVALID", "资产 ID 不合法")
+		return uuid.Nil, assetError(http.StatusBadRequest, "ASSET_ID_INVALID", "invalid-asset-id")
 	}
 	return id, nil
 }
@@ -206,7 +211,7 @@ func (d ServerDeps) Assets(w http.ResponseWriter, r *http.Request) {
 	}
 	assetType := r.URL.Query().Get("type")
 	if assetType != "" && assetType != "prompt_template" && assetType != "agent" {
-		adminError(w, http.StatusBadRequest, "ASSET_TYPE_INVALID", "资产类型仅支持 prompt_template、agent", nil)
+		adminError(w, http.StatusBadRequest, "ASSET_TYPE_INVALID", "asset-types-support-only-prompt-template", nil)
 		return
 	}
 	rows, err := d.Pool.Query(r.Context(), `
@@ -219,7 +224,7 @@ func (d ServerDeps) Assets(w http.ResponseWriter, r *http.Request) {
 		ORDER BY a.updated_at DESC
 	`, principal.OrganizationID, assetType)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "ASSET_LIST_FAILED", "无法查询资产", nil)
+		adminError(w, http.StatusInternalServerError, "ASSET_LIST_FAILED", "failed-to-query-assets", nil)
 		return
 	}
 	defer rows.Close()
@@ -227,7 +232,7 @@ func (d ServerDeps) Assets(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		item, err := scanAssetResponse(rows.Scan)
 		if err != nil {
-			adminError(w, http.StatusInternalServerError, "ASSET_LIST_FAILED", "无法读取资产", nil)
+			adminError(w, http.StatusInternalServerError, "ASSET_LIST_FAILED", "failed-to-read-assets", nil)
 			return
 		}
 		list = append(list, item)
@@ -260,7 +265,7 @@ func (d ServerDeps) AssetDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	assetID, err := parseAssetID(r)
 	if err != nil {
-		writeAssetError(w, err, "ASSET_ID_INVALID", "资产 ID 不合法")
+		writeAssetError(w, err, "ASSET_ID_INVALID", "invalid-asset-id")
 		return
 	}
 	var detail assetDetailResponse
@@ -278,11 +283,11 @@ func (d ServerDeps) AssetDetail(w http.ResponseWriter, r *http.Request) {
 		&detail.OwnerEmail, &detail.Status, &detail.LatestVersion, &currentID, &detail.CurrentVersion,
 		&detail.CreatedAt, &detail.UpdatedAt, &detail.Spec)
 	if errors.Is(err, pgx.ErrNoRows) {
-		adminError(w, http.StatusNotFound, "ASSET_NOT_FOUND", "资产不存在或不属于当前组织", nil)
+		adminError(w, http.StatusNotFound, "ASSET_NOT_FOUND", "asset-does-not-exist-or-does", nil)
 		return
 	}
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "ASSET_DETAIL_FAILED", "无法查询资产详情", nil)
+		adminError(w, http.StatusInternalServerError, "ASSET_DETAIL_FAILED", "failed-to-query-asset-details", nil)
 		return
 	}
 	detail.ID = baseID.String()
@@ -303,7 +308,7 @@ func (d ServerDeps) AssetDetail(w http.ResponseWriter, r *http.Request) {
 		ORDER BY v.version DESC
 	`, assetID, principal.OrganizationID)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "ASSET_VERSION_LIST_FAILED", "无法查询资产版本", nil)
+		adminError(w, http.StatusInternalServerError, "ASSET_VERSION_LIST_FAILED", "failed-to-query-asset-versions", nil)
 		return
 	}
 	defer rows.Close()
@@ -312,7 +317,7 @@ func (d ServerDeps) AssetDetail(w http.ResponseWriter, r *http.Request) {
 		var versionID, sourceID *uuid.UUID
 		if err := rows.Scan(&versionID, &item.Version, &sourceID, &item.CreatedByEmail, &item.CreatedAt,
 			&item.PublishedByEmail, &item.PublishedAt, &item.Current); err != nil {
-			adminError(w, http.StatusInternalServerError, "ASSET_VERSION_LIST_FAILED", "无法读取资产版本", nil)
+			adminError(w, http.StatusInternalServerError, "ASSET_VERSION_LIST_FAILED", "failed-to-read-asset-versions", nil)
 			return
 		}
 		if versionID != nil {
@@ -338,7 +343,7 @@ func (d ServerDeps) CreateAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	name, description, err := validateAssetMetadata(body.Name, body.Description)
 	if err != nil {
-		writeAssetError(w, err, "ASSET_CREATE_FAILED", "创建资产失败")
+		writeAssetError(w, err, "ASSET_CREATE_FAILED", "create-asset-failed")
 		return
 	}
 	assetType := body.AssetType
@@ -347,15 +352,15 @@ func (d ServerDeps) CreateAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	canonical, modelServiceID, err := normalizeTypedAssetSpec(assetType, body.Spec)
 	if err != nil {
-		writeAssetError(w, err, "ASSET_CREATE_FAILED", "创建资产失败")
+		writeAssetError(w, err, "ASSET_CREATE_FAILED", "create-asset-failed")
 		return
 	}
 	if err := validateAssetModelService(r.Context(), d.Pool, principal.OrganizationID, modelServiceID); err != nil {
-		writeAssetError(w, err, "ASSET_CREATE_FAILED", "创建资产失败")
+		writeAssetError(w, err, "ASSET_CREATE_FAILED", "create-asset-failed")
 		return
 	}
 	if err := validateTypedAssetReferences(r.Context(), d.Pool, principal.OrganizationID, assetType, canonical); err != nil {
-		writeAssetError(w, err, "ASSET_CREATE_FAILED", "创建资产失败")
+		writeAssetError(w, err, "ASSET_CREATE_FAILED", "create-asset-failed")
 		return
 	}
 	assetID, versionID := uuid.New(), uuid.New()
@@ -383,10 +388,10 @@ func (d ServerDeps) CreateAsset(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.ConstraintName == "assets_organization_id_asset_type_name_key" {
-			adminError(w, http.StatusConflict, "ASSET_NAME_EXISTS", "当前类型下已存在同名资产", nil)
+			adminError(w, http.StatusConflict, "ASSET_NAME_EXISTS", "an-asset-with-the-same-name", nil)
 			return
 		}
-		writeAssetError(w, err, "ASSET_CREATE_FAILED", "创建资产失败")
+		writeAssetError(w, err, "ASSET_CREATE_FAILED", "create-asset-failed")
 		return
 	}
 	adminOK(w, map[string]any{"id": assetID.String(), "version_id": versionID.String(), "version": 1})
@@ -399,7 +404,7 @@ func (d ServerDeps) UpdateAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	assetID, err := parseAssetID(r)
 	if err != nil {
-		writeAssetError(w, err, "ASSET_UPDATE_FAILED", "更新资产失败")
+		writeAssetError(w, err, "ASSET_UPDATE_FAILED", "update-asset-failed")
 		return
 	}
 	var body updateAssetRequest
@@ -408,30 +413,30 @@ func (d ServerDeps) UpdateAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	name, description, err := validateAssetMetadata(body.Name, body.Description)
 	if err != nil {
-		writeAssetError(w, err, "ASSET_UPDATE_FAILED", "更新资产失败")
+		writeAssetError(w, err, "ASSET_UPDATE_FAILED", "update-asset-failed")
 		return
 	}
 	var assetType string
 	err = d.Pool.QueryRow(r.Context(), `SELECT asset_type FROM assets WHERE id = $1 AND organization_id = $2`, assetID, principal.OrganizationID).Scan(&assetType)
 	if errors.Is(err, pgx.ErrNoRows) {
-		adminError(w, http.StatusNotFound, "ASSET_NOT_FOUND", "资产不存在或不属于当前组织", nil)
+		adminError(w, http.StatusNotFound, "ASSET_NOT_FOUND", "asset-does-not-exist-or-does", nil)
 		return
 	}
 	if err != nil {
-		writeAssetError(w, err, "ASSET_UPDATE_FAILED", "更新资产失败")
+		writeAssetError(w, err, "ASSET_UPDATE_FAILED", "update-asset-failed")
 		return
 	}
 	canonical, modelServiceID, err := normalizeTypedAssetSpec(assetType, body.Spec)
 	if err != nil {
-		writeAssetError(w, err, "ASSET_UPDATE_FAILED", "更新资产失败")
+		writeAssetError(w, err, "ASSET_UPDATE_FAILED", "update-asset-failed")
 		return
 	}
 	if err := validateAssetModelService(r.Context(), d.Pool, principal.OrganizationID, modelServiceID); err != nil {
-		writeAssetError(w, err, "ASSET_UPDATE_FAILED", "更新资产失败")
+		writeAssetError(w, err, "ASSET_UPDATE_FAILED", "update-asset-failed")
 		return
 	}
 	if err := validateTypedAssetReferences(r.Context(), d.Pool, principal.OrganizationID, assetType, canonical); err != nil {
-		writeAssetError(w, err, "ASSET_UPDATE_FAILED", "更新资产失败")
+		writeAssetError(w, err, "ASSET_UPDATE_FAILED", "update-asset-failed")
 		return
 	}
 	versionID := uuid.New()
@@ -448,16 +453,16 @@ func (d ServerDeps) UpdateAsset(w http.ResponseWriter, r *http.Request) {
 			FOR UPDATE OF a
 		`, assetID, principal.OrganizationID).Scan(&status, &oldName, &latestVersion, &latestVersionID)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return assetError(http.StatusNotFound, "ASSET_NOT_FOUND", "资产不存在或不属于当前组织")
+			return assetError(http.StatusNotFound, "ASSET_NOT_FOUND", "asset-does-not-exist-or-does")
 		}
 		if err != nil {
 			return err
 		}
 		if status == "archived" {
-			return assetError(http.StatusConflict, "ASSET_ARCHIVED", "已归档资产不能编辑")
+			return assetError(http.StatusConflict, "ASSET_ARCHIVED", "archived-assets-cannot-be-edited")
 		}
 		if body.ExpectedVersion != latestVersion {
-			return assetError(http.StatusConflict, "ASSET_VERSION_CONFLICT", fmt.Sprintf("资产已更新到 v%d,请刷新后再保存", latestVersion))
+			return assetError(http.StatusConflict, "ASSET_VERSION_CONFLICT", "assetVersionConflictSave", map[string]any{"version": latestVersion})
 		}
 		newVersion = latestVersion + 1
 		if _, err := tx.Exec(r.Context(), `
@@ -481,7 +486,7 @@ func (d ServerDeps) UpdateAsset(w http.ResponseWriter, r *http.Request) {
 		return err
 	})
 	if err != nil {
-		writeAssetError(w, err, "ASSET_UPDATE_FAILED", "更新资产失败")
+		writeAssetError(w, err, "ASSET_UPDATE_FAILED", "update-asset-failed")
 		return
 	}
 	adminOK(w, map[string]any{"version_id": versionID.String(), "version": newVersion})
@@ -494,7 +499,7 @@ func (d ServerDeps) PublishAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	assetID, err := parseAssetID(r)
 	if err != nil {
-		writeAssetError(w, err, "ASSET_PUBLISH_FAILED", "发布资产失败")
+		writeAssetError(w, err, "ASSET_PUBLISH_FAILED", "publish-asset-failed")
 		return
 	}
 	var body assetVersionRequest
@@ -503,7 +508,7 @@ func (d ServerDeps) PublishAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	versionID, parseErr := uuid.Parse(body.VersionID)
 	if parseErr != nil {
-		adminError(w, http.StatusBadRequest, "ASSET_VERSION_ID_INVALID", "版本 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "ASSET_VERSION_ID_INVALID", "invalid-version-id", nil)
 		return
 	}
 	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
@@ -518,13 +523,13 @@ func (d ServerDeps) PublishAsset(w http.ResponseWriter, r *http.Request) {
 			FOR UPDATE OF a
 		`, assetID, principal.OrganizationID).Scan(&status, &latestVersion, &currentID, &oldCurrentVersion)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return assetError(http.StatusNotFound, "ASSET_NOT_FOUND", "资产不存在或不属于当前组织")
+			return assetError(http.StatusNotFound, "ASSET_NOT_FOUND", "asset-does-not-exist-or-does")
 		}
 		if err != nil {
 			return err
 		}
 		if status == "archived" {
-			return assetError(http.StatusConflict, "ASSET_ARCHIVED", "已归档资产不能发布")
+			return assetError(http.StatusConflict, "ASSET_ARCHIVED", "archived-assets-cannot-be-published")
 		}
 		var targetVersion int
 		var publishedAt *time.Time
@@ -532,15 +537,15 @@ func (d ServerDeps) PublishAsset(w http.ResponseWriter, r *http.Request) {
 			SELECT version, published_at FROM asset_versions
 			WHERE id = $1 AND asset_id = $2 FOR UPDATE
 		`, versionID, assetID).Scan(&targetVersion, &publishedAt); errors.Is(err, pgx.ErrNoRows) {
-			return assetError(http.StatusNotFound, "ASSET_VERSION_NOT_FOUND", "版本不存在")
+			return assetError(http.StatusNotFound, "ASSET_VERSION_NOT_FOUND", "version-does-not-exist")
 		} else if err != nil {
 			return err
 		}
 		if latestVersion == nil || targetVersion != *latestVersion {
-			return assetError(http.StatusConflict, "ASSET_NOT_LATEST_VERSION", "只能发布最新草稿版本")
+			return assetError(http.StatusConflict, "ASSET_NOT_LATEST_VERSION", "only-the-latest-draft-version-can")
 		}
 		if publishedAt != nil {
-			return assetError(http.StatusConflict, "ASSET_VERSION_ALREADY_PUBLISHED", "该版本已发布;历史版本请使用回滚生成新版本")
+			return assetError(http.StatusConflict, "ASSET_VERSION_ALREADY_PUBLISHED", "this-version-is-already-published-roll")
 		}
 		if _, err := tx.Exec(r.Context(), `
 			UPDATE asset_versions SET published_by = $3, published_at = now()
@@ -563,7 +568,7 @@ func (d ServerDeps) PublishAsset(w http.ResponseWriter, r *http.Request) {
 		return err
 	})
 	if err != nil {
-		writeAssetError(w, err, "ASSET_PUBLISH_FAILED", "发布资产失败")
+		writeAssetError(w, err, "ASSET_PUBLISH_FAILED", "publish-asset-failed")
 		return
 	}
 	adminOK(w, map[string]any{"version_id": versionID.String()})
@@ -576,7 +581,7 @@ func (d ServerDeps) RollbackAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	assetID, err := parseAssetID(r)
 	if err != nil {
-		writeAssetError(w, err, "ASSET_ROLLBACK_FAILED", "回滚资产失败")
+		writeAssetError(w, err, "ASSET_ROLLBACK_FAILED", "rollback-asset-failed")
 		return
 	}
 	var body rollbackAssetRequest
@@ -585,7 +590,7 @@ func (d ServerDeps) RollbackAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	sourceID, parseErr := uuid.Parse(body.VersionID)
 	if parseErr != nil {
-		adminError(w, http.StatusBadRequest, "ASSET_VERSION_ID_INVALID", "版本 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "ASSET_VERSION_ID_INVALID", "invalid-version-id", nil)
 		return
 	}
 	newVersionID := uuid.New()
@@ -598,16 +603,16 @@ func (d ServerDeps) RollbackAsset(w http.ResponseWriter, r *http.Request) {
 			WHERE id = $1 AND organization_id = $2 FOR UPDATE
 		`, assetID, principal.OrganizationID).Scan(&status, &latestVersion)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return assetError(http.StatusNotFound, "ASSET_NOT_FOUND", "资产不存在或不属于当前组织")
+			return assetError(http.StatusNotFound, "ASSET_NOT_FOUND", "asset-does-not-exist-or-does")
 		}
 		if err != nil {
 			return err
 		}
 		if status == "archived" {
-			return assetError(http.StatusConflict, "ASSET_ARCHIVED", "已归档资产不能回滚")
+			return assetError(http.StatusConflict, "ASSET_ARCHIVED", "archived-assets-cannot-be-rolled-back")
 		}
 		if body.ExpectedVersion != latestVersion {
-			return assetError(http.StatusConflict, "ASSET_VERSION_CONFLICT", fmt.Sprintf("资产已更新到 v%d,请刷新后再回滚", latestVersion))
+			return assetError(http.StatusConflict, "ASSET_VERSION_CONFLICT", "assetVersionConflictRollback", map[string]any{"version": latestVersion})
 		}
 		var sourceVersion int
 		var spec json.RawMessage
@@ -615,12 +620,12 @@ func (d ServerDeps) RollbackAsset(w http.ResponseWriter, r *http.Request) {
 		if err := tx.QueryRow(r.Context(), `
 			SELECT version, spec, published_at FROM asset_versions WHERE id = $1 AND asset_id = $2
 		`, sourceID, assetID).Scan(&sourceVersion, &spec, &publishedAt); errors.Is(err, pgx.ErrNoRows) {
-			return assetError(http.StatusNotFound, "ASSET_VERSION_NOT_FOUND", "版本不存在")
+			return assetError(http.StatusNotFound, "ASSET_VERSION_NOT_FOUND", "version-does-not-exist")
 		} else if err != nil {
 			return err
 		}
 		if publishedAt == nil {
-			return assetError(http.StatusConflict, "ASSET_VERSION_NOT_PUBLISHED", "只能回滚到已发布的历史版本")
+			return assetError(http.StatusConflict, "ASSET_VERSION_NOT_PUBLISHED", "only-published-historical-versions-can-be")
 		}
 		newVersion = latestVersion + 1
 		if _, err := tx.Exec(r.Context(), `
@@ -644,7 +649,7 @@ func (d ServerDeps) RollbackAsset(w http.ResponseWriter, r *http.Request) {
 		return err
 	})
 	if err != nil {
-		writeAssetError(w, err, "ASSET_ROLLBACK_FAILED", "回滚资产失败")
+		writeAssetError(w, err, "ASSET_ROLLBACK_FAILED", "rollback-asset-failed")
 		return
 	}
 	adminOK(w, map[string]any{"version_id": newVersionID.String(), "version": newVersion})
@@ -657,7 +662,7 @@ func (d ServerDeps) UpdateAssetStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	assetID, err := parseAssetID(r)
 	if err != nil {
-		writeAssetError(w, err, "ASSET_STATUS_FAILED", "更新资产状态失败")
+		writeAssetError(w, err, "ASSET_STATUS_FAILED", "update-asset-status-failed")
 		return
 	}
 	var body updateAssetStatusRequest
@@ -667,7 +672,7 @@ func (d ServerDeps) UpdateAssetStatus(w http.ResponseWriter, r *http.Request) {
 	switch body.Status {
 	case "published", "disabled", "archived":
 	default:
-		adminError(w, http.StatusBadRequest, "ASSET_STATUS_INVALID", "状态仅支持 published、disabled、archived", nil)
+		adminError(w, http.StatusBadRequest, "ASSET_STATUS_INVALID", "status-supports-only-published-disabled-or", nil)
 		return
 	}
 	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
@@ -678,16 +683,16 @@ func (d ServerDeps) UpdateAssetStatus(w http.ResponseWriter, r *http.Request) {
 			WHERE id = $1 AND organization_id = $2 FOR UPDATE
 		`, assetID, principal.OrganizationID).Scan(&oldStatus, &currentVersionID)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return assetError(http.StatusNotFound, "ASSET_NOT_FOUND", "资产不存在或不属于当前组织")
+			return assetError(http.StatusNotFound, "ASSET_NOT_FOUND", "asset-does-not-exist-or-does")
 		}
 		if err != nil {
 			return err
 		}
 		if oldStatus == "archived" {
-			return assetError(http.StatusConflict, "ASSET_ARCHIVED", "已归档资产不能变更状态")
+			return assetError(http.StatusConflict, "ASSET_ARCHIVED", "archived-assets-cannot-change-status")
 		}
 		if body.Status == "published" && currentVersionID == nil {
-			return assetError(http.StatusConflict, "ASSET_NOT_PUBLISHED", "没有可启用的已发布版本")
+			return assetError(http.StatusConflict, "ASSET_NOT_PUBLISHED", "there-is-no-published-version-to")
 		}
 		if _, err := tx.Exec(r.Context(), `
 			UPDATE assets SET status = $3, updated_at = now()
@@ -703,7 +708,7 @@ func (d ServerDeps) UpdateAssetStatus(w http.ResponseWriter, r *http.Request) {
 		return err
 	})
 	if err != nil {
-		writeAssetError(w, err, "ASSET_STATUS_FAILED", "更新资产状态失败")
+		writeAssetError(w, err, "ASSET_STATUS_FAILED", "update-asset-status-failed")
 		return
 	}
 	adminOK(w, nil)

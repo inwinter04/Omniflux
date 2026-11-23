@@ -34,6 +34,12 @@ func TestIntegrationProviderModelsAndStatus(t *testing.T) {
 	if len(models) != 2 || models[0].(map[string]any)["id"] != "model-a" || models[1].(map[string]any)["id"] != "model-b" {
 		t.Fatalf("discovered models = %#v", models)
 	}
+	code, body = doJSON(t, admin, http.MethodPost, "/api/v1/provider-accounts/"+accountID+"/test", nil)
+	assertAssetStatus(t, code, body, http.StatusOK)
+	testResult := assetDataMap(t, body)
+	if testResult["ok"] != true || testResult["reason"] != "connected" || testResult["status_code"].(float64) != http.StatusOK {
+		t.Fatalf("provider test result = %#v", testResult)
+	}
 	code, body = doJSON(t, admin, http.MethodPatch, "/api/v1/provider-accounts/"+accountID+"/status", map[string]any{"status": "disabled"})
 	assertAssetStatus(t, code, body, http.StatusOK)
 	code, body = doJSON(t, admin, http.MethodPost, "/api/v1/model-services", map[string]any{
@@ -62,7 +68,7 @@ func TestIntegrationProviderModelsAndStatus(t *testing.T) {
 	code, body = doJSON(t, admin, http.MethodGet, "/api/v1/provider-catalog", nil)
 	assertAssetStatus(t, code, body, http.StatusOK)
 	groups := body["data"].([]any)
-	if groups[0].(map[string]any)["label"] != "模型厂商" {
+	if groups[0].(map[string]any)["group"] != "cn" {
 		t.Fatalf("catalog groups = %#v", groups)
 	}
 	var kimiGlobal map[string]any
@@ -74,7 +80,7 @@ func TestIntegrationProviderModelsAndStatus(t *testing.T) {
 			}
 		}
 	}
-	if kimiGlobal == nil || kimiGlobal["family_id"] != "kimi" || kimiGlobal["version_label"] != "标准 API · 国际站" {
+	if kimiGlobal == nil || kimiGlobal["family_id"] != "kimi" || kimiGlobal["version_kind"] != "standard" || kimiGlobal["region_kind"] != "global" {
 		t.Fatalf("kimi global presentation = %#v", kimiGlobal)
 	}
 	code, body = doJSON(t, admin, http.MethodPost, "/api/v1/route-policies", map[string]any{"name": "状态策略"})

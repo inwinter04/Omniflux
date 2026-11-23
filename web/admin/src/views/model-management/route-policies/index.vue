@@ -3,6 +3,7 @@ import { h, onMounted, reactive, ref, computed } from 'vue';
 import { NButton, NPopconfirm, NSpace, NTag } from 'naive-ui';
 import type { DataTableColumns, FormInst, FormRules, SelectOption } from 'naive-ui';
 import { formatTime, statusTagType, statusText } from '@/utils/admin-status';
+import { providerGroupLabel } from '@/utils/provider-catalog';
 import {
   fetchCreateRoutePolicy,
   fetchDeleteRoutePolicy,
@@ -44,7 +45,7 @@ async function loadCatalog() {
     if (group.group === 'custom') continue;
     options.push({
       type: 'group',
-      label: group.label,
+      label: providerGroupLabel(group),
       key: group.group,
       children: group.entries.map(entry => ({
         label: entry.name,

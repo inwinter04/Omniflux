@@ -10,7 +10,7 @@ import (
 // requireAdmin 校验当前 principal 至少是 org_admin;不足时写出 403。
 func (d ServerDeps) requireAdmin(w http.ResponseWriter, principal auth.Principal) error {
 	if err := auth.RequireRole(principal, "org_admin"); err != nil {
-		adminError(w, http.StatusForbidden, "PERMISSION_DENIED", "需要组织管理员权限", nil)
+		adminError(w, http.StatusForbidden, "PERMISSION_DENIED", "organization-admin-permission-is-required", nil)
 		return err
 	}
 	return nil
@@ -19,7 +19,7 @@ func (d ServerDeps) requireAdmin(w http.ResponseWriter, principal auth.Principal
 // requireViewer 校验至少是 viewer,用于只读接口。
 func (d ServerDeps) requireViewer(w http.ResponseWriter, principal auth.Principal) error {
 	if err := auth.RequireRole(principal, "viewer"); err != nil {
-		adminError(w, http.StatusForbidden, "PERMISSION_DENIED", "需要至少查看者权限", nil)
+		adminError(w, http.StatusForbidden, "PERMISSION_DENIED", "at-least-viewer-permission-is-required", nil)
 		return err
 	}
 	return nil
@@ -28,7 +28,7 @@ func (d ServerDeps) requireViewer(w http.ResponseWriter, principal auth.Principa
 // requireProjectAdmin 校验至少是 project_admin,用于业务资源写接口。
 func (d ServerDeps) requireProjectAdmin(w http.ResponseWriter, principal auth.Principal) error {
 	if err := auth.RequireRole(principal, "project_admin"); err != nil {
-		adminError(w, http.StatusForbidden, "PERMISSION_DENIED", "需要项目管理员权限", nil)
+		adminError(w, http.StatusForbidden, "PERMISSION_DENIED", "project-admin-permission-is-required", nil)
 		return err
 	}
 	return nil
@@ -37,7 +37,7 @@ func (d ServerDeps) requireProjectAdmin(w http.ResponseWriter, principal auth.Pr
 // requireOwner 校验至少是 org_owner,用于用户管理等最高权限接口。
 func (d ServerDeps) requireOwner(w http.ResponseWriter, principal auth.Principal) error {
 	if err := auth.RequireRole(principal, "org_owner"); err != nil {
-		adminError(w, http.StatusForbidden, "PERMISSION_DENIED", "需要组织所有者权限", nil)
+		adminError(w, http.StatusForbidden, "PERMISSION_DENIED", "organization-owner-permission-is-required", nil)
 		return err
 	}
 	return nil
@@ -48,7 +48,7 @@ func (d ServerDeps) decodeJSON(w http.ResponseWriter, r *http.Request, target an
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024*1024))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
-		adminError(w, http.StatusBadRequest, "INVALID_REQUEST", "请求体格式不正确: "+err.Error(), nil)
+		adminError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid-request-body", nil, err.Error())
 		return false
 	}
 	return true

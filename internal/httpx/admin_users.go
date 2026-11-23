@@ -66,7 +66,7 @@ func (d ServerDeps) Users(w http.ResponseWriter, r *http.Request) {
 		if orgParam := r.URL.Query().Get("organization_id"); orgParam != "" {
 			parsed, err := uuid.Parse(orgParam)
 			if err != nil {
-				adminError(w, http.StatusBadRequest, "USER_ORG_INVALID", "organization_id 不合法", nil)
+				adminError(w, http.StatusBadRequest, "USER_ORG_INVALID", "invalid-organization-id-t4rbtt", nil)
 				return
 			}
 			listOrgID = parsed
@@ -77,7 +77,7 @@ func (d ServerDeps) Users(w http.ResponseWriter, r *http.Request) {
 		FROM users WHERE organization_id = $1 ORDER BY created_at ASC
 	`, listOrgID)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "USER_LIST_FAILED", "无法查询用户", nil)
+		adminError(w, http.StatusInternalServerError, "USER_LIST_FAILED", "failed-to-query-users", nil)
 		return
 	}
 	defer rows.Close()
@@ -87,18 +87,18 @@ func (d ServerDeps) Users(w http.ResponseWriter, r *http.Request) {
 		var id uuid.UUID
 		var lastLoginSrc, createdSrc any
 		if err := rows.Scan(&id, &item.Email, &item.Role, &item.Status, &lastLoginSrc, &createdSrc); err != nil {
-			adminError(w, http.StatusInternalServerError, "USER_LIST_FAILED", "无法查询用户", nil)
+			adminError(w, http.StatusInternalServerError, "USER_LIST_FAILED", "failed-to-query-users", nil)
 			return
 		}
 		item.ID = id.String()
 		lastLogin, err := timeStringPtr(lastLoginSrc)
 		if err != nil {
-			adminError(w, http.StatusInternalServerError, "USER_LIST_FAILED", "无法查询用户", nil)
+			adminError(w, http.StatusInternalServerError, "USER_LIST_FAILED", "failed-to-query-users", nil)
 			return
 		}
 		created, err := timeStringPtr(createdSrc)
 		if err != nil {
-			adminError(w, http.StatusInternalServerError, "USER_LIST_FAILED", "无法查询用户", nil)
+			adminError(w, http.StatusInternalServerError, "USER_LIST_FAILED", "failed-to-query-users", nil)
 			return
 		}
 		item.LastUsedAt = lastLogin
@@ -120,53 +120,53 @@ func (d ServerDeps) CreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	email := strings.ToLower(strings.TrimSpace(body.Email))
 	if email == "" || !strings.Contains(email, "@") {
-		adminError(w, http.StatusBadRequest, "USER_EMAIL_INVALID", "邮箱格式不正确", nil)
+		adminError(w, http.StatusBadRequest, "USER_EMAIL_INVALID", "invalid-email-format", nil)
 		return
 	}
 	if len(body.Password) < 16 {
-		adminError(w, http.StatusBadRequest, "USER_PASSWORD_WEAK", "密码至少 16 个字符", nil)
+		adminError(w, http.StatusBadRequest, "USER_PASSWORD_WEAK", "password-must-be-at-least-16", nil)
 		return
 	}
 	body.Role = strings.TrimSpace(body.Role)
 	if !assignableRoles[body.Role] {
-		adminError(w, http.StatusBadRequest, "USER_ROLE_INVALID", "角色仅支持 org_admin/project_admin/developer/viewer", nil)
+		adminError(w, http.StatusBadRequest, "USER_ROLE_INVALID", "roles-support-only-org-admin-project", nil)
 		return
 	}
 	// platform_admin 可把新用户直接归属到任意组织;其余角色只能在当前组织创建。
 	targetOrgID := principal.OrganizationID
 	if body.OrganizationID != "" {
 		if !isPlatformAdmin(principal) {
-			adminError(w, http.StatusForbidden, "PERMISSION_DENIED", "仅平台管理员可指定用户归属组织", nil)
+			adminError(w, http.StatusForbidden, "PERMISSION_DENIED", "only-platform-admins-can-assign-a", nil)
 			return
 		}
 		parsed, err := uuid.Parse(body.OrganizationID)
 		if err != nil {
-			adminError(w, http.StatusBadRequest, "USER_ORG_INVALID", "organization_id 不合法", nil)
+			adminError(w, http.StatusBadRequest, "USER_ORG_INVALID", "invalid-organization-id-t4rbtt", nil)
 			return
 		}
 		var orgCount int
 		if err := d.Pool.QueryRow(r.Context(), `SELECT count(*) FROM organizations WHERE id = $1`, parsed).Scan(&orgCount); err != nil {
-			adminError(w, http.StatusInternalServerError, "USER_CREATE_FAILED", "创建用户失败", nil)
+			adminError(w, http.StatusInternalServerError, "USER_CREATE_FAILED", "failed-to-create-the-user", nil)
 			return
 		}
 		if orgCount == 0 {
-			adminError(w, http.StatusBadRequest, "USER_ORG_NOT_FOUND", "目标组织不存在", nil)
+			adminError(w, http.StatusBadRequest, "USER_ORG_NOT_FOUND", "target-organization-does-not-exist", nil)
 			return
 		}
 		targetOrgID = parsed
 	}
 	var count int
 	if err := d.Pool.QueryRow(r.Context(), `SELECT count(*) FROM users WHERE email = $1`, email).Scan(&count); err != nil {
-		adminError(w, http.StatusInternalServerError, "USER_CREATE_FAILED", "创建用户失败", nil)
+		adminError(w, http.StatusInternalServerError, "USER_CREATE_FAILED", "failed-to-create-the-user", nil)
 		return
 	}
 	if count > 0 {
-		adminError(w, http.StatusConflict, "USER_EMAIL_EXISTS", "该邮箱已被注册", nil)
+		adminError(w, http.StatusConflict, "USER_EMAIL_EXISTS", "this-email-is-already-registered", nil)
 		return
 	}
 	hash, err := auth.HashPassword(body.Password)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "USER_CREATE_FAILED", "创建用户失败", nil)
+		adminError(w, http.StatusInternalServerError, "USER_CREATE_FAILED", "failed-to-create-the-user", nil)
 		return
 	}
 	userID := uuid.New()
@@ -174,7 +174,7 @@ func (d ServerDeps) CreateUser(w http.ResponseWriter, r *http.Request) {
 		INSERT INTO users(id, organization_id, email, password_hash, role)
 		VALUES ($1,$2,$3,$4,$5)
 	`, userID, targetOrgID, email, hash, body.Role); err != nil {
-		adminError(w, http.StatusInternalServerError, "USER_CREATE_FAILED", "创建用户失败", nil)
+		adminError(w, http.StatusInternalServerError, "USER_CREATE_FAILED", "failed-to-create-the-user", nil)
 		return
 	}
 	_, _ = d.Pool.Exec(r.Context(), `
@@ -196,38 +196,38 @@ func (d ServerDeps) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	userID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "USER_ID_INVALID", "用户 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "USER_ID_INVALID", "invalid-user-id", nil)
 		return
 	}
 	// platform_admin 可把用户移动到任意组织;其余角色不允许调整归属。
 	var targetOrgID *uuid.UUID
 	if body.OrganizationID != nil {
 		if !isPlatformAdmin(principal) {
-			adminError(w, http.StatusForbidden, "PERMISSION_DENIED", "仅平台管理员可调整用户归属组织", nil)
+			adminError(w, http.StatusForbidden, "PERMISSION_DENIED", "only-platform-admins-can-change-a", nil)
 			return
 		}
 		parsed, err := uuid.Parse(*body.OrganizationID)
 		if err != nil {
-			adminError(w, http.StatusBadRequest, "USER_ORG_INVALID", "organization_id 不合法", nil)
+			adminError(w, http.StatusBadRequest, "USER_ORG_INVALID", "invalid-organization-id-t4rbtt", nil)
 			return
 		}
 		var orgCount int
 		if err := d.Pool.QueryRow(r.Context(), `SELECT count(*) FROM organizations WHERE id = $1`, parsed).Scan(&orgCount); err != nil {
-			adminError(w, http.StatusInternalServerError, "USER_UPDATE_FAILED", "更新用户失败", nil)
+			adminError(w, http.StatusInternalServerError, "USER_UPDATE_FAILED", "failed-to-update-the-user", nil)
 			return
 		}
 		if orgCount == 0 {
-			adminError(w, http.StatusBadRequest, "USER_ORG_NOT_FOUND", "目标组织不存在", nil)
+			adminError(w, http.StatusBadRequest, "USER_ORG_NOT_FOUND", "target-organization-does-not-exist", nil)
 			return
 		}
 		targetOrgID = &parsed
 	}
 	if userID == principal.UserID && body.Status != nil && *body.Status != "active" {
-		adminError(w, http.StatusBadRequest, "USER_SELF_DISABLE", "不能禁用自己的账号", nil)
+		adminError(w, http.StatusBadRequest, "USER_SELF_DISABLE", "you-cannot-disable-your-own-account", nil)
 		return
 	}
 	if userID == principal.UserID && body.Role != nil {
-		adminError(w, http.StatusBadRequest, "USER_SELF_ROLE", "不能修改自己的角色", nil)
+		adminError(w, http.StatusBadRequest, "USER_SELF_ROLE", "you-cannot-change-your-own-role", nil)
 		return
 	}
 	var current struct {
@@ -245,34 +245,34 @@ func (d ServerDeps) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		`, userID, principal.OrganizationID).Scan(&current.Role, &current.Status, &current.OrgID)
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
-		adminError(w, http.StatusNotFound, "USER_NOT_FOUND", "用户不存在或不属于当前组织", nil)
+		adminError(w, http.StatusNotFound, "USER_NOT_FOUND", "user-does-not-exist-or-does", nil)
 		return
 	}
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "USER_UPDATE_FAILED", "更新用户失败", nil)
+		adminError(w, http.StatusInternalServerError, "USER_UPDATE_FAILED", "failed-to-update-the-user", nil)
 		return
 	}
 	if current.Role == "org_owner" && !isPlatformAdmin(principal) {
-		adminError(w, http.StatusForbidden, "USER_OWNER_PROTECTED", "组织所有者账号不可修改", nil)
+		adminError(w, http.StatusForbidden, "USER_OWNER_PROTECTED", "the-organization-owner-account-cannot-be", nil)
 		return
 	}
 	if body.Role != nil && !assignableRoles[*body.Role] {
-		adminError(w, http.StatusBadRequest, "USER_ROLE_INVALID", "角色仅支持 org_admin/project_admin/developer/viewer", nil)
+		adminError(w, http.StatusBadRequest, "USER_ROLE_INVALID", "roles-support-only-org-admin-project", nil)
 		return
 	}
 	if body.Status != nil && *body.Status != "active" && *body.Status != "disabled" {
-		adminError(w, http.StatusBadRequest, "USER_STATUS_INVALID", "status 仅支持 active 或 disabled", nil)
+		adminError(w, http.StatusBadRequest, "USER_STATUS_INVALID", "status-supports-only-active-or-disabled", nil)
 		return
 	}
 	if body.Password != nil && len(*body.Password) < 16 {
-		adminError(w, http.StatusBadRequest, "USER_PASSWORD_WEAK", "密码至少 16 个字符", nil)
+		adminError(w, http.StatusBadRequest, "USER_PASSWORD_WEAK", "password-must-be-at-least-16", nil)
 		return
 	}
 	var hash any
 	if body.Password != nil {
 		newHash, hashErr := auth.HashPassword(*body.Password)
 		if hashErr != nil {
-			adminError(w, http.StatusInternalServerError, "USER_UPDATE_FAILED", "更新用户失败", nil)
+			adminError(w, http.StatusInternalServerError, "USER_UPDATE_FAILED", "failed-to-update-the-user", nil)
 			return
 		}
 		hash = newHash
@@ -325,7 +325,7 @@ func (d ServerDeps) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		return err
 	})
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "USER_UPDATE_FAILED", "更新用户失败", nil)
+		adminError(w, http.StatusInternalServerError, "USER_UPDATE_FAILED", "failed-to-update-the-user", nil)
 		return
 	}
 	adminOK(w, nil)

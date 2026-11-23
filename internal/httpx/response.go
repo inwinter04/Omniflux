@@ -13,19 +13,25 @@ func JSON(w http.ResponseWriter, status int, body any) {
 }
 
 type AdminEnvelope struct {
-	Code string `json:"code"`
-	Msg  string `json:"msg"`
-	Data any    `json:"data,omitempty"`
+	Code   string         `json:"code"`
+	Reason string         `json:"reason,omitempty"`
+	Params map[string]any `json:"params,omitempty"`
+	Detail string         `json:"detail,omitempty"`
+	Data   any            `json:"data,omitempty"`
 }
 
 func adminOK(w http.ResponseWriter, data any) {
-	JSON(w, http.StatusOK, AdminEnvelope{Code: "0000", Msg: "ok", Data: data})
+	JSON(w, http.StatusOK, AdminEnvelope{Code: "0000", Data: data})
 }
 
-func adminError(w http.ResponseWriter, status int, code, message string, data any) {
-	JSON(w, status, AdminEnvelope{Code: code, Msg: message, Data: data})
+func adminError(w http.ResponseWriter, status int, code, reason string, params map[string]any, detail ...string) {
+	envelope := AdminEnvelope{Code: code, Reason: reason, Params: params}
+	if len(detail) > 0 {
+		envelope.Detail = detail[0]
+	}
+	JSON(w, status, envelope)
 }
 
-func adminFail(w http.ResponseWriter, status int, message string) {
-	adminError(w, status, fmt.Sprintf("%d", status), message, nil)
+func adminFail(w http.ResponseWriter, status int, reason string) {
+	adminError(w, status, fmt.Sprintf("%d", status), reason, nil)
 }

@@ -19,7 +19,7 @@ func parseResourceStatus(w http.ResponseWriter, r *http.Request, d ServerDeps) (
 		return "", false
 	}
 	if body.Status != "active" && body.Status != "disabled" {
-		adminError(w, http.StatusBadRequest, "RESOURCE_STATUS_INVALID", "状态仅支持启用或停用", nil)
+		adminError(w, http.StatusBadRequest, "RESOURCE_STATUS_INVALID", "status-supports-only-enabled-or-disabled", nil)
 		return "", false
 	}
 	return body.Status, true
@@ -32,7 +32,7 @@ func (d ServerDeps) UpdateProviderAccountStatus(w http.ResponseWriter, r *http.R
 	}
 	accountID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "PROVIDER_ID_INVALID", "账号 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "PROVIDER_ID_INVALID", "invalid-account-id", nil)
 		return
 	}
 	status, ok := parseResourceStatus(w, r, d)
@@ -42,11 +42,11 @@ func (d ServerDeps) UpdateProviderAccountStatus(w http.ResponseWriter, r *http.R
 	result, err := d.Pool.Exec(r.Context(), `UPDATE provider_accounts SET status = $3, updated_at = now() WHERE id = $1 AND organization_id = $2`,
 		accountID, principal.OrganizationID, status)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "PROVIDER_STATUS_FAILED", "更新账号状态失败", nil)
+		adminError(w, http.StatusInternalServerError, "PROVIDER_STATUS_FAILED", "failed-to-update-the-account-status", nil)
 		return
 	}
 	if result.RowsAffected() == 0 {
-		adminError(w, http.StatusNotFound, "PROVIDER_NOT_FOUND", "账号不存在或不属于当前组织", nil)
+		adminError(w, http.StatusNotFound, "PROVIDER_NOT_FOUND", "account-does-not-exist-or-does", nil)
 		return
 	}
 	_, _ = d.Pool.Exec(r.Context(), `
@@ -66,7 +66,7 @@ func (d ServerDeps) UpdateModelServiceStatus(w http.ResponseWriter, r *http.Requ
 	}
 	serviceID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "SERVICE_ID_INVALID", "模型服务 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "SERVICE_ID_INVALID", "invalid-model-service-id", nil)
 		return
 	}
 	status, ok := parseResourceStatus(w, r, d)
@@ -76,11 +76,11 @@ func (d ServerDeps) UpdateModelServiceStatus(w http.ResponseWriter, r *http.Requ
 	result, err := d.Pool.Exec(r.Context(), `UPDATE model_services SET status = $3, updated_at = now() WHERE id = $1 AND organization_id = $2`,
 		serviceID, principal.OrganizationID, status)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "SERVICE_STATUS_FAILED", "更新模型服务状态失败", nil)
+		adminError(w, http.StatusInternalServerError, "SERVICE_STATUS_FAILED", "failed-to-update-the-model-service-gd9ec9", nil)
 		return
 	}
 	if result.RowsAffected() == 0 {
-		adminError(w, http.StatusNotFound, "SERVICE_NOT_FOUND", "模型服务不存在或不属于当前组织", nil)
+		adminError(w, http.StatusNotFound, "SERVICE_NOT_FOUND", "model-service-does-not-exist-or", nil)
 		return
 	}
 	_, _ = d.Pool.Exec(r.Context(), `
@@ -97,7 +97,7 @@ func (d ServerDeps) UpdateModelCandidateStatus(w http.ResponseWriter, r *http.Re
 	}
 	candidateID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "CANDIDATE_ID_INVALID", "候选模型 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "CANDIDATE_ID_INVALID", "invalid-candidate-model-id", nil)
 		return
 	}
 	status, ok := parseResourceStatus(w, r, d)
@@ -110,11 +110,11 @@ func (d ServerDeps) UpdateModelCandidateStatus(w http.ResponseWriter, r *http.Re
 		)
 	`, candidateID, principal.OrganizationID, status)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "CANDIDATE_STATUS_FAILED", "更新候选模型状态失败", nil)
+		adminError(w, http.StatusInternalServerError, "CANDIDATE_STATUS_FAILED", "failed-to-update-the-candidate-model", nil)
 		return
 	}
 	if result.RowsAffected() == 0 {
-		adminError(w, http.StatusNotFound, "CANDIDATE_NOT_FOUND", "候选模型不存在或不属于当前组织", nil)
+		adminError(w, http.StatusNotFound, "CANDIDATE_NOT_FOUND", "candidate-model-does-not-exist-or", nil)
 		return
 	}
 	_, _ = d.Pool.Exec(r.Context(), `
@@ -131,7 +131,7 @@ func (d ServerDeps) UpdateProjectStatus(w http.ResponseWriter, r *http.Request) 
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "PROJECT_ID_INVALID", "项目 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "PROJECT_ID_INVALID", "invalid-project-id", nil)
 		return
 	}
 	status, ok := parseResourceStatus(w, r, d)
@@ -140,11 +140,11 @@ func (d ServerDeps) UpdateProjectStatus(w http.ResponseWriter, r *http.Request) 
 	}
 	result, err := d.Pool.Exec(r.Context(), `UPDATE projects SET status = $3, updated_at = now() WHERE id = $1 AND organization_id = $2`, id, principal.OrganizationID, status)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "PROJECT_STATUS_FAILED", "更新项目状态失败", nil)
+		adminError(w, http.StatusInternalServerError, "PROJECT_STATUS_FAILED", "failed-to-update-the-project-status", nil)
 		return
 	}
 	if result.RowsAffected() == 0 {
-		adminError(w, http.StatusNotFound, "PROJECT_NOT_FOUND", "项目不存在或不属于当前组织", nil)
+		adminError(w, http.StatusNotFound, "PROJECT_NOT_FOUND", "project-does-not-exist-or-does", nil)
 		return
 	}
 	_, _ = d.Pool.Exec(r.Context(), `INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, after_state) VALUES ($1,$2,'user','project.status_changed','project',$3,$4)`, principal.OrganizationID, principal.UserID, id.String(), auditJSON(map[string]any{"status": status}))
@@ -158,7 +158,7 @@ func (d ServerDeps) UpdateApplicationStatus(w http.ResponseWriter, r *http.Reque
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "APPLICATION_ID_INVALID", "应用 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "APPLICATION_ID_INVALID", "invalid-application-id", nil)
 		return
 	}
 	status, ok := parseResourceStatus(w, r, d)
@@ -167,11 +167,11 @@ func (d ServerDeps) UpdateApplicationStatus(w http.ResponseWriter, r *http.Reque
 	}
 	result, err := d.Pool.Exec(r.Context(), `UPDATE applications SET status = $3, updated_at = now() WHERE id = $1 AND project_id IN (SELECT id FROM projects WHERE organization_id = $2)`, id, principal.OrganizationID, status)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "APPLICATION_STATUS_FAILED", "更新应用状态失败", nil)
+		adminError(w, http.StatusInternalServerError, "APPLICATION_STATUS_FAILED", "failed-to-update-the-application-status", nil)
 		return
 	}
 	if result.RowsAffected() == 0 {
-		adminError(w, http.StatusNotFound, "APPLICATION_NOT_FOUND", "应用不存在或不属于当前组织", nil)
+		adminError(w, http.StatusNotFound, "APPLICATION_NOT_FOUND", "application-does-not-exist-or-does", nil)
 		return
 	}
 	_, _ = d.Pool.Exec(r.Context(), `INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, after_state) VALUES ($1,$2,'user','application.status_changed','application',$3,$4)`, principal.OrganizationID, principal.UserID, id.String(), auditJSON(map[string]any{"status": status}))
@@ -185,7 +185,7 @@ func (d ServerDeps) UpdateRoutePolicyStatus(w http.ResponseWriter, r *http.Reque
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "POLICY_ID_INVALID", "路由策略 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "POLICY_ID_INVALID", "invalid-route-policy-id", nil)
 		return
 	}
 	status, ok := parseResourceStatus(w, r, d)
@@ -194,11 +194,11 @@ func (d ServerDeps) UpdateRoutePolicyStatus(w http.ResponseWriter, r *http.Reque
 	}
 	result, err := d.Pool.Exec(r.Context(), `UPDATE route_policies SET status = $3, updated_at = now() WHERE id = $1 AND organization_id = $2`, id, principal.OrganizationID, status)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "POLICY_STATUS_FAILED", "更新路由策略状态失败", nil)
+		adminError(w, http.StatusInternalServerError, "POLICY_STATUS_FAILED", "failed-to-update-the-route-policy-10tstjg", nil)
 		return
 	}
 	if result.RowsAffected() == 0 {
-		adminError(w, http.StatusNotFound, "POLICY_NOT_FOUND", "路由策略不存在或不属于当前组织", nil)
+		adminError(w, http.StatusNotFound, "POLICY_NOT_FOUND", "route-policy-does-not-exist-or", nil)
 		return
 	}
 	_, _ = d.Pool.Exec(r.Context(), `INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, after_state) VALUES ($1,$2,'user','route_policy.status_changed','route_policy',$3,$4)`, principal.OrganizationID, principal.UserID, id.String(), auditJSON(map[string]any{"status": status}))

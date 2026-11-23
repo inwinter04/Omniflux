@@ -113,7 +113,7 @@ func (d ServerDeps) UsageSummary(w http.ResponseWriter, r *http.Request) {
 		&summary.TotalRequests, &summary.SuccessRequests, &summary.FailedRequests,
 		&summary.TotalInputTokens, &summary.TotalOutputTokens,
 	); err != nil {
-		adminError(w, http.StatusInternalServerError, "USAGE_SUMMARY_FAILED", "无法查询用量汇总", nil)
+		adminError(w, http.StatusInternalServerError, "USAGE_SUMMARY_FAILED", "failed-to-query-usage-summaries", nil)
 		return
 	}
 	currencyRows, err := d.Pool.Query(r.Context(), `
@@ -122,7 +122,7 @@ func (d ServerDeps) UsageSummary(w http.ResponseWriter, r *http.Request) {
 		GROUP BY cost_currency ORDER BY cost_currency
 	`, principal.OrganizationID, strconv.Itoa(days))
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "USAGE_SUMMARY_FAILED", "无法查询币种汇总", nil)
+		adminError(w, http.StatusInternalServerError, "USAGE_SUMMARY_FAILED", "failed-to-query-currency-summaries", nil)
 		return
 	}
 	defer currencyRows.Close()
@@ -130,7 +130,7 @@ func (d ServerDeps) UsageSummary(w http.ResponseWriter, r *http.Request) {
 	for currencyRows.Next() {
 		var item usageCurrencyTotal
 		if err := currencyRows.Scan(&item.Currency, &item.Total); err != nil {
-			adminError(w, http.StatusInternalServerError, "USAGE_SUMMARY_FAILED", "无法读取币种汇总", nil)
+			adminError(w, http.StatusInternalServerError, "USAGE_SUMMARY_FAILED", "failed-to-read-currency-summaries", nil)
 			return
 		}
 		summary.Costs = append(summary.Costs, item)
@@ -146,7 +146,7 @@ func (d ServerDeps) UsageSummary(w http.ResponseWriter, r *http.Request) {
 		summary.CostCurrency = "USD"
 	}
 	modelRows, err := d.Pool.Query(r.Context(), `
-		SELECT COALESCE(provider, '未知'), COALESCE(upstream_model, '未知'), cost_currency,
+		SELECT COALESCE(provider, ''), COALESCE(upstream_model, ''), cost_currency,
 		       count(*), COALESCE(sum(input_tokens), 0), COALESCE(sum(output_tokens), 0), COALESCE(sum(cost), 0)::text
 		FROM reporting_usage_records
 		WHERE organization_id = $1 AND created_at >= now() - ($2 || ' days')::interval
@@ -155,7 +155,7 @@ func (d ServerDeps) UsageSummary(w http.ResponseWriter, r *http.Request) {
 		LIMIT 20
 	`, principal.OrganizationID, strconv.Itoa(days))
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "USAGE_SUMMARY_FAILED", "无法查询用量汇总", nil)
+		adminError(w, http.StatusInternalServerError, "USAGE_SUMMARY_FAILED", "failed-to-query-usage-summaries", nil)
 		return
 	}
 	defer modelRows.Close()
@@ -164,7 +164,7 @@ func (d ServerDeps) UsageSummary(w http.ResponseWriter, r *http.Request) {
 		var item usageModelSummary
 		if err := modelRows.Scan(&item.Provider, &item.UpstreamModel, &item.CostCurrency, &item.Requests,
 			&item.InputTokens, &item.OutputTokens, &item.Cost); err != nil {
-			adminError(w, http.StatusInternalServerError, "USAGE_SUMMARY_FAILED", "无法查询用量汇总", nil)
+			adminError(w, http.StatusInternalServerError, "USAGE_SUMMARY_FAILED", "failed-to-query-usage-summaries", nil)
 			return
 		}
 		summary.ByModel = append(summary.ByModel, item)
@@ -176,7 +176,7 @@ func (d ServerDeps) UsageSummary(w http.ResponseWriter, r *http.Request) {
 		GROUP BY 1 ORDER BY 1
 	`, principal.OrganizationID, strconv.Itoa(days))
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "USAGE_SUMMARY_FAILED", "无法查询用量汇总", nil)
+		adminError(w, http.StatusInternalServerError, "USAGE_SUMMARY_FAILED", "failed-to-query-usage-summaries", nil)
 		return
 	}
 	defer dayRows.Close()
@@ -184,7 +184,7 @@ func (d ServerDeps) UsageSummary(w http.ResponseWriter, r *http.Request) {
 	for dayRows.Next() {
 		var item usageDaySummary
 		if err := dayRows.Scan(&item.Day, &item.Requests); err != nil {
-			adminError(w, http.StatusInternalServerError, "USAGE_SUMMARY_FAILED", "无法查询用量汇总", nil)
+			adminError(w, http.StatusInternalServerError, "USAGE_SUMMARY_FAILED", "failed-to-query-usage-summaries", nil)
 			return
 		}
 		summary.ByDay = append(summary.ByDay, item)
@@ -204,7 +204,7 @@ func (d ServerDeps) UsageRecords(w http.ResponseWriter, r *http.Request) {
 	if err := d.Pool.QueryRow(r.Context(), `
 		SELECT count(*) FROM reporting_usage_records WHERE organization_id = $1
 	`, principal.OrganizationID).Scan(&result.Total); err != nil {
-		adminError(w, http.StatusInternalServerError, "USAGE_RECORDS_FAILED", "无法查询用量明细", nil)
+		adminError(w, http.StatusInternalServerError, "USAGE_RECORDS_FAILED", "failed-to-query-usage-records", nil)
 		return
 	}
 	rows, err := d.Pool.Query(r.Context(), `
@@ -221,7 +221,7 @@ func (d ServerDeps) UsageRecords(w http.ResponseWriter, r *http.Request) {
 		LIMIT $2 OFFSET $3
 	`, principal.OrganizationID, pageSize, offset)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "USAGE_RECORDS_FAILED", "无法查询用量明细", nil)
+		adminError(w, http.StatusInternalServerError, "USAGE_RECORDS_FAILED", "failed-to-query-usage-records", nil)
 		return
 	}
 	defer rows.Close()
@@ -232,7 +232,7 @@ func (d ServerDeps) UsageRecords(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&id, &createdAt, &item.ProjectName, &item.ApplicationName, &item.KeyName,
 			&item.ModelService, &item.State, &item.StatusCode, &item.Provider, &item.UpstreamModel,
 			&item.InputTokens, &item.OutputTokens, &item.Cost, &item.CostCurrency, &item.Source, &item.TotalMS); err != nil {
-			adminError(w, http.StatusInternalServerError, "USAGE_RECORDS_FAILED", "无法查询用量明细", nil)
+			adminError(w, http.StatusInternalServerError, "USAGE_RECORDS_FAILED", "failed-to-query-usage-records", nil)
 			return
 		}
 		item.ID = id.String()
@@ -272,11 +272,11 @@ func (d ServerDeps) AuditEvents(w http.ResponseWriter, r *http.Request) {
 	if err := d.Pool.QueryRow(r.Context(), `
 		SELECT count(*) FROM audit_events WHERE organization_id = $1
 	`, principal.OrganizationID).Scan(&result.Total); err != nil {
-		adminError(w, http.StatusInternalServerError, "AUDIT_LIST_FAILED", "无法查询审计事件", nil)
+		adminError(w, http.StatusInternalServerError, "AUDIT_LIST_FAILED", "failed-to-query-audit-events", nil)
 		return
 	}
 	rows, err := d.Pool.Query(r.Context(), `
-		SELECT e.id, e.created_at, e.actor_type, COALESCE(u.email, '系统'),
+		SELECT e.id, e.created_at, e.actor_type, COALESCE(u.email, ''),
 		       e.action, e.resource_type, e.resource_id, e.result
 		FROM audit_events e
 		LEFT JOIN users u ON u.id = e.actor_user_id
@@ -285,7 +285,7 @@ func (d ServerDeps) AuditEvents(w http.ResponseWriter, r *http.Request) {
 		LIMIT $2 OFFSET $3
 	`, principal.OrganizationID, pageSize, offset)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "AUDIT_LIST_FAILED", "无法查询审计事件", nil)
+		adminError(w, http.StatusInternalServerError, "AUDIT_LIST_FAILED", "failed-to-query-audit-events", nil)
 		return
 	}
 	defer rows.Close()
@@ -295,7 +295,7 @@ func (d ServerDeps) AuditEvents(w http.ResponseWriter, r *http.Request) {
 		var createdAt time.Time
 		if err := rows.Scan(&id, &createdAt, &item.ActorType, &item.ActorName,
 			&item.Action, &item.ResourceType, &item.ResourceID, &item.Result); err != nil {
-			adminError(w, http.StatusInternalServerError, "AUDIT_LIST_FAILED", "无法查询审计事件", nil)
+			adminError(w, http.StatusInternalServerError, "AUDIT_LIST_FAILED", "failed-to-query-audit-events", nil)
 			return
 		}
 		item.ID = id.String()
@@ -328,7 +328,7 @@ func (d ServerDeps) AuditEventDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	eventID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "AUDIT_ID_INVALID", "审计事件 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "AUDIT_ID_INVALID", "invalid-audit-event-id", nil)
 		return
 	}
 	var item auditEventDetailResponse
@@ -336,7 +336,7 @@ func (d ServerDeps) AuditEventDetail(w http.ResponseWriter, r *http.Request) {
 	var createdAt time.Time
 	var beforeRaw, afterRaw []byte
 	err = d.Pool.QueryRow(r.Context(), `
-		SELECT e.id, e.created_at, e.actor_type, COALESCE(u.email, '系统'),
+		SELECT e.id, e.created_at, e.actor_type, COALESCE(u.email, ''),
 		       e.action, e.resource_type, e.resource_id, e.result,
 		       e.before_state, e.after_state, e.ip_address::text, e.user_agent
 		FROM audit_events e
@@ -347,11 +347,11 @@ func (d ServerDeps) AuditEventDetail(w http.ResponseWriter, r *http.Request) {
 		&item.Action, &item.ResourceType, &item.ResourceID, &item.Result,
 		&beforeRaw, &afterRaw, &item.IPAddress, &item.UserAgent)
 	if errors.Is(err, pgx.ErrNoRows) {
-		adminError(w, http.StatusNotFound, "AUDIT_NOT_FOUND", "审计事件不存在或不属于当前组织", nil)
+		adminError(w, http.StatusNotFound, "AUDIT_NOT_FOUND", "audit-event-does-not-exist-or", nil)
 		return
 	}
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "AUDIT_DETAIL_FAILED", "无法查询审计详情", nil)
+		adminError(w, http.StatusInternalServerError, "AUDIT_DETAIL_FAILED", "failed-to-query-audit-details", nil)
 		return
 	}
 	item.ID = id.String()

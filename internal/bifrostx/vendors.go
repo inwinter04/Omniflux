@@ -58,8 +58,8 @@ var vendorCatalog = []vendorEntry{
 	{ID: "teamorouter", Name: "TeamoRouter", Group: GroupAggregator, BaseURL: "https://api.teamorouter.com", URLPath: "/v1", WebsiteURL: "https://teamorouter.com", APIKeyURL: "https://teamorouter.com", BalanceKind: "", EditableURL: false},
 	{ID: "ppio", Name: "PPIO", Group: GroupAggregator, BaseURL: "https://api.ppio.com", URLPath: "/openai/v1", WebsiteURL: "https://ppio.com", APIKeyURL: "https://ppio.com", BalanceKind: "", EditableURL: false},
 	{ID: "claudecn", Name: "ClaudeCN", Group: GroupThirdParty, BaseURL: "https://claudecn.top", URLPath: "/v1", WebsiteURL: "https://claudecn.top", APIKeyURL: "https://claudecn.ai/register?aff=HEL9", BalanceKind: "", EditableURL: false},
-	{ID: "volcano-agent-plan", Name: "火山 Agent Plan", Group: GroupCN, BaseURL: "https://ark.cn-beijing.volces.com", URLPath: "/api/plan/v3", WebsiteURL: "https://www.volcengine.com/activity/agentplan", APIKeyURL: "https://www.volcengine.com/activity/agentplan", BalanceKind: "", EditableURL: false},
-	{ID: "volcano-coding-plan", Name: "火山 Coding Plan", Group: GroupCN, BaseURL: "https://ark.cn-beijing.volces.com", URLPath: "/api/coding/v3", WebsiteURL: "https://www.volcengine.com/activity/codingplan", APIKeyURL: "https://www.volcengine.com/activity/codingplan", BalanceKind: "", EditableURL: false},
+	{ID: "volcano-agent-plan", Name: "Volcengine Agent Plan", Group: GroupCN, BaseURL: "https://ark.cn-beijing.volces.com", URLPath: "/api/plan/v3", WebsiteURL: "https://www.volcengine.com/activity/agentplan", APIKeyURL: "https://www.volcengine.com/activity/agentplan", BalanceKind: "", EditableURL: false},
+	{ID: "volcano-coding-plan", Name: "Volcengine Coding Plan", Group: GroupCN, BaseURL: "https://ark.cn-beijing.volces.com", URLPath: "/api/coding/v3", WebsiteURL: "https://www.volcengine.com/activity/codingplan", APIKeyURL: "https://www.volcengine.com/activity/codingplan", BalanceKind: "", EditableURL: false},
 	{ID: "byteplus", Name: "BytePlus", Group: GroupCN, BaseURL: "https://ark.ap-southeast.bytepluses.com", URLPath: "/api/coding/v3", WebsiteURL: "https://www.byteplus.com/en/product/modelark", APIKeyURL: "https://www.byteplus.com/en/product/modelark", BalanceKind: "", EditableURL: false},
 	{ID: "volcengine-doubao", Name: "Volcengine Doubao", Group: GroupCN, BaseURL: "https://ark.cn-beijing.volces.com", URLPath: "/api/v3", WebsiteURL: "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey", APIKeyURL: "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey", BalanceKind: "", EditableURL: false},
 	{ID: "siliconflow", Name: "SiliconFlow", Group: GroupAggregator, BaseURL: "https://api.siliconflow.cn", URLPath: "/v1", WebsiteURL: "https://siliconflow.cn", APIKeyURL: "https://cloud.siliconflow.cn/i/YflgU2Ve", BalanceKind: "siliconflow", EditableURL: false},
@@ -82,12 +82,12 @@ var vendorCatalog = []vendorEntry{
 	{ID: "deepseek", Name: "DeepSeek", Group: GroupCN, BaseURL: "https://api.deepseek.com", URLPath: "", WebsiteURL: "https://platform.deepseek.com", APIKeyURL: "https://platform.deepseek.com/api_keys", BalanceKind: "deepseek", EditableURL: false},
 	{ID: "zhipu-glm", Name: "Zhipu GLM", Group: GroupCN, BaseURL: "https://open.bigmodel.cn", URLPath: "/api/paas/v4", WebsiteURL: "https://open.bigmodel.cn", APIKeyURL: "https://www.bigmodel.cn/claude-code", BalanceKind: "zhipu", EditableURL: false},
 	{ID: "zhipu-glm-en", Name: "Zhipu GLM en", Group: GroupCN, BaseURL: "https://api.z.ai", URLPath: "/api/paas/v4", WebsiteURL: "https://z.ai", APIKeyURL: "https://z.ai/subscribe", BalanceKind: "zhipu", EditableURL: false},
-	{ID: "zhipu-glm-coding", Name: "智谱 GLM Coding Plan", Group: GroupCN, BaseURL: "https://open.bigmodel.cn", URLPath: "/api/coding/paas/v4", WebsiteURL: "https://www.bigmodel.cn/claude-code", APIKeyURL: "https://www.bigmodel.cn/claude-code", BalanceKind: "zhipu_plan", EditableURL: false},
+	{ID: "zhipu-glm-coding", Name: "Zhipu GLM Coding Plan", Group: GroupCN, BaseURL: "https://open.bigmodel.cn", URLPath: "/api/coding/paas/v4", WebsiteURL: "https://www.bigmodel.cn/claude-code", APIKeyURL: "https://www.bigmodel.cn/claude-code", BalanceKind: "zhipu_plan", EditableURL: false},
 	{ID: "zhipu-glm-en-coding", Name: "Z.ai GLM Coding Plan", Group: GroupCN, BaseURL: "https://api.z.ai", URLPath: "/api/coding/paas/v4", WebsiteURL: "https://z.ai/subscribe", APIKeyURL: "https://z.ai/subscribe", BalanceKind: "zhipu_plan", EditableURL: false},
 	{ID: "baidu-qianfan", Name: "Baidu Qianfan", Group: GroupCN, BaseURL: "https://qianfan.baidubce.com", URLPath: "/v2", WebsiteURL: "https://cloud.baidu.com/product/qianfan_modelbuilder", APIKeyURL: "https://console.bce.baidu.com/qianfan/ais/console/applicationConsole/application", BalanceKind: "", EditableURL: false},
 	{ID: "baidu-qianfan-coding", Name: "Baidu Qianfan Coding Plan", Group: GroupCN, BaseURL: "https://qianfan.baidubce.com", URLPath: "/v2/coding", WebsiteURL: "https://cloud.baidu.com/product/qianfan_modelbuilder", APIKeyURL: "https://console.bce.baidu.com/qianfan/ais/console/applicationConsole/application", BalanceKind: "", EditableURL: false},
-	{ID: "qwenai", Name: "千问AI平台", Group: GroupCN, BaseURL: "https://maas.qianwenaiapi.com", URLPath: "/compatible-mode/v1", WebsiteURL: "https://platform.qianwenai.com/?utm_content=g_20000002971", APIKeyURL: "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002972", BalanceKind: "", EditableURL: false},
-	{ID: "qwenai-token-plan", Name: "千问AI平台 Token Plan", Group: GroupCN, BaseURL: "https://token-plan.maas.qianwenaiapi.com", URLPath: "/compatible-mode/v1", WebsiteURL: "https://platform.qianwenai.com/pricing/token-plan?utm_content=g_20000002977", APIKeyURL: "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002978", BalanceKind: "", EditableURL: false},
+	{ID: "qwenai", Name: "Qwen AI Platform", Group: GroupCN, BaseURL: "https://maas.qianwenaiapi.com", URLPath: "/compatible-mode/v1", WebsiteURL: "https://platform.qianwenai.com/?utm_content=g_20000002971", APIKeyURL: "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002972", BalanceKind: "", EditableURL: false},
+	{ID: "qwenai-token-plan", Name: "Qwen AI Platform Token Plan", Group: GroupCN, BaseURL: "https://token-plan.maas.qianwenaiapi.com", URLPath: "/compatible-mode/v1", WebsiteURL: "https://platform.qianwenai.com/pricing/token-plan?utm_content=g_20000002977", APIKeyURL: "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002978", BalanceKind: "", EditableURL: false},
 	{ID: "qwencloud", Name: "QwenCloud", Group: GroupCN, BaseURL: "https://ap-southeast-1.maas.qwencloudapi.com", URLPath: "/compatible-mode/v1", WebsiteURL: "https://home.qwencloud.com/?utm_content=g_20000002974", APIKeyURL: "https://home.qwencloud.com/api-keys?utm_content=g_20000002975", BalanceKind: "", EditableURL: false},
 	{ID: "qwencloud-coding", Name: "QwenCloud For Coding", Group: GroupCN, BaseURL: "https://coding-intl.dashscope.aliyuncs.com", URLPath: "/v1", WebsiteURL: "https://www.qwencloud.com", APIKeyURL: "https://home.qwencloud.com/api-keys", BalanceKind: "", EditableURL: false},
 	{ID: "qwencloud-token-plan", Name: "QwenCloud Token Plan", Group: GroupCN, BaseURL: "https://token-plan.maas.qwencloudapi.com", URLPath: "/compatible-mode/v1", WebsiteURL: "https://www.qwencloud.com/pricing/token-plan?utm_content=g_20000002980", APIKeyURL: "https://home.qwencloud.com/api-keys?utm_content=g_20000002981", BalanceKind: "", EditableURL: false},
@@ -132,7 +132,7 @@ var vendorCatalog = []vendorEntry{
 	{ID: "jiekou", Name: "JieKou AI", Group: GroupAggregator, BaseURL: "https://api.jiekou.ai", URLPath: "/openai/v1", WebsiteURL: "https://jiekou.ai/#model-library", APIKeyURL: "https://jiekou.ai/settings/key-management", BalanceKind: "", EditableURL: false},
 	{ID: "aicodewith", Name: "AICodeWith", Group: GroupAggregator, BaseURL: "https://api.aicodewith.ai", URLPath: "/v1", WebsiteURL: "https://aicodewith.ai", APIKeyURL: "https://aicodewith.ai/login?tab=register", BalanceKind: "", EditableURL: false},
 	{ID: "commandcode", Name: "Command Code", Group: GroupThirdParty, BaseURL: "https://api.commandcode.ai", URLPath: "/provider/v1", WebsiteURL: "https://commandcode.ai", APIKeyURL: "https://commandcode.ai/settings/keys", BalanceKind: "", EditableURL: false},
-	{ID: "moark", Name: "模力方舟", Group: GroupAggregator, BaseURL: "https://moark.com", URLPath: "/v1", WebsiteURL: "https://moark.com", APIKeyURL: "https://moark.com/dashboard/tokens", BalanceKind: "", EditableURL: false},
+	{ID: "moark", Name: "MoArk", Group: GroupAggregator, BaseURL: "https://moark.com", URLPath: "/v1", WebsiteURL: "https://moark.com", APIKeyURL: "https://moark.com/dashboard/tokens", BalanceKind: "", EditableURL: false},
 	{ID: "soruxgpt", Name: "SoruxGPT", Group: GroupAggregator, BaseURL: "https://ai.soruxgpt.com", URLPath: "/v1", WebsiteURL: "https://ai.soruxgpt.com", APIKeyURL: "https://ai.soruxgpt.com/console/token", BalanceKind: "", EditableURL: false},
 	{ID: "ikuncode", Name: "IKunCode", Group: GroupAggregator, BaseURL: "https://api.ikuncode.ai", URLPath: "/v1", WebsiteURL: "https://api.ikuncode.ai", APIKeyURL: "https://api.ikuncode.ai/console/token", BalanceKind: "", EditableURL: false},
 	{ID: "runtoken", Name: "RunToken", Group: GroupAggregator, BaseURL: "https://www.runtoken.ai", URLPath: "/v1", WebsiteURL: "https://www.runtoken.ai", APIKeyURL: "https://www.runtoken.ai/console/token", BalanceKind: "", EditableURL: false},
@@ -157,68 +157,73 @@ func VendorByID(id string) *vendorEntry {
 
 // VendorCatalogEntry 是下发给管理台的目录条目;不含密钥等敏感信息。
 type VendorCatalogEntry struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	Group        string `json:"group"`
-	FamilyID     string `json:"family_id"`
-	FamilyName   string `json:"family_name"`
-	VersionLabel string `json:"version_label"`
-	BaseURL      string `json:"base_url"`
-	APIBaseURL   string `json:"api_base_url"`
-	WebsiteURL   string `json:"website_url"`
-	APIKeyURL    string `json:"api_key_url"`
-	BalanceKind  string `json:"balance_kind"`
-	EditableURL  bool   `json:"editable_url"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Group       string `json:"group"`
+	FamilyID    string `json:"family_id"`
+	VersionKind string `json:"version_kind"`
+	RegionKind  string `json:"region_kind"`
+	BaseURL     string `json:"base_url"`
+	APIBaseURL  string `json:"api_base_url"`
+	WebsiteURL  string `json:"website_url"`
+	APIKeyURL   string `json:"api_key_url"`
+	BalanceKind string `json:"balance_kind"`
+	EditableURL bool   `json:"editable_url"`
 }
 
 // VendorCatalog 返回完整厂商目录。
 func VendorCatalog() []VendorCatalogEntry {
 	list := make([]VendorCatalogEntry, 0, len(vendorCatalog))
 	for _, v := range vendorCatalog {
-		familyID, familyName, versionLabel := vendorPresentation(v)
+		presentation := vendorPresentation(v)
 		list = append(list, VendorCatalogEntry{
-			ID:           v.ID,
-			Name:         v.Name,
-			Group:        string(v.Group),
-			FamilyID:     familyID,
-			FamilyName:   familyName,
-			VersionLabel: versionLabel,
-			BaseURL:      v.BaseURL,
-			APIBaseURL:   strings.TrimSuffix(v.BaseURL, "/") + v.URLPath,
-			WebsiteURL:   v.WebsiteURL,
-			APIKeyURL:    v.APIKeyURL,
-			BalanceKind:  v.BalanceKind,
-			EditableURL:  v.EditableURL,
+			ID:          v.ID,
+			Name:        v.Name,
+			Group:       string(v.Group),
+			FamilyID:    presentation.familyID,
+			VersionKind: presentation.versionKind,
+			RegionKind:  presentation.regionKind,
+			BaseURL:     v.BaseURL,
+			APIBaseURL:  strings.TrimSuffix(v.BaseURL, "/") + v.URLPath,
+			WebsiteURL:  v.WebsiteURL,
+			APIKeyURL:   v.APIKeyURL,
+			BalanceKind: v.BalanceKind,
+			EditableURL: v.EditableURL,
 		})
 	}
 	return list
 }
 
-func vendorPresentation(v vendorEntry) (string, string, string) {
+type vendorPresentationInfo struct {
+	familyID    string
+	versionKind string
+	regionKind  string
+}
+
+func vendorPresentation(v vendorEntry) vendorPresentationInfo {
 	families := []struct {
 		prefixes []string
 		id       string
-		name     string
 	}{
-		{[]string{"kimi"}, "kimi", "Kimi"},
-		{[]string{"zhipu"}, "zhipu", "智谱 GLM"},
-		{[]string{"volcano", "volcengine"}, "volcengine", "火山引擎"},
-		{[]string{"qwencloud"}, "qwencloud", "千问云"},
-		{[]string{"qwenai"}, "qwenai", "千问 AI 平台"},
-		{[]string{"stepfun"}, "stepfun", "阶跃星辰"},
-		{[]string{"streamlake"}, "streamlake", "StreamLake"},
-		{[]string{"minimax"}, "minimax", "MiniMax"},
-		{[]string{"siliconflow"}, "siliconflow", "硅基流动"},
-		{[]string{"baidu-qianfan"}, "baidu-qianfan", "百度千帆"},
-		{[]string{"xiaomi-mimo"}, "xiaomi-mimo", "小米 MiMo"},
-		{[]string{"compshare"}, "compshare", "Compshare"},
+		{[]string{"kimi"}, "kimi"},
+		{[]string{"zhipu"}, "zhipu"},
+		{[]string{"volcano", "volcengine"}, "volcengine"},
+		{[]string{"qwencloud"}, "qwencloud"},
+		{[]string{"qwenai"}, "qwenai"},
+		{[]string{"stepfun"}, "stepfun"},
+		{[]string{"streamlake"}, "streamlake"},
+		{[]string{"minimax"}, "minimax"},
+		{[]string{"siliconflow"}, "siliconflow"},
+		{[]string{"baidu-qianfan"}, "baidu-qianfan"},
+		{[]string{"xiaomi-mimo"}, "xiaomi-mimo"},
+		{[]string{"compshare"}, "compshare"},
 	}
-	familyID, familyName := v.ID, v.Name
+	familyID := v.ID
 	matched := false
 	for _, family := range families {
 		for _, prefix := range family.prefixes {
 			if strings.HasPrefix(v.ID, prefix) {
-				familyID, familyName, matched = family.id, family.name, true
+				familyID, matched = family.id, true
 				break
 			}
 		}
@@ -227,20 +232,20 @@ func vendorPresentation(v vendorEntry) (string, string, string) {
 		}
 	}
 	if !matched {
-		return familyID, familyName, "标准服务"
+		return vendorPresentationInfo{familyID: familyID, versionKind: "standard"}
 	}
-	plan := "标准 API"
+	versionKind := "standard"
 	switch {
 	case strings.Contains(v.ID, "coding"):
-		plan = "编程套餐"
+		versionKind = "coding"
 	case strings.Contains(v.ID, "agent-plan"):
-		plan = "智能体套餐"
+		versionKind = "agent"
 	case strings.Contains(v.ID, "token-plan"):
-		plan = "令牌套餐"
+		versionKind = "token"
 	case strings.Contains(v.ID, "plan"):
-		plan = "订阅套餐"
+		versionKind = "subscription"
 	}
-	region := "国内站"
+	regionKind := "china"
 	globalIDs := map[string]bool{
 		"kimi-global": true, "kimi-for-coding-global": true,
 		"zhipu-glm-en": true, "zhipu-glm-en-coding": true,
@@ -249,9 +254,9 @@ func vendorPresentation(v vendorEntry) (string, string, string) {
 		"streamlake-en": true, "minimax-en": true, "siliconflow-en": true,
 	}
 	if globalIDs[v.ID] {
-		region = "国际站"
+		regionKind = "global"
 	}
-	return familyID, familyName, plan + " · " + region
+	return vendorPresentationInfo{familyID: familyID, versionKind: versionKind, regionKind: regionKind}
 }
 
 // vendorChatPath 返回厂商的 Chat Completions 完整路径。

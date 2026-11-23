@@ -60,7 +60,7 @@ func (d ServerDeps) Projects(w http.ResponseWriter, r *http.Request) {
 		WHERE organization_id = $1 ORDER BY created_at ASC
 	`, principal.OrganizationID)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "PROJECT_LIST_FAILED", "无法查询项目", nil)
+		adminError(w, http.StatusInternalServerError, "PROJECT_LIST_FAILED", "failed-to-query-projects", nil)
 		return
 	}
 	defer rows.Close()
@@ -69,7 +69,7 @@ func (d ServerDeps) Projects(w http.ResponseWriter, r *http.Request) {
 		var item projectResponse
 		var id, deptID uuid.UUID
 		if err := rows.Scan(&id, &item.Name, &deptID, &item.Status); err != nil {
-			adminError(w, http.StatusInternalServerError, "PROJECT_LIST_FAILED", "无法查询项目", nil)
+			adminError(w, http.StatusInternalServerError, "PROJECT_LIST_FAILED", "failed-to-query-projects", nil)
 			return
 		}
 		item.ID = id.String()
@@ -91,7 +91,7 @@ func (d ServerDeps) Applications(w http.ResponseWriter, r *http.Request) {
 		WHERE p.organization_id = $1 ORDER BY a.created_at ASC
 	`, principal.OrganizationID)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "APPLICATION_LIST_FAILED", "无法查询应用", nil)
+		adminError(w, http.StatusInternalServerError, "APPLICATION_LIST_FAILED", "failed-to-query-applications", nil)
 		return
 	}
 	defer rows.Close()
@@ -100,7 +100,7 @@ func (d ServerDeps) Applications(w http.ResponseWriter, r *http.Request) {
 		var item applicationResponse
 		var id, projectID uuid.UUID
 		if err := rows.Scan(&id, &projectID, &item.Name, &item.Status); err != nil {
-			adminError(w, http.StatusInternalServerError, "APPLICATION_LIST_FAILED", "无法查询应用", nil)
+			adminError(w, http.StatusInternalServerError, "APPLICATION_LIST_FAILED", "failed-to-query-applications", nil)
 			return
 		}
 		item.ID = id.String()
@@ -121,7 +121,7 @@ func (d ServerDeps) APIKeys(w http.ResponseWriter, r *http.Request) {
 		FROM api_keys WHERE organization_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC
 	`, principal.OrganizationID)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "APIKEY_LIST_FAILED", "无法查询 API Key", nil)
+		adminError(w, http.StatusInternalServerError, "APIKEY_LIST_FAILED", "failed-to-query-api-keys", nil)
 		return
 	}
 	defer rows.Close()
@@ -131,7 +131,7 @@ func (d ServerDeps) APIKeys(w http.ResponseWriter, r *http.Request) {
 		var id, projectID, applicationID uuid.UUID
 		if err := rows.Scan(&id, &item.Name, &item.KeyPrefix, &projectID, &applicationID,
 			&item.RateLimitPerMin, &item.Status, &item.ExpiresAt, &item.LastUsedAt, &item.CreatedAt); err != nil {
-			adminError(w, http.StatusInternalServerError, "APIKEY_LIST_FAILED", "无法查询 API Key", nil)
+			adminError(w, http.StatusInternalServerError, "APIKEY_LIST_FAILED", "failed-to-query-api-keys", nil)
 			return
 		}
 		item.ID = id.String()
@@ -154,17 +154,17 @@ func (d ServerDeps) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	}
 	body.Name = strings.TrimSpace(body.Name)
 	if body.Name == "" {
-		adminError(w, http.StatusBadRequest, "APIKEY_NAME_REQUIRED", "请填写 API Key 名称", nil)
+		adminError(w, http.StatusBadRequest, "APIKEY_NAME_REQUIRED", "enter-an-api-key-name", nil)
 		return
 	}
 	projectID, err := uuid.Parse(body.ProjectID)
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "APIKEY_PROJECT_INVALID", "project_id 不合法", nil)
+		adminError(w, http.StatusBadRequest, "APIKEY_PROJECT_INVALID", "invalid-project-id-bcvapn", nil)
 		return
 	}
 	applicationID, err := uuid.Parse(body.ApplicationID)
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "APIKEY_APPLICATION_INVALID", "application_id 不合法", nil)
+		adminError(w, http.StatusBadRequest, "APIKEY_APPLICATION_INVALID", "invalid-application-id-7cby78", nil)
 		return
 	}
 	// 项目必须属于当前组织,应用必须挂在同一项目下。
@@ -172,26 +172,26 @@ func (d ServerDeps) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	if err := d.Pool.QueryRow(r.Context(), `
 		SELECT count(*) FROM projects WHERE id = $1 AND organization_id = $2
 	`, projectID, principal.OrganizationID).Scan(&count); err != nil || count == 0 {
-		adminError(w, http.StatusBadRequest, "APIKEY_PROJECT_NOT_FOUND", "项目不存在或不属于当前组织", nil)
+		adminError(w, http.StatusBadRequest, "APIKEY_PROJECT_NOT_FOUND", "project-does-not-exist-or-does", nil)
 		return
 	}
 	if err := d.Pool.QueryRow(r.Context(), `
 		SELECT count(*) FROM applications WHERE id = $1 AND project_id = $2
 	`, applicationID, projectID).Scan(&count); err != nil || count == 0 {
-		adminError(w, http.StatusBadRequest, "APIKEY_APPLICATION_MISMATCH", "应用不存在或不属于所选项目", nil)
+		adminError(w, http.StatusBadRequest, "APIKEY_APPLICATION_MISMATCH", "application-does-not-exist-or-does-g14dqm", nil)
 		return
 	}
 	if body.ExpiresAt != nil && !body.ExpiresAt.After(time.Now()) {
-		adminError(w, http.StatusBadRequest, "APIKEY_EXPIRES_INVALID", "过期时间必须晚于当前时间", nil)
+		adminError(w, http.StatusBadRequest, "APIKEY_EXPIRES_INVALID", "expiration-time-must-be-later-than", nil)
 		if body.RateLimitPerMin != nil && *body.RateLimitPerMin <= 0 {
-			adminError(w, http.StatusBadRequest, "APIKEY_RATE_LIMIT_INVALID", "rate_limit_per_min 必须大于 0", nil)
+			adminError(w, http.StatusBadRequest, "APIKEY_RATE_LIMIT_INVALID", "rate-limit-per-min-must-be", nil)
 			return
 		}
 		return
 	}
 	generated, err := apikeys.Generate()
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "APIKEY_CREATE_FAILED", "生成 API Key 失败", nil)
+		adminError(w, http.StatusInternalServerError, "APIKEY_CREATE_FAILED", "failed-to-generate-the-api-key", nil)
 		return
 	}
 	secretHash := apikeys.Hash(d.APIKeyPepper, generated.Full)
@@ -201,7 +201,7 @@ func (d ServerDeps) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 	`, keyID, principal.OrganizationID, projectID, applicationID, principal.UserID,
 		body.Name, generated.Prefix, secretHash, body.ExpiresAt, body.RateLimitPerMin); err != nil {
-		adminError(w, http.StatusInternalServerError, "APIKEY_CREATE_FAILED", "创建 API Key 失败", nil)
+		adminError(w, http.StatusInternalServerError, "APIKEY_CREATE_FAILED", "failed-to-create-the-api-key", nil)
 		return
 	}
 	_, _ = d.Pool.Exec(r.Context(), `
@@ -209,9 +209,8 @@ func (d ServerDeps) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 		VALUES ($1,$2,'user','api_key.created','api_key',$3)
 	`, principal.OrganizationID, principal.UserID, keyID.String())
 	adminOK(w, map[string]string{
-		"id":   keyID.String(),
-		"key":  generated.Full,
-		"hint": "请立即保存,该明文仅出现这一次",
+		"id":  keyID.String(),
+		"key": generated.Full,
 	})
 }
 
@@ -231,20 +230,20 @@ func (d ServerDeps) UpdateAPIKeyStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Status != nil && *body.Status != "active" && *body.Status != "disabled" {
-		adminError(w, http.StatusBadRequest, "APIKEY_STATUS_INVALID", "status 仅支持 active 或 disabled", nil)
+		adminError(w, http.StatusBadRequest, "APIKEY_STATUS_INVALID", "status-supports-only-active-or-disabled", nil)
 		return
 	}
 	if body.RateLimitPerMin != nil && *body.RateLimitPerMin <= 0 {
-		adminError(w, http.StatusBadRequest, "APIKEY_RATE_LIMIT_INVALID", "rate_limit_per_min 必须大于 0", nil)
+		adminError(w, http.StatusBadRequest, "APIKEY_RATE_LIMIT_INVALID", "rate-limit-per-min-must-be", nil)
 		return
 	}
 	if body.Status == nil && body.RateLimitPerMin == nil {
-		adminError(w, http.StatusBadRequest, "APIKEY_NOTHING_TO_UPDATE", "status 与 rate_limit_per_min 至少提供一项", nil)
+		adminError(w, http.StatusBadRequest, "APIKEY_NOTHING_TO_UPDATE", "provide-at-least-status-or-rate", nil)
 		return
 	}
 	keyID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "APIKEY_INVALID_ID", "API Key ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "APIKEY_INVALID_ID", "invalid-api-key-id", nil)
 		return
 	}
 	var currentStatus string
@@ -253,11 +252,11 @@ func (d ServerDeps) UpdateAPIKeyStatus(w http.ResponseWriter, r *http.Request) {
 		SELECT status, rate_limit_per_min FROM api_keys WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
 	`, keyID, principal.OrganizationID).Scan(&currentStatus, &currentRateLimit)
 	if errors.Is(err, pgx.ErrNoRows) {
-		adminError(w, http.StatusNotFound, "APIKEY_NOT_FOUND", "API Key 不存在", nil)
+		adminError(w, http.StatusNotFound, "APIKEY_NOT_FOUND", "api-key-does-not-exist", nil)
 		return
 	}
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "APIKEY_STATUS_FAILED", "更新 API Key 状态失败", nil)
+		adminError(w, http.StatusInternalServerError, "APIKEY_STATUS_FAILED", "failed-to-update-the-api-key", nil)
 		return
 	}
 	if body.Status != nil && currentStatus == *body.Status &&
@@ -270,11 +269,11 @@ func (d ServerDeps) UpdateAPIKeyStatus(w http.ResponseWriter, r *http.Request) {
 		WHERE id = $1 AND organization_id = $2
 	`, keyID, principal.OrganizationID, body.Status, nullableIntPtr(body.RateLimitPerMin))
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "APIKEY_STATUS_FAILED", "更新 API Key 状态失败", nil)
+		adminError(w, http.StatusInternalServerError, "APIKEY_STATUS_FAILED", "failed-to-update-the-api-key", nil)
 		return
 	}
 	if tag.RowsAffected() == 0 {
-		adminError(w, http.StatusNotFound, "APIKEY_NOT_FOUND", "API Key 不存在", nil)
+		adminError(w, http.StatusNotFound, "APIKEY_NOT_FOUND", "api-key-does-not-exist", nil)
 		return
 	}
 	_, _ = d.Pool.Exec(r.Context(), `
@@ -294,7 +293,7 @@ func (d ServerDeps) DeleteAPIKey(w http.ResponseWriter, r *http.Request) {
 	}
 	keyID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "APIKEY_INVALID_ID", "API Key ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "APIKEY_INVALID_ID", "invalid-api-key-id", nil)
 		return
 	}
 	tag, err := d.Pool.Exec(r.Context(), `
@@ -302,11 +301,11 @@ func (d ServerDeps) DeleteAPIKey(w http.ResponseWriter, r *http.Request) {
 		WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
 	`, keyID, principal.OrganizationID)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "APIKEY_DELETE_FAILED", "删除 API Key 失败", nil)
+		adminError(w, http.StatusInternalServerError, "APIKEY_DELETE_FAILED", "failed-to-delete-the-api-key", nil)
 		return
 	}
 	if tag.RowsAffected() == 0 {
-		adminError(w, http.StatusNotFound, "APIKEY_NOT_FOUND", "API Key 不存在", nil)
+		adminError(w, http.StatusNotFound, "APIKEY_NOT_FOUND", "api-key-does-not-exist", nil)
 		return
 	}
 	_, _ = d.Pool.Exec(r.Context(), `

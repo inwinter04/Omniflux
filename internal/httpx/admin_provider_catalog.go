@@ -11,15 +11,7 @@ import (
 func (d ServerDeps) ProviderCatalog(w http.ResponseWriter, _ *http.Request) {
 	type catalogGroup struct {
 		Group   string                        `json:"group"`
-		Label   string                        `json:"label"`
 		Entries []bifrostx.VendorCatalogEntry `json:"entries"`
-	}
-	labels := map[string]string{
-		string(bifrostx.GroupCN):         "模型厂商",
-		string(bifrostx.GroupGlobal):     "云服务商",
-		string(bifrostx.GroupAggregator): "聚合平台",
-		string(bifrostx.GroupThirdParty): "第三方服务",
-		string(bifrostx.GroupLocal):      "本地与自部署",
 	}
 	order := []bifrostx.VendorGroup{
 		bifrostx.GroupCN, bifrostx.GroupGlobal, bifrostx.GroupAggregator,
@@ -36,16 +28,18 @@ func (d ServerDeps) ProviderCatalog(w http.ResponseWriter, _ *http.Request) {
 		if len(list) == 0 {
 			continue
 		}
-		groups = append(groups, catalogGroup{Group: string(g), Label: labels[string(g)], Entries: list})
+		groups = append(groups, catalogGroup{Group: string(g), Entries: list})
 	}
 	// 自定义 OpenAI 兼容:沿用协议级 provider,允许任意 base_url。
-	groups = append(groups, catalogGroup{Group: string(bifrostx.GroupCustom), Label: "自定义", Entries: []bifrostx.VendorCatalogEntry{{
+	groups = append(groups, catalogGroup{Group: string(bifrostx.GroupCustom), Entries: []bifrostx.VendorCatalogEntry{{
 		ID:          "openai_compatible",
-		Name:        "自定义 OpenAI 兼容",
+		Name:        "OpenAI Compatible",
 		Group:       string(bifrostx.GroupCustom),
 		WebsiteURL:  "",
 		APIKeyURL:   "",
 		EditableURL: true,
+		VersionKind: "custom",
+		RegionKind:  "custom",
 	}}})
 	adminOK(w, groups)
 }

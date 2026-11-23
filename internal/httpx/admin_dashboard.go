@@ -44,7 +44,7 @@ func (d ServerDeps) Dashboard(w http.ResponseWriter, r *http.Request) {
 		&res.Requests7d, &res.SuccessRate7d, &res.ActiveBudgets, &res.ExceededBudgets,
 	)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "DASHBOARD_FAILED", "无法加载概览数据", nil)
+		adminError(w, http.StatusInternalServerError, "DASHBOARD_FAILED", "failed-to-load-overview-data", nil)
 		return
 	}
 	rows, err := d.Pool.Query(r.Context(), `
@@ -53,7 +53,7 @@ func (d ServerDeps) Dashboard(w http.ResponseWriter, r *http.Request) {
 		GROUP BY cost_currency ORDER BY cost_currency
 	`, principal.OrganizationID)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "DASHBOARD_FAILED", "无法查询成本币种", nil)
+		adminError(w, http.StatusInternalServerError, "DASHBOARD_FAILED", "failed-to-query-cost-currencies", nil)
 		return
 	}
 	defer rows.Close()
@@ -61,7 +61,7 @@ func (d ServerDeps) Dashboard(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var item usageCurrencyTotal
 		if err := rows.Scan(&item.Currency, &item.Total); err != nil {
-			adminError(w, http.StatusInternalServerError, "DASHBOARD_FAILED", "无法读取成本币种", nil)
+			adminError(w, http.StatusInternalServerError, "DASHBOARD_FAILED", "failed-to-read-cost-currencies", nil)
 			return
 		}
 		res.Costs = append(res.Costs, item)

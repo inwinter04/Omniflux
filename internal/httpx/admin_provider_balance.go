@@ -21,9 +21,8 @@ import (
 
 // balanceEntry 是一条余额信息;字段可空,取决于厂商接口返回口径。
 type balanceEntry struct {
-	Label         string   `json:"label"`
+	LabelKey      string   `json:"label_key"`
 	Kind          string   `json:"kind"`
-	Window        string   `json:"window,omitempty"`
 	Remaining     *float64 `json:"remaining"`
 	Total         *float64 `json:"total"`
 	Used          *float64 `json:"used"`
@@ -40,7 +39,7 @@ func (d ServerDeps) ProviderAccountBalance(w http.ResponseWriter, r *http.Reques
 	}
 	accountID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "PROVIDER_INVALID_ID", "账号 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "PROVIDER_INVALID_ID", "invalid-account-id", nil)
 		return
 	}
 	var provider string
@@ -52,28 +51,28 @@ func (d ServerDeps) ProviderAccountBalance(w http.ResponseWriter, r *http.Reques
 		WHERE a.id = $1 AND a.organization_id = $2
 	`, accountID, principal.OrganizationID).Scan(&provider, &ciphertext)
 	if errors.Is(err, pgx.ErrNoRows) {
-		adminError(w, http.StatusNotFound, "PROVIDER_NOT_FOUND", "供应商账号不存在或不属于当前组织", nil)
+		adminError(w, http.StatusNotFound, "PROVIDER_NOT_FOUND", "provider-account-does-not-exist-or", nil)
 		return
 	}
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "PROVIDER_BALANCE_FAILED", "余额查询失败", nil)
+		adminError(w, http.StatusInternalServerError, "PROVIDER_BALANCE_FAILED", "balance-query-failed", nil)
 		return
 	}
 	vendor := bifrostx.VendorByID(provider)
 	if vendor == nil || vendor.BalanceKind == "" {
-		adminError(w, http.StatusBadRequest, "PROVIDER_BALANCE_UNSUPPORTED", "该厂商暂不支持余额查询", nil)
+		adminError(w, http.StatusBadRequest, "PROVIDER_BALANCE_UNSUPPORTED", "this-provider-does-not-support-balance", nil)
 		return
 	}
 	apiKey, err := vault.Decrypt(d.MasterKey, ciphertext)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "PROVIDER_BALANCE_FAILED", "凭据解密失败", nil)
+		adminError(w, http.StatusInternalServerError, "PROVIDER_BALANCE_FAILED", "failed-to-decrypt-credentials", nil)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 	balances, qerr := queryVendorBalance(ctx, vendor.ID, vendor.BaseURL, string(apiKey))
 	if qerr != nil {
-		adminError(w, http.StatusBadGateway, "PROVIDER_BALANCE_QUERY_FAILED", qerr.Error(), nil)
+		adminError(w, http.StatusBadGateway, "PROVIDER_BALANCE_QUERY_FAILED", "providerBalanceQueryFailed", nil)
 		return
 	}
 	adminOK(w, map[string]any{"balances": balances})
@@ -97,7 +96,7 @@ func queryVendorBalance(ctx context.Context, vendorID, baseURL, apiKey string) (
 	case "novita":
 		return queryNovitaBalance(ctx, apiKey)
 	default:
-		return nil, errors.New("该厂商暂不支持余额查询")
+		return nil, errors.New("this-provider-does-not-support-balance")
 	}
 }
 
@@ -186,13 +185,11 @@ func queryDeepSeekBalance(ctx context.Context, apiKey string) ([]balanceEntry, e
 			unit = "CNY"
 		}
 		remaining := balanceF64(info, "total_balance")
-		label := unit + " 钱包"
+		labelKey := "wallet_usd"
 		if unit == "CNY" {
-			label = "人民币钱包"
-		} else if unit == "USD" {
-			label = "美元钱包"
+			labelKey = "wallet_cny"
 		}
-		entries = append(entries, balanceEntry{Label: label, Kind: "balance", Remaining: remaining, Unit: unit})
+		entries = append(entries, balanceEntry{LabelKey: labelKey, Kind: "balance", Remaining: remaining, Unit: unit})
 	}
 	if len(entries) == 0 {
 		return nil, errors.New("余额接口响应缺少 balance_infos 字段")
@@ -249,12 +246,12 @@ func queryZhipuBalance(ctx context.Context, vendorID, baseURL, apiKey string) ([
 		return nil, errors.New("余额接口响应缺少余额字段")
 	}
 	unit := "CNY"
-	label := "智谱 GLM"
+	labelKey := "provider_zhipu"
 	if vendorID == "zhipu-glm-en" {
 		unit = "USD"
-		label = "Z.ai"
+		labelKey = "provider_zai"
 	}
-	return []balanceEntry{{Label: label, Remaining: remaining, Unit: unit}}, nil
+	return []balanceEntry{{LabelKey: labelKey, Remaining: remaining, Unit: unit}}, nil
 }
 
 // ── 智谱 GLM Coding Plan ────────────────────────────────────
@@ -295,8 +292,8 @@ func queryZhipuPlanBalance(ctx context.Context, vendorID, baseURL, apiKey string
 		return nil, errors.New("套餐接口响应缺少 data.limits 字段")
 	}
 	windowByType := map[string]string{
-		"TOKENS_LIMIT": "5 小时",
-		"CREDIT_LIMIT": "每周",
+		"TOKENS_LIMIT": "quota_5h",
+		"CREDIT_LIMIT": "quota_weekly",
 	}
 	entries := make([]balanceEntry, 0, len(limits))
 	for _, item := range limits {
@@ -315,7 +312,8 @@ func queryZhipuPlanBalance(ctx context.Context, vendorID, baseURL, apiKey string
 			continue
 		}
 		remaining := 100 - *percentage
-		entry := balanceEntry{Label: window + "限额", Kind: "quota", Window: window, Used: percentage, Remaining: &remaining, Unit: "%"}
+		windowKey := window
+		entry := balanceEntry{LabelKey: windowKey, Kind: "quota", Used: percentage, Remaining: &remaining, Unit: "%"}
 		if reset := balanceF64(limit, "nextResetTime"); reset != nil {
 			value := int64(*reset)
 			entry.NextResetTime = &value
@@ -364,11 +362,11 @@ func queryStepFunBalance(ctx context.Context, vendorID, baseURL, apiKey string) 
 	if remaining == nil {
 		return nil, errors.New("余额接口响应缺少 balance 字段")
 	}
-	label := "StepFun"
+	labelKey := "provider_stepfun"
 	if vendorID == "stepfun-api-en" {
-		label = "StepFun 国际站"
+		labelKey = "provider_stepfun_global"
 	}
-	return []balanceEntry{{Label: label, Remaining: remaining, Unit: "CNY"}}, nil
+	return []balanceEntry{{LabelKey: labelKey, Remaining: remaining, Unit: "CNY"}}, nil
 }
 
 // ── SiliconFlow ─────────────────────────────────────────────
@@ -386,12 +384,12 @@ func querySiliconFlowBalance(ctx context.Context, vendorID, baseURL, apiKey stri
 		return nil, errors.New("余额接口响应缺少 data.totalBalance 字段")
 	}
 	unit := "CNY"
-	label := "SiliconFlow"
+	labelKey := "provider_siliconflow"
 	if vendorID == "siliconflow-en" {
 		unit = "USD"
-		label = "SiliconFlow (EN)"
+		labelKey = "provider_siliconflow_global"
 	}
-	return []balanceEntry{{Label: label, Remaining: remaining, Unit: unit}}, nil
+	return []balanceEntry{{LabelKey: labelKey, Remaining: remaining, Unit: unit}}, nil
 }
 
 // ── OpenRouter ──────────────────────────────────────────────
@@ -410,7 +408,7 @@ func queryOpenRouterBalance(ctx context.Context, apiKey string) ([]balanceEntry,
 		return nil, errors.New("余额接口响应缺少额度字段")
 	}
 	remaining := *total - *used
-	return []balanceEntry{{Label: "OpenRouter", Total: total, Used: used, Remaining: &remaining, Unit: "USD"}}, nil
+	return []balanceEntry{{LabelKey: "provider_openrouter", Total: total, Used: used, Remaining: &remaining, Unit: "USD"}}, nil
 }
 
 // ── Novita AI ───────────────────────────────────────────────
@@ -428,5 +426,5 @@ func queryNovitaBalance(ctx context.Context, apiKey string) ([]balanceEntry, err
 		return nil, errors.New("余额接口响应缺少 availableBalance 字段")
 	}
 	v := *available / 10000
-	return []balanceEntry{{Label: "Novita AI", Remaining: &v, Unit: "USD"}}, nil
+	return []balanceEntry{{LabelKey: "provider_novita", Remaining: &v, Unit: "USD"}}, nil
 }

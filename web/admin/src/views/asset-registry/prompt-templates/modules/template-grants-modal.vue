@@ -59,7 +59,12 @@ const subjectOptions = computed(() => {
 });
 
 const columns = computed<DataTableColumns<Api.Management.AssetGrant>>(() => [
-  { title: $t('business.access-scope'), key: 'subject_name', minWidth: 160 },
+  {
+    title: $t('business.access-scope'),
+    key: 'subject_name',
+    minWidth: 160,
+    render: row => row.subject_name || $t('business.unknownSubject')
+  },
   {
     title: $t('business.allowed-actions'),
     key: 'actions',

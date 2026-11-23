@@ -70,7 +70,7 @@ func (d ServerDeps) ProviderAccounts(w http.ResponseWriter, r *http.Request) {
 		FROM provider_accounts WHERE organization_id = $1 ORDER BY created_at DESC
 	`, principal.OrganizationID)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "PROVIDER_LIST_FAILED", "无法查询 供应商账号", nil)
+		adminError(w, http.StatusInternalServerError, "PROVIDER_LIST_FAILED", "failed-to-query-provider-accounts", nil)
 		return
 	}
 	defer rows.Close()
@@ -79,14 +79,14 @@ func (d ServerDeps) ProviderAccounts(w http.ResponseWriter, r *http.Request) {
 		var item providerAccountResponse
 		var id uuid.UUID
 		if err := rows.Scan(&id, &item.Provider, &item.Name, &item.Region, &item.BaseURL, &item.BillingCurrency, &item.Status, &item.CreatedAt, &item.UpdatedAt); err != nil {
-			adminError(w, http.StatusInternalServerError, "PROVIDER_LIST_FAILED", "无法查询 供应商账号", nil)
+			adminError(w, http.StatusInternalServerError, "PROVIDER_LIST_FAILED", "failed-to-query-provider-accounts", nil)
 			return
 		}
 		item.ID = id.String()
 		list = append(list, item)
 	}
 	if err := rows.Err(); err != nil {
-		adminError(w, http.StatusInternalServerError, "PROVIDER_LIST_FAILED", "无法查询 供应商账号", nil)
+		adminError(w, http.StatusInternalServerError, "PROVIDER_LIST_FAILED", "failed-to-query-provider-accounts", nil)
 		return
 	}
 	// 近 24 小时被动健康统计:路由已按成功率自动降权,这里补足可见性。
@@ -106,7 +106,7 @@ func (d ServerDeps) ProviderAccounts(w http.ResponseWriter, r *http.Request) {
 		GROUP BY a.id
 	`, principal.OrganizationID)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "PROVIDER_LIST_FAILED", "无法查询 供应商健康统计", nil)
+		adminError(w, http.StatusInternalServerError, "PROVIDER_LIST_FAILED", "failed-to-query-provider-health-statistics", nil)
 		return
 	}
 	defer healthRows.Close()
@@ -127,7 +127,7 @@ func (d ServerDeps) ProviderAccounts(w http.ResponseWriter, r *http.Request) {
 			ActiveCandidates int
 		}
 		if err := healthRows.Scan(&id, &h.Requests, &h.SuccessRate, &h.AverageLatencyMS, &h.LastUsedAt, &h.ActiveCandidates); err != nil {
-			adminError(w, http.StatusInternalServerError, "PROVIDER_LIST_FAILED", "无法查询 供应商健康统计", nil)
+			adminError(w, http.StatusInternalServerError, "PROVIDER_LIST_FAILED", "failed-to-query-provider-health-statistics", nil)
 			return
 		}
 		health[id] = h
@@ -162,29 +162,29 @@ func (d ServerDeps) CreateProviderAccount(w http.ResponseWriter, r *http.Request
 	body.Provider = strings.TrimSpace(body.Provider)
 	body.Name = strings.TrimSpace(body.Name)
 	if !allowedProviders[body.Provider] && bifrostx.VendorByID(body.Provider) == nil {
-		adminError(w, http.StatusBadRequest, "PROVIDER_UNSUPPORTED", "不支持的 provider 类型", nil)
+		adminError(w, http.StatusBadRequest, "PROVIDER_UNSUPPORTED", "unsupported-provider-type", nil)
 		return
 	}
 	// 厂商账号的接口地址由服务端目录内置;仅本地/自部署类厂商允许自定义 base_url。
 	if vendor := bifrostx.VendorByID(body.Provider); vendor != nil {
 		if body.BaseURL != nil && strings.TrimSpace(*body.BaseURL) != "" && !vendor.EditableURL {
 			adminError(w, http.StatusBadRequest, "PROVIDER_BASE_URL_NOT_ALLOWED",
-				"该厂商的接口地址由系统内置,无需填写 base_url", nil)
+				"provider-base-url-not-allowed", nil)
 			return
 		}
 	}
 	if body.Name == "" {
-		adminError(w, http.StatusBadRequest, "PROVIDER_NAME_REQUIRED", "请填写账号名称", nil)
+		adminError(w, http.StatusBadRequest, "PROVIDER_NAME_REQUIRED", "enter-an-account-name", nil)
 		return
 	}
 	if strings.TrimSpace(body.APIKey) == "" {
-		adminError(w, http.StatusBadRequest, "PROVIDER_KEY_REQUIRED", "请填写 API Key", nil)
+		adminError(w, http.StatusBadRequest, "PROVIDER_KEY_REQUIRED", "enter-an-api-key", nil)
 		return
 	}
 	// Bifrost 会在 base_url 后自动拼接 /v1/... 路径;以 /v1 结尾会拼出 /v1/v1/... 必然 404。
 	if v1PathProviders[body.Provider] && baseURLHasV1Suffix(body.BaseURL) {
 		adminError(w, http.StatusBadRequest, "PROVIDER_BASE_URL_INVALID",
-			"base_url 不能以 /v1 结尾:网关会自动拼接 /v1/chat/completions 等路径,请填写不含 /v1 的地址", nil)
+			"provider-base-url-v1-suffix", nil)
 		return
 	}
 	// 引擎要求同一 provider 的 base URL 不能冲突,创建前提前拦截并说明原因。
@@ -194,23 +194,23 @@ func (d ServerDeps) CreateProviderAccount(w http.ResponseWriter, r *http.Request
 			SELECT count(*) FROM provider_accounts
 			WHERE organization_id = $1 AND provider = $2 AND base_url IS NOT NULL AND base_url <> $3
 		`, principal.OrganizationID, body.Provider, *body.BaseURL).Scan(&count); err != nil {
-			adminError(w, http.StatusInternalServerError, "PROVIDER_CREATE_FAILED", "创建 供应商账号失败", nil)
+			adminError(w, http.StatusInternalServerError, "PROVIDER_CREATE_FAILED", "failed-to-create-the-provider-account", nil)
 			return
 		}
 		if count > 0 {
 			adminError(w, http.StatusConflict, "PROVIDER_BASE_URL_CONFLICT",
-				"同一 provider 下已存在不同 base URL 的账号;当前引擎要求同一 provider 使用相同 base URL", nil)
+				"provider-base-url-conflict", nil)
 			return
 		}
 	}
 	billingCurrency, err := normalizeCurrency(body.BillingCurrency)
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "PROVIDER_CURRENCY_INVALID", err.Error(), nil)
+		adminError(w, http.StatusBadRequest, "PROVIDER_CURRENCY_INVALID", "providerCurrencyInvalid", nil)
 		return
 	}
 	ciphertext, err := vault.Encrypt(d.MasterKey, []byte(body.APIKey))
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "PROVIDER_CREATE_FAILED", "凭据加密失败", nil)
+		adminError(w, http.StatusInternalServerError, "PROVIDER_CREATE_FAILED", "failed-to-encrypt-credentials", nil)
 		return
 	}
 	accountID := uuid.New()
@@ -236,10 +236,10 @@ func (d ServerDeps) CreateProviderAccount(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.ConstraintName == "provider_accounts_organization_id_name_key" {
-			adminError(w, http.StatusConflict, "PROVIDER_NAME_EXISTS", "同名 供应商账号已存在", nil)
+			adminError(w, http.StatusConflict, "PROVIDER_NAME_EXISTS", "a-provider-account-with-the-same", nil)
 			return
 		}
-		adminError(w, http.StatusInternalServerError, "PROVIDER_CREATE_FAILED", "创建 供应商账号失败", nil)
+		adminError(w, http.StatusInternalServerError, "PROVIDER_CREATE_FAILED", "failed-to-create-the-provider-account", nil)
 		return
 	}
 	if !d.reloadEngine(w, r) {
@@ -256,29 +256,29 @@ func (d ServerDeps) DeleteProviderAccount(w http.ResponseWriter, r *http.Request
 	}
 	accountID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "PROVIDER_INVALID_ID", "账号 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "PROVIDER_INVALID_ID", "invalid-account-id", nil)
 		return
 	}
 	var count int
 	if err := d.Pool.QueryRow(r.Context(), `
 		SELECT count(*) FROM model_candidates WHERE provider_account_id = $1
 	`, accountID).Scan(&count); err != nil {
-		adminError(w, http.StatusInternalServerError, "PROVIDER_DELETE_FAILED", "删除 供应商账号失败", nil)
+		adminError(w, http.StatusInternalServerError, "PROVIDER_DELETE_FAILED", "failed-to-delete-the-provider-account", nil)
 		return
 	}
 	if count > 0 {
-		adminError(w, http.StatusConflict, "PROVIDER_IN_USE", "该账号仍被模型候选引用,请先下线相关候选", map[string]int{"candidate_count": count})
+		adminError(w, http.StatusConflict, "PROVIDER_IN_USE", "this-account-is-still-referenced-by", map[string]any{"candidate_count": count})
 		return
 	}
 	tag, err := d.Pool.Exec(r.Context(), `
 		DELETE FROM provider_accounts WHERE id = $1 AND organization_id = $2
 	`, accountID, principal.OrganizationID)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "PROVIDER_DELETE_FAILED", "删除 供应商账号失败", nil)
+		adminError(w, http.StatusInternalServerError, "PROVIDER_DELETE_FAILED", "failed-to-delete-the-provider-account", nil)
 		return
 	}
 	if tag.RowsAffected() == 0 {
-		adminError(w, http.StatusNotFound, "PROVIDER_NOT_FOUND", "供应商账号不存在", nil)
+		adminError(w, http.StatusNotFound, "PROVIDER_NOT_FOUND", "provider-account-does-not-exist", nil)
 		return
 	}
 	_, _ = d.Pool.Exec(r.Context(), `
@@ -300,7 +300,7 @@ func (d ServerDeps) reloadEngine(w http.ResponseWriter, r *http.Request) bool {
 	defer cancel()
 	if err := d.ReloadEngine(ctx); err != nil {
 		adminError(w, http.StatusInternalServerError, "ENGINE_RELOAD_FAILED",
-			"供应商配置已保存,但上游引擎重载失败,请检查配置后重试或重启服务", nil)
+			"provider-engine-reload-failed", nil)
 		return false
 	}
 	return true
@@ -329,7 +329,7 @@ func (d ServerDeps) UpdateProviderAccount(w http.ResponseWriter, r *http.Request
 	}
 	accountID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "PROVIDER_ID_INVALID", "供应商账号 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "PROVIDER_ID_INVALID", "invalid-provider-account-id", nil)
 		return
 	}
 	var body updateProviderAccountRequest
@@ -338,7 +338,7 @@ func (d ServerDeps) UpdateProviderAccount(w http.ResponseWriter, r *http.Request
 	}
 	body.Name = strings.TrimSpace(body.Name)
 	if body.Name == "" {
-		adminError(w, http.StatusBadRequest, "PROVIDER_NAME_REQUIRED", "请填写账号名称", nil)
+		adminError(w, http.StatusBadRequest, "PROVIDER_NAME_REQUIRED", "enter-an-account-name", nil)
 		return
 	}
 	// base_url 更新沿用创建时的引擎约束:同 provider 下不允许出现不同 base URL。
@@ -349,12 +349,12 @@ func (d ServerDeps) UpdateProviderAccount(w http.ResponseWriter, r *http.Request
 			WHERE organization_id = $1 AND provider = (SELECT provider FROM provider_accounts WHERE id = $2)
 			  AND id <> $2 AND base_url IS NOT NULL AND base_url <> $3
 		`, principal.OrganizationID, accountID, *body.BaseURL).Scan(&count); err != nil {
-			adminError(w, http.StatusInternalServerError, "PROVIDER_UPDATE_FAILED", "更新 供应商账号失败", nil)
+			adminError(w, http.StatusInternalServerError, "PROVIDER_UPDATE_FAILED", "failed-to-update-the-provider-account", nil)
 			return
 		}
 		if count > 0 {
 			adminError(w, http.StatusConflict, "PROVIDER_BASE_URL_CONFLICT",
-				"同一 provider 下已存在不同 base URL 的账号;当前引擎要求同一 provider 使用相同 base URL", nil)
+				"provider-base-url-conflict", nil)
 			return
 		}
 	}
@@ -363,29 +363,29 @@ func (d ServerDeps) UpdateProviderAccount(w http.ResponseWriter, r *http.Request
 		SELECT name, provider FROM provider_accounts WHERE id = $1 AND organization_id = $2
 	`, accountID, principal.OrganizationID).Scan(&oldName, &provider)
 	if errors.Is(err, pgx.ErrNoRows) {
-		adminError(w, http.StatusNotFound, "PROVIDER_NOT_FOUND", "供应商账号不存在或不属于当前组织", nil)
+		adminError(w, http.StatusNotFound, "PROVIDER_NOT_FOUND", "provider-account-does-not-exist-or", nil)
 		return
 	}
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "PROVIDER_UPDATE_FAILED", "更新 供应商账号失败", nil)
+		adminError(w, http.StatusInternalServerError, "PROVIDER_UPDATE_FAILED", "failed-to-update-the-provider-account", nil)
 		return
 	}
 	// 厂商账号的接口地址由服务端目录内置,不可修改。
 	if vendor := bifrostx.VendorByID(provider); vendor != nil && !vendor.EditableURL &&
 		body.BaseURL != nil && strings.TrimSpace(*body.BaseURL) != "" {
 		adminError(w, http.StatusBadRequest, "PROVIDER_BASE_URL_NOT_ALLOWED",
-			"该厂商的接口地址由系统内置,无法修改 base_url", nil)
+			"provider-base-url-not-editable", nil)
 		return
 	}
 	// base_url 更新沿用创建时的约束:openai/anthropic 类 provider 不允许 /v1 结尾。
 	if v1PathProviders[provider] && baseURLHasV1Suffix(body.BaseURL) {
 		adminError(w, http.StatusBadRequest, "PROVIDER_BASE_URL_INVALID",
-			"base_url 不能以 /v1 结尾:网关会自动拼接 /v1/chat/completions 等路径,请填写不含 /v1 的地址", nil)
+			"provider-base-url-v1-suffix", nil)
 		return
 	}
 	billingCurrency, err := normalizeCurrency(body.BillingCurrency)
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "PROVIDER_CURRENCY_INVALID", err.Error(), nil)
+		adminError(w, http.StatusBadRequest, "PROVIDER_CURRENCY_INVALID", "providerCurrencyInvalid", nil)
 		return
 	}
 	if _, err := d.Pool.Exec(r.Context(), `
@@ -394,10 +394,10 @@ func (d ServerDeps) UpdateProviderAccount(w http.ResponseWriter, r *http.Request
 	`, accountID, principal.OrganizationID, body.Name, body.Region, body.BaseURL, billingCurrency); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.ConstraintName == "provider_accounts_organization_id_name_key" {
-			adminError(w, http.StatusConflict, "PROVIDER_NAME_EXISTS", "同名 供应商账号已存在", nil)
+			adminError(w, http.StatusConflict, "PROVIDER_NAME_EXISTS", "a-provider-account-with-the-same", nil)
 			return
 		}
-		adminError(w, http.StatusInternalServerError, "PROVIDER_UPDATE_FAILED", "更新 供应商账号失败", nil)
+		adminError(w, http.StatusInternalServerError, "PROVIDER_UPDATE_FAILED", "failed-to-update-the-provider-account", nil)
 		return
 	}
 	_, _ = d.Pool.Exec(r.Context(), `
@@ -413,8 +413,10 @@ func (d ServerDeps) UpdateProviderAccount(w http.ResponseWriter, r *http.Request
 }
 
 type providerTestResult struct {
-	OK      bool   `json:"ok"`
-	Message string `json:"message"`
+	OK         bool   `json:"ok"`
+	Reason     string `json:"reason"`
+	Detail     string `json:"detail,omitempty"`
+	StatusCode int    `json:"status_code,omitempty"`
 }
 
 type providerAccess struct {
@@ -452,30 +454,30 @@ func (d ServerDeps) TestProviderAccount(w http.ResponseWriter, r *http.Request) 
 	}
 	accountID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "PROVIDER_ID_INVALID", "供应商账号 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "PROVIDER_ID_INVALID", "invalid-provider-account-id", nil)
 		return
 	}
 	access, err := d.loadProviderAccess(r.Context(), principal.OrganizationID, accountID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		adminError(w, http.StatusNotFound, "PROVIDER_NOT_FOUND", "供应商账号不存在、无权访问或没有凭据", nil)
+		adminError(w, http.StatusNotFound, "PROVIDER_NOT_FOUND", "provider-account-does-not-exist-is", nil)
 		return
 	}
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "PROVIDER_TEST_FAILED", "凭据读取失败,请检查主密钥配置", nil)
+		adminError(w, http.StatusInternalServerError, "PROVIDER_TEST_FAILED", "failed-to-read-credentials-check-the", nil)
 		return
 	}
 
 	testURL, headers, err := providerProbeRequest(access.Provider, access.BaseURL, access.APIKey)
 	if err != nil {
 		adminError(w, http.StatusBadRequest, "PROVIDER_TEST_UNSUPPORTED",
-			"该 provider 暂不支持在线连通性测试,请通过实际调用验证", nil)
+			"provider-test-unsupported", nil)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, testURL, nil)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "PROVIDER_TEST_FAILED", "连通性测试失败", nil)
+		adminError(w, http.StatusInternalServerError, "PROVIDER_TEST_FAILED", "connectivity-test-failed", nil)
 		return
 	}
 	for k, v := range headers {
@@ -483,23 +485,23 @@ func (d ServerDeps) TestProviderAccount(w http.ResponseWriter, r *http.Request) 
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		adminOK(w, providerTestResult{OK: false, Message: "无法连接上游: " + err.Error()})
+		adminOK(w, providerTestResult{OK: false, Reason: "network_error", Detail: err.Error()})
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		adminOK(w, providerTestResult{OK: true, Message: fmt.Sprintf("连通正常(HTTP %d)", resp.StatusCode)})
+		adminOK(w, providerTestResult{OK: true, Reason: "connected", StatusCode: resp.StatusCode})
 		return
 	}
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		adminOK(w, providerTestResult{OK: false, Message: fmt.Sprintf("凭据被拒绝(HTTP %d),请检查 API Key", resp.StatusCode)})
+		adminOK(w, providerTestResult{OK: false, Reason: "credentials_rejected", StatusCode: resp.StatusCode})
 		return
 	}
 	if resp.StatusCode == http.StatusNotFound {
-		adminOK(w, providerTestResult{OK: false, Message: "上游返回 HTTP 404:请检查 base_url 是否多写了 /v1(网关会在 base_url 后自动拼接 /v1/... 路径)"})
+		adminOK(w, providerTestResult{OK: false, Reason: "v1_suffix_suspected", StatusCode: resp.StatusCode})
 		return
 	}
-	adminOK(w, providerTestResult{OK: false, Message: fmt.Sprintf("上游返回 HTTP %d", resp.StatusCode)})
+	adminOK(w, providerTestResult{OK: false, Reason: "upstream_http_error", StatusCode: resp.StatusCode})
 }
 
 // baseURLHasV1Suffix 判断 base_url 的路径是否以 /v1 结尾。

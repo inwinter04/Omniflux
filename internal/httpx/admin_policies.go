@@ -67,7 +67,7 @@ func (d ServerDeps) RoutePolicies(w http.ResponseWriter, r *http.Request) {
 		FROM route_policies WHERE organization_id = $1 ORDER BY created_at DESC
 	`, principal.OrganizationID)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "POLICY_LIST_FAILED", "无法查询路由策略", nil)
+		adminError(w, http.StatusInternalServerError, "POLICY_LIST_FAILED", "failed-to-query-route-policies", nil)
 		return
 	}
 	defer rows.Close()
@@ -78,7 +78,7 @@ func (d ServerDeps) RoutePolicies(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&id, &item.Name, &item.Version, &item.Strategy, &item.Constraints, &item.Weights,
 			&item.FallbackLimit, &item.ProviderTimeoutMS, &item.FirstTokenTimeoutMS,
 			&item.Status, &item.CreatedAt, &item.UpdatedAt); err != nil {
-			adminError(w, http.StatusInternalServerError, "POLICY_LIST_FAILED", "无法查询路由策略", nil)
+			adminError(w, http.StatusInternalServerError, "POLICY_LIST_FAILED", "failed-to-query-route-policies", nil)
 			return
 		}
 		item.ID = id.String()
@@ -99,20 +99,20 @@ func (d ServerDeps) CreateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	body.Name = strings.TrimSpace(body.Name)
 	if body.Name == "" {
-		adminError(w, http.StatusBadRequest, "POLICY_NAME_REQUIRED", "请填写策略名称", nil)
+		adminError(w, http.StatusBadRequest, "POLICY_NAME_REQUIRED", "enter-a-policy-name", nil)
 		return
 	}
 	if body.Strategy == "" {
 		body.Strategy = "balanced"
 	}
 	if !allowedStrategies[body.Strategy] {
-		adminError(w, http.StatusBadRequest, "POLICY_STRATEGY_UNSUPPORTED", "不支持的策略类型", nil)
+		adminError(w, http.StatusBadRequest, "POLICY_STRATEGY_UNSUPPORTED", "unsupported-policy-type", nil)
 		return
 	}
 	fallbackLimit := 2
 	if body.FallbackLimit != nil {
 		if *body.FallbackLimit < 0 {
-			adminError(w, http.StatusBadRequest, "POLICY_INVALID", "fallback_limit 不能为负数", nil)
+			adminError(w, http.StatusBadRequest, "POLICY_INVALID", "fallback-limit-cannot-be-negative", nil)
 			return
 		}
 		fallbackLimit = *body.FallbackLimit
@@ -120,7 +120,7 @@ func (d ServerDeps) CreateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 	providerTimeout := 60000
 	if body.ProviderTimeoutMS != nil {
 		if *body.ProviderTimeoutMS <= 0 {
-			adminError(w, http.StatusBadRequest, "POLICY_INVALID", "provider_timeout_ms 必须大于 0", nil)
+			adminError(w, http.StatusBadRequest, "POLICY_INVALID", "provider-timeout-ms-must-be-greater", nil)
 			return
 		}
 		providerTimeout = *body.ProviderTimeoutMS
@@ -128,7 +128,7 @@ func (d ServerDeps) CreateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 	firstTokenTimeout := 15000
 	if body.FirstTokenTimeoutMS != nil {
 		if *body.FirstTokenTimeoutMS <= 0 {
-			adminError(w, http.StatusBadRequest, "POLICY_INVALID", "first_token_timeout_ms 必须大于 0", nil)
+			adminError(w, http.StatusBadRequest, "POLICY_INVALID", "first-token-timeout-ms-must-be", nil)
 			return
 		}
 		firstTokenTimeout = *body.FirstTokenTimeoutMS
@@ -138,7 +138,7 @@ func (d ServerDeps) CreateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 		constraints = json.RawMessage("{}")
 	}
 	if err := dataplane.ValidateConstraintsJSON(constraints); err != nil {
-		adminError(w, http.StatusBadRequest, "POLICY_CONSTRAINTS_INVALID", err.Error(), nil)
+		adminError(w, http.StatusBadRequest, "POLICY_CONSTRAINTS_INVALID", "policyConstraintsInvalid", nil)
 		return
 	}
 	weights := body.Weights
@@ -155,10 +155,10 @@ func (d ServerDeps) CreateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 		fallbackLimit, providerTimeout, firstTokenTimeout); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.ConstraintName == "route_policies_organization_id_name_key" {
-			adminError(w, http.StatusConflict, "POLICY_NAME_EXISTS", "同名路由策略已存在", nil)
+			adminError(w, http.StatusConflict, "POLICY_NAME_EXISTS", "a-route-policy-with-the-same", nil)
 			return
 		}
-		adminError(w, http.StatusInternalServerError, "POLICY_CREATE_FAILED", "创建路由策略失败", nil)
+		adminError(w, http.StatusInternalServerError, "POLICY_CREATE_FAILED", "failed-to-create-the-route-policy", nil)
 		return
 	}
 	_, _ = d.Pool.Exec(r.Context(), `
@@ -176,46 +176,46 @@ func (d ServerDeps) DeleteRoutePolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	policyID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "POLICY_ID_INVALID", "路由策略 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "POLICY_ID_INVALID", "invalid-route-policy-id", nil)
 		return
 	}
 	var exists bool
 	if err := d.Pool.QueryRow(r.Context(), `
 		SELECT EXISTS (SELECT 1 FROM route_policies WHERE id = $1 AND organization_id = $2)
 	`, policyID, principal.OrganizationID).Scan(&exists); err != nil {
-		adminError(w, http.StatusInternalServerError, "POLICY_DELETE_FAILED", "删除路由策略失败", nil)
+		adminError(w, http.StatusInternalServerError, "POLICY_DELETE_FAILED", "failed-to-delete-the-route-policy", nil)
 		return
 	}
 	if !exists {
-		adminError(w, http.StatusNotFound, "POLICY_NOT_FOUND", "路由策略不存在或不属于当前组织", nil)
+		adminError(w, http.StatusNotFound, "POLICY_NOT_FOUND", "route-policy-does-not-exist-or", nil)
 		return
 	}
 	var serviceCount int
 	if err := d.Pool.QueryRow(r.Context(), `
 		SELECT count(*) FROM model_services WHERE route_policy_id = $1
 	`, policyID).Scan(&serviceCount); err != nil {
-		adminError(w, http.StatusInternalServerError, "POLICY_DELETE_FAILED", "删除路由策略失败", nil)
+		adminError(w, http.StatusInternalServerError, "POLICY_DELETE_FAILED", "failed-to-delete-the-route-policy", nil)
 		return
 	}
 	if serviceCount > 0 {
 		adminError(w, http.StatusConflict, "POLICY_IN_USE",
-			"路由策略已被模型服务引用,请先调整模型服务后再删除", nil)
+			"policy-in-use", nil)
 		return
 	}
 	var decisionCount int
 	if err := d.Pool.QueryRow(r.Context(), `
 		SELECT count(*) FROM policy_decisions WHERE route_policy_id = $1
 	`, policyID).Scan(&decisionCount); err != nil {
-		adminError(w, http.StatusInternalServerError, "POLICY_DELETE_FAILED", "删除路由策略失败", nil)
+		adminError(w, http.StatusInternalServerError, "POLICY_DELETE_FAILED", "failed-to-delete-the-route-policy", nil)
 		return
 	}
 	if decisionCount > 0 {
 		adminError(w, http.StatusConflict, "POLICY_HAS_DECISIONS",
-			"路由策略存在决策记录,为保留审计数据无法删除", nil)
+			"policy-has-decisions", nil)
 		return
 	}
 	if _, err := d.Pool.Exec(r.Context(), `DELETE FROM route_policies WHERE id = $1`, policyID); err != nil {
-		adminError(w, http.StatusInternalServerError, "POLICY_DELETE_FAILED", "删除路由策略失败", nil)
+		adminError(w, http.StatusInternalServerError, "POLICY_DELETE_FAILED", "failed-to-delete-the-route-policy", nil)
 		return
 	}
 	_, _ = d.Pool.Exec(r.Context(), `
@@ -245,31 +245,31 @@ func (d ServerDeps) UpdateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	body.Name = strings.TrimSpace(body.Name)
 	if body.Name == "" {
-		adminError(w, http.StatusBadRequest, "POLICY_NAME_REQUIRED", "请填写策略名称", nil)
+		adminError(w, http.StatusBadRequest, "POLICY_NAME_REQUIRED", "enter-a-policy-name", nil)
 		return
 	}
 	if body.Strategy == "" {
 		body.Strategy = "balanced"
 	}
 	if !allowedStrategies[body.Strategy] {
-		adminError(w, http.StatusBadRequest, "POLICY_STRATEGY_UNSUPPORTED", "不支持的策略类型", nil)
+		adminError(w, http.StatusBadRequest, "POLICY_STRATEGY_UNSUPPORTED", "unsupported-policy-type", nil)
 		return
 	}
 	if body.FallbackLimit != nil && *body.FallbackLimit < 0 {
-		adminError(w, http.StatusBadRequest, "POLICY_INVALID", "fallback_limit 不能为负数", nil)
+		adminError(w, http.StatusBadRequest, "POLICY_INVALID", "fallback-limit-cannot-be-negative", nil)
 		return
 	}
 	if body.ProviderTimeoutMS != nil && *body.ProviderTimeoutMS <= 0 {
-		adminError(w, http.StatusBadRequest, "POLICY_INVALID", "provider_timeout_ms 必须大于 0", nil)
+		adminError(w, http.StatusBadRequest, "POLICY_INVALID", "provider-timeout-ms-must-be-greater", nil)
 		return
 	}
 	if body.FirstTokenTimeoutMS != nil && *body.FirstTokenTimeoutMS <= 0 {
-		adminError(w, http.StatusBadRequest, "POLICY_INVALID", "first_token_timeout_ms 必须大于 0", nil)
+		adminError(w, http.StatusBadRequest, "POLICY_INVALID", "first-token-timeout-ms-must-be", nil)
 		return
 	}
 	policyID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "POLICY_ID_INVALID", "路由策略 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "POLICY_ID_INVALID", "invalid-route-policy-id", nil)
 		return
 	}
 	var oldName string
@@ -277,11 +277,11 @@ func (d ServerDeps) UpdateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 		SELECT name FROM route_policies WHERE id = $1 AND organization_id = $2
 	`, policyID, principal.OrganizationID).Scan(&oldName)
 	if errors.Is(err, pgx.ErrNoRows) {
-		adminError(w, http.StatusNotFound, "POLICY_NOT_FOUND", "路由策略不存在或不属于当前组织", nil)
+		adminError(w, http.StatusNotFound, "POLICY_NOT_FOUND", "route-policy-does-not-exist-or", nil)
 		return
 	}
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "POLICY_UPDATE_FAILED", "更新路由策略失败", nil)
+		adminError(w, http.StatusInternalServerError, "POLICY_UPDATE_FAILED", "failed-to-update-the-route-policy", nil)
 		return
 	}
 	tag, err := d.Pool.Exec(r.Context(), `
@@ -299,14 +299,14 @@ func (d ServerDeps) UpdateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.ConstraintName == "route_policies_organization_id_name_key" {
-			adminError(w, http.StatusConflict, "POLICY_NAME_EXISTS", "同名路由策略已存在", nil)
+			adminError(w, http.StatusConflict, "POLICY_NAME_EXISTS", "a-route-policy-with-the-same", nil)
 			return
 		}
-		adminError(w, http.StatusInternalServerError, "POLICY_UPDATE_FAILED", "更新路由策略失败", nil)
+		adminError(w, http.StatusInternalServerError, "POLICY_UPDATE_FAILED", "failed-to-update-the-route-policy", nil)
 		return
 	}
 	if tag.RowsAffected() == 0 {
-		adminError(w, http.StatusNotFound, "POLICY_NOT_FOUND", "路由策略不存在或不属于当前组织", nil)
+		adminError(w, http.StatusNotFound, "POLICY_NOT_FOUND", "route-policy-does-not-exist-or", nil)
 		return
 	}
 	_, _ = d.Pool.Exec(r.Context(), `

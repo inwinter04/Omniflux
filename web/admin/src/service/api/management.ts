@@ -1,3 +1,4 @@
+import { translateBackendError } from '@/service/request/backend-error';
 import { $t } from '@/locales';
 import { request } from '../request';
 
@@ -375,7 +376,7 @@ export function fetchAssetVersion(id: string, versionId: string) {
 }
 
 export function fetchAssetDiff(id: string, from: string, to: string) {
-  return request<{ from_version: number; to_version: number; diff: string }>({
+  return request<Api.Management.AssetDiff>({
     url: `/assets/${id}/versions/diff`,
     params: { from, to }
   });
@@ -479,7 +480,11 @@ export async function streamPromptRun(
   });
   if (!response.ok) {
     const body = await response.json().catch(() => null);
-    throw new Error(body?.msg || $t('business.model-run-request-failed'));
+    throw new Error(
+      body?.reason
+        ? translateBackendError(body.reason, body.params, body.detail)
+        : $t('business.model-run-request-failed')
+    );
   }
   const reader = response.body?.getReader();
   if (!reader) throw new Error($t('business.the-current-browser-does-not'));
@@ -579,7 +584,11 @@ export async function streamAgentChat(
   });
   if (!response.ok) {
     const body = await response.json().catch(() => null);
-    throw new Error(body?.msg || $t('business.agent-run-request-failed'));
+    throw new Error(
+      body?.reason
+        ? translateBackendError(body.reason, body.params, body.detail)
+        : $t('business.agent-run-request-failed')
+    );
   }
   const reader = response.body?.getReader();
   if (!reader) throw new Error($t('business.the-current-browser-does-not'));

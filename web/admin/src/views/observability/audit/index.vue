@@ -59,7 +59,12 @@ const columns = computed<DataTableColumns<Api.Management.AuditEvent>>(() => [
     width: 180,
     render: row => formatTime(row.created_at)
   },
-  { title: $t('business.operator'), key: 'actor_name', width: 200 },
+  {
+    title: $t('business.operator'),
+    key: 'actor_name',
+    width: 200,
+    render: row => row.actor_name || actorTypeText(row.actor_type)
+  },
   {
     title: $t('business.identity'),
     key: 'actor_type',
@@ -149,7 +154,9 @@ onMounted(() => {
         <NDescriptions v-if="detail" :column="2" label-placement="left" bordered size="small">
           <NDescriptionsItem :label="$t('business.action')">{{ detail.action }}</NDescriptionsItem>
           <NDescriptionsItem :label="$t('business.result')">{{ auditResultText(detail.result) }}</NDescriptionsItem>
-          <NDescriptionsItem :label="$t('business.operator')">{{ detail.actor_name }}</NDescriptionsItem>
+          <NDescriptionsItem :label="$t('business.operator')">
+            {{ detail.actor_name || actorTypeText(detail.actor_type) }}
+          </NDescriptionsItem>
           <NDescriptionsItem :label="$t('business.identity')">{{ actorTypeText(detail.actor_type) }}</NDescriptionsItem>
           <NDescriptionsItem :label="$t('business.resource-type')">
             {{ auditResourceText(detail.resource_type) }}

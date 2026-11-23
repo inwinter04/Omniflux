@@ -74,7 +74,7 @@ func (d ServerDeps) ModelServices(w http.ResponseWriter, r *http.Request) {
 		FROM model_services WHERE organization_id = $1 ORDER BY created_at DESC
 	`, principal.OrganizationID)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "SERVICE_LIST_FAILED", "无法查询模型服务", nil)
+		adminError(w, http.StatusInternalServerError, "SERVICE_LIST_FAILED", "failed-to-query-model-services", nil)
 		return
 	}
 	defer svcRows.Close()
@@ -85,7 +85,7 @@ func (d ServerDeps) ModelServices(w http.ResponseWriter, r *http.Request) {
 		var id uuid.UUID
 		var policyID *uuid.UUID
 		if err := svcRows.Scan(&id, &item.Name, &policyID, &item.Status, &item.CreatedAt, &item.UpdatedAt); err != nil {
-			adminError(w, http.StatusInternalServerError, "SERVICE_LIST_FAILED", "无法查询模型服务", nil)
+			adminError(w, http.StatusInternalServerError, "SERVICE_LIST_FAILED", "failed-to-query-model-services", nil)
 			return
 		}
 		item.ID = id.String()
@@ -98,7 +98,7 @@ func (d ServerDeps) ModelServices(w http.ResponseWriter, r *http.Request) {
 		serviceIDs[id] = len(list) - 1
 	}
 	if err := svcRows.Err(); err != nil {
-		adminError(w, http.StatusInternalServerError, "SERVICE_LIST_FAILED", "无法查询模型服务", nil)
+		adminError(w, http.StatusInternalServerError, "SERVICE_LIST_FAILED", "failed-to-query-model-services", nil)
 		return
 	}
 	if len(list) == 0 {
@@ -114,7 +114,7 @@ func (d ServerDeps) ModelServices(w http.ResponseWriter, r *http.Request) {
 		ORDER BY c.priority ASC
 	`, principal.OrganizationID)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "SERVICE_LIST_FAILED", "无法查询模型候选", nil)
+		adminError(w, http.StatusInternalServerError, "SERVICE_LIST_FAILED", "failed-to-query-model-candidates", nil)
 		return
 	}
 	defer candRows.Close()
@@ -123,7 +123,7 @@ func (d ServerDeps) ModelServices(w http.ResponseWriter, r *http.Request) {
 		var c candidateResponse
 		if err := candRows.Scan(&candID, &svcID, &accountID, &c.Provider, &c.UpstreamModel, &c.Priority, &c.Weight,
 			&c.InputCostPerMillion, &c.OutputCostPerMillion, &c.QualityScore, &c.CostCurrency, &c.Status); err != nil {
-			adminError(w, http.StatusInternalServerError, "SERVICE_LIST_FAILED", "无法查询模型候选", nil)
+			adminError(w, http.StatusInternalServerError, "SERVICE_LIST_FAILED", "failed-to-query-model-candidates", nil)
 			return
 		}
 		c.ID = candID.String()
@@ -143,7 +143,7 @@ func (d ServerDeps) ModelServices(w http.ResponseWriter, r *http.Request) {
 		GROUP BY c.model_service_id
 	`, principal.OrganizationID)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "SERVICE_LIST_FAILED", "无法查询模型服务健康统计", nil)
+		adminError(w, http.StatusInternalServerError, "SERVICE_LIST_FAILED", "failed-to-query-model-service-health", nil)
 		return
 	}
 	defer healthRows.Close()
@@ -158,7 +158,7 @@ func (d ServerDeps) ModelServices(w http.ResponseWriter, r *http.Request) {
 		var id uuid.UUID
 		var item serviceHealth
 		if err := healthRows.Scan(&id, &item.requests, &item.rate, &item.latency, &item.lastUsed); err != nil {
-			adminError(w, http.StatusInternalServerError, "SERVICE_LIST_FAILED", "无法读取模型服务健康统计", nil)
+			adminError(w, http.StatusInternalServerError, "SERVICE_LIST_FAILED", "failed-to-read-model-service-health", nil)
 			return
 		}
 		health[id] = item
@@ -193,26 +193,26 @@ func (d ServerDeps) CreateModelService(w http.ResponseWriter, r *http.Request) {
 	}
 	body.Name = strings.TrimSpace(body.Name)
 	if body.Name == "" {
-		adminError(w, http.StatusBadRequest, "SERVICE_NAME_REQUIRED", "请填写模型服务名称", nil)
+		adminError(w, http.StatusBadRequest, "SERVICE_NAME_REQUIRED", "enter-a-model-service-name", nil)
 		return
 	}
 	if len(body.Candidates) == 0 {
-		adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATES_REQUIRED", "至少需要一个模型候选", nil)
+		adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATES_REQUIRED", "at-least-one-model-candidate-is", nil)
 		return
 	}
 	accountIDs := make([]uuid.UUID, 0, len(body.Candidates))
 	for _, c := range body.Candidates {
 		if strings.TrimSpace(c.UpstreamModel) == "" {
-			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "候选缺少 upstream_model", nil)
+			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "candidate-is-missing-upstream-model", nil)
 			return
 		}
 		if c.QualityScore != nil && (*c.QualityScore < 0 || *c.QualityScore > 1) {
-			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "候选质量分必须在 0 到 1 之间", nil)
+			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "candidate-quality-score-must-be-between", nil)
 			return
 		}
 		parsed, err := uuid.Parse(c.ProviderAccountID)
 		if err != nil {
-			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "候选的 provider_account_id 不合法", nil)
+			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "invalid-candidate-provider-account-id", nil)
 			return
 		}
 		accountIDs = append(accountIDs, parsed)
@@ -230,35 +230,35 @@ func (d ServerDeps) CreateModelService(w http.ResponseWriter, r *http.Request) {
 	if err := d.Pool.QueryRow(r.Context(), `
 		SELECT count(*) FROM provider_accounts WHERE id = ANY($1) AND organization_id = $2
 	`, uniqueAccountIDs, principal.OrganizationID).Scan(&accountCount); err != nil {
-		adminError(w, http.StatusInternalServerError, "SERVICE_CREATE_FAILED", "创建模型服务失败", nil)
+		adminError(w, http.StatusInternalServerError, "SERVICE_CREATE_FAILED", "failed-to-create-the-model-service", nil)
 		return
 	}
 	if accountCount != len(uniqueAccountIDs) {
-		adminError(w, http.StatusBadRequest, "SERVICE_ACCOUNT_NOT_FOUND", "候选引用的 供应商账号不存在或不属于当前组织", nil)
+		adminError(w, http.StatusBadRequest, "SERVICE_ACCOUNT_NOT_FOUND", "the-provider-account-referenced-by-the", nil)
 		return
 	}
 	var policyID *uuid.UUID
 	if body.RoutePolicyID != nil && *body.RoutePolicyID != "" {
 		parsed, err := uuid.Parse(*body.RoutePolicyID)
 		if err != nil {
-			adminError(w, http.StatusBadRequest, "SERVICE_POLICY_INVALID", "route_policy_id 不合法", nil)
+			adminError(w, http.StatusBadRequest, "SERVICE_POLICY_INVALID", "invalid-route-policy-id-1abhob0", nil)
 			return
 		}
 		var count int
 		if err := d.Pool.QueryRow(r.Context(), `
 			SELECT count(*) FROM route_policies WHERE id = $1 AND organization_id = $2
 		`, parsed, principal.OrganizationID).Scan(&count); err != nil {
-			adminError(w, http.StatusInternalServerError, "SERVICE_CREATE_FAILED", "创建模型服务失败", nil)
+			adminError(w, http.StatusInternalServerError, "SERVICE_CREATE_FAILED", "failed-to-create-the-model-service", nil)
 			return
 		}
 		if count == 0 {
-			adminError(w, http.StatusBadRequest, "SERVICE_POLICY_NOT_FOUND", "路由策略不存在或不属于当前组织", nil)
+			adminError(w, http.StatusBadRequest, "SERVICE_POLICY_NOT_FOUND", "route-policy-does-not-exist-or", nil)
 			return
 		}
 		policyID = &parsed
 	}
 	if _, err := normalizeCandidateCurrencies(r.Context(), d.Pool, body.Candidates); err != nil {
-		adminError(w, http.StatusBadRequest, "SERVICE_CURRENCY_INVALID", err.Error(), nil)
+		adminError(w, http.StatusBadRequest, "SERVICE_CURRENCY_INVALID", "serviceCurrencyInvalid", nil)
 		return
 	}
 	serviceID := uuid.New()
@@ -303,10 +303,10 @@ func (d ServerDeps) CreateModelService(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.ConstraintName == "model_services_organization_id_name_key" {
-			adminError(w, http.StatusConflict, "SERVICE_NAME_EXISTS", "同名模型服务已存在", nil)
+			adminError(w, http.StatusConflict, "SERVICE_NAME_EXISTS", "a-model-service-with-the-same", nil)
 			return
 		}
-		adminError(w, http.StatusInternalServerError, "SERVICE_CREATE_FAILED", "创建模型服务失败", nil)
+		adminError(w, http.StatusInternalServerError, "SERVICE_CREATE_FAILED", "failed-to-create-the-model-service", nil)
 		return
 	}
 	adminOK(w, map[string]string{"id": serviceID.String()})
@@ -342,34 +342,34 @@ func (d ServerDeps) DeleteModelService(w http.ResponseWriter, r *http.Request) {
 	}
 	serviceID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "SERVICE_ID_INVALID", "模型服务 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "SERVICE_ID_INVALID", "invalid-model-service-id", nil)
 		return
 	}
 	var exists bool
 	if err := d.Pool.QueryRow(r.Context(), `
 		SELECT EXISTS (SELECT 1 FROM model_services WHERE id = $1 AND organization_id = $2)
 	`, serviceID, principal.OrganizationID).Scan(&exists); err != nil {
-		adminError(w, http.StatusInternalServerError, "SERVICE_DELETE_FAILED", "删除模型服务失败", nil)
+		adminError(w, http.StatusInternalServerError, "SERVICE_DELETE_FAILED", "failed-to-delete-the-model-service", nil)
 		return
 	}
 	if !exists {
-		adminError(w, http.StatusNotFound, "SERVICE_NOT_FOUND", "模型服务不存在或不属于当前组织", nil)
+		adminError(w, http.StatusNotFound, "SERVICE_NOT_FOUND", "model-service-does-not-exist-or", nil)
 		return
 	}
 	var usageCount int
 	if err := d.Pool.QueryRow(r.Context(), `
 		SELECT count(*) FROM usage_records WHERE model_service_id = $1
 	`, serviceID).Scan(&usageCount); err != nil {
-		adminError(w, http.StatusInternalServerError, "SERVICE_DELETE_FAILED", "删除模型服务失败", nil)
+		adminError(w, http.StatusInternalServerError, "SERVICE_DELETE_FAILED", "failed-to-delete-the-model-service", nil)
 		return
 	}
 	if usageCount > 0 {
 		adminError(w, http.StatusConflict, "SERVICE_HAS_USAGE",
-			"模型服务存在用量记录,为保留审计数据无法删除", nil)
+			"service-has-usage", nil)
 		return
 	}
 	if _, err := d.Pool.Exec(r.Context(), `DELETE FROM model_services WHERE id = $1`, serviceID); err != nil {
-		adminError(w, http.StatusInternalServerError, "SERVICE_DELETE_FAILED", "删除模型服务失败", nil)
+		adminError(w, http.StatusInternalServerError, "SERVICE_DELETE_FAILED", "failed-to-delete-the-model-service", nil)
 		return
 	}
 	_, _ = d.Pool.Exec(r.Context(), `
@@ -387,7 +387,7 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 	}
 	serviceID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "SERVICE_ID_INVALID", "模型服务 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "SERVICE_ID_INVALID", "invalid-model-service-id", nil)
 		return
 	}
 	var body createModelServiceRequest
@@ -396,26 +396,26 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 	}
 	body.Name = strings.TrimSpace(body.Name)
 	if body.Name == "" {
-		adminError(w, http.StatusBadRequest, "SERVICE_NAME_REQUIRED", "请填写模型服务名称", nil)
+		adminError(w, http.StatusBadRequest, "SERVICE_NAME_REQUIRED", "enter-a-model-service-name", nil)
 		return
 	}
 	if len(body.Candidates) == 0 {
-		adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATES_REQUIRED", "至少需要一个模型候选", nil)
+		adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATES_REQUIRED", "at-least-one-model-candidate-is", nil)
 		return
 	}
 	accountIDs := make([]uuid.UUID, 0, len(body.Candidates))
 	for _, c := range body.Candidates {
 		if strings.TrimSpace(c.UpstreamModel) == "" {
-			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "候选缺少 upstream_model", nil)
+			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "candidate-is-missing-upstream-model", nil)
 			return
 		}
 		if c.QualityScore != nil && (*c.QualityScore < 0 || *c.QualityScore > 1) {
-			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "候选质量分必须在 0 到 1 之间", nil)
+			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "candidate-quality-score-must-be-between", nil)
 			return
 		}
 		parsed, err := uuid.Parse(c.ProviderAccountID)
 		if err != nil {
-			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "候选的 provider_account_id 不合法", nil)
+			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "invalid-candidate-provider-account-id", nil)
 			return
 		}
 		accountIDs = append(accountIDs, parsed)
@@ -433,35 +433,35 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 	if err := d.Pool.QueryRow(r.Context(), `
 		SELECT count(*) FROM provider_accounts WHERE id = ANY($1) AND organization_id = $2
 	`, uniqueAccountIDs, principal.OrganizationID).Scan(&accountCount); err != nil {
-		adminError(w, http.StatusInternalServerError, "SERVICE_UPDATE_FAILED", "更新模型服务失败", nil)
+		adminError(w, http.StatusInternalServerError, "SERVICE_UPDATE_FAILED", "failed-to-update-the-model-service", nil)
 		return
 	}
 	if accountCount != len(uniqueAccountIDs) {
-		adminError(w, http.StatusBadRequest, "SERVICE_ACCOUNT_NOT_FOUND", "候选引用的 供应商账号不存在或不属于当前组织", nil)
+		adminError(w, http.StatusBadRequest, "SERVICE_ACCOUNT_NOT_FOUND", "the-provider-account-referenced-by-the", nil)
 		return
 	}
 	var policyID *uuid.UUID
 	if body.RoutePolicyID != nil && *body.RoutePolicyID != "" {
 		parsed, err := uuid.Parse(*body.RoutePolicyID)
 		if err != nil {
-			adminError(w, http.StatusBadRequest, "SERVICE_POLICY_INVALID", "route_policy_id 不合法", nil)
+			adminError(w, http.StatusBadRequest, "SERVICE_POLICY_INVALID", "invalid-route-policy-id-1abhob0", nil)
 			return
 		}
 		var count int
 		if err := d.Pool.QueryRow(r.Context(), `
 			SELECT count(*) FROM route_policies WHERE id = $1 AND organization_id = $2
 		`, parsed, principal.OrganizationID).Scan(&count); err != nil {
-			adminError(w, http.StatusInternalServerError, "SERVICE_UPDATE_FAILED", "更新模型服务失败", nil)
+			adminError(w, http.StatusInternalServerError, "SERVICE_UPDATE_FAILED", "failed-to-update-the-model-service", nil)
 			return
 		}
 		if count == 0 {
-			adminError(w, http.StatusBadRequest, "SERVICE_POLICY_NOT_FOUND", "路由策略不存在或不属于当前组织", nil)
+			adminError(w, http.StatusBadRequest, "SERVICE_POLICY_NOT_FOUND", "route-policy-does-not-exist-or", nil)
 			return
 		}
 		policyID = &parsed
 	}
 	if _, err := normalizeCandidateCurrencies(r.Context(), d.Pool, body.Candidates); err != nil {
-		adminError(w, http.StatusBadRequest, "SERVICE_CURRENCY_INVALID", err.Error(), nil)
+		adminError(w, http.StatusBadRequest, "SERVICE_CURRENCY_INVALID", "serviceCurrencyInvalid", nil)
 		return
 	}
 	var oldName string
@@ -469,11 +469,11 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 		SELECT name FROM model_services WHERE id = $1 AND organization_id = $2
 	`, serviceID, principal.OrganizationID).Scan(&oldName)
 	if errors.Is(err, pgx.ErrNoRows) {
-		adminError(w, http.StatusNotFound, "SERVICE_NOT_FOUND", "模型服务不存在或不属于当前组织", nil)
+		adminError(w, http.StatusNotFound, "SERVICE_NOT_FOUND", "model-service-does-not-exist-or", nil)
 		return
 	}
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "SERVICE_UPDATE_FAILED", "更新模型服务失败", nil)
+		adminError(w, http.StatusInternalServerError, "SERVICE_UPDATE_FAILED", "failed-to-update-the-model-service", nil)
 		return
 	}
 	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
@@ -517,10 +517,10 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.ConstraintName == "model_services_organization_id_name_key" {
-			adminError(w, http.StatusConflict, "SERVICE_NAME_EXISTS", "同名模型服务已存在", nil)
+			adminError(w, http.StatusConflict, "SERVICE_NAME_EXISTS", "a-model-service-with-the-same", nil)
 			return
 		}
-		adminError(w, http.StatusInternalServerError, "SERVICE_UPDATE_FAILED", "更新模型服务失败", nil)
+		adminError(w, http.StatusInternalServerError, "SERVICE_UPDATE_FAILED", "failed-to-update-the-model-service", nil)
 		return
 	}
 	adminOK(w, nil)

@@ -3,6 +3,7 @@ import { computed, h, ref, watch } from 'vue';
 import { NButton, NPopconfirm, NSpace, NTag } from 'naive-ui';
 import type { DataTableColumns } from 'naive-ui';
 import { formatTime } from '@/utils/admin-status';
+import { buildAssetDiff } from '@/utils/asset-diff';
 import { fetchAssetDetail, fetchAssetDiff, fetchPublishAsset, fetchRollbackAsset } from '@/service/api';
 import { $t } from '@/locales';
 import TemplateDiff from './template-diff.vue';
@@ -162,7 +163,7 @@ async function compare() {
   diffLoading.value = true;
   try {
     const { data, error } = await fetchAssetDiff(props.asset.id, diffFrom.value, diffTo.value);
-    if (!error && data) diff.value = data.diff;
+    if (!error && data) diff.value = buildAssetDiff(data);
   } finally {
     diffLoading.value = false;
   }

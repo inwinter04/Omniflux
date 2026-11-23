@@ -45,7 +45,7 @@ func (d ServerDeps) AllPromptEvaluationSets(w http.ResponseWriter, r *http.Reque
 		ORDER BY s.updated_at DESC
 	`, principal.OrganizationID)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "EVALUATION_SET_LIST_FAILED", "查询测试集失败", nil)
+		adminError(w, http.StatusInternalServerError, "EVALUATION_SET_LIST_FAILED", "failed-to-query-evaluation-sets", nil)
 		return
 	}
 	defer rows.Close()
@@ -54,7 +54,7 @@ func (d ServerDeps) AllPromptEvaluationSets(w http.ResponseWriter, r *http.Reque
 		var item evaluationSetOverview
 		var id, assetID uuid.UUID
 		if err := rows.Scan(&id, &assetID, &item.AssetName, &item.Name, &item.Description, &item.CaseCount, &item.RunCount, &item.Accuracy, &item.LastRunAt, &item.CreatedAt, &item.UpdatedAt); err != nil {
-			adminError(w, http.StatusInternalServerError, "EVALUATION_SET_LIST_FAILED", "读取测试集失败", nil)
+			adminError(w, http.StatusInternalServerError, "EVALUATION_SET_LIST_FAILED", "failed-to-read-evaluation-sets", nil)
 			return
 		}
 		item.ID, item.AssetID = id.String(), assetID.String()
@@ -70,12 +70,12 @@ func (d ServerDeps) UpdatePromptEvaluationSet(w http.ResponseWriter, r *http.Req
 	}
 	assetID, err := parseAssetID(r)
 	if err != nil {
-		writeAssetError(w, err, "EVALUATION_SET_UPDATE_FAILED", "更新测试集失败")
+		writeAssetError(w, err, "EVALUATION_SET_UPDATE_FAILED", "update-evaluation-set-failed")
 		return
 	}
 	setID, parseErr := uuid.Parse(chi.URLParam(r, "setID"))
 	if parseErr != nil {
-		adminError(w, http.StatusBadRequest, "EVALUATION_SET_ID_INVALID", "测试集 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "EVALUATION_SET_ID_INVALID", "invalid-evaluation-set-id", nil)
 		return
 	}
 	var body evaluationSetRequest
@@ -83,7 +83,7 @@ func (d ServerDeps) UpdatePromptEvaluationSet(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if err := validateEvaluationSet(body); err != nil {
-		writeAssetError(w, err, "EVALUATION_SET_UPDATE_FAILED", "更新测试集失败")
+		writeAssetError(w, err, "EVALUATION_SET_UPDATE_FAILED", "update-evaluation-set-failed")
 		return
 	}
 	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
@@ -92,7 +92,7 @@ func (d ServerDeps) UpdatePromptEvaluationSet(w http.ResponseWriter, r *http.Req
 			return err
 		}
 		if !exists {
-			return assetError(http.StatusNotFound, "EVALUATION_SET_NOT_FOUND", "测试集不存在或不属于当前组织")
+			return assetError(http.StatusNotFound, "EVALUATION_SET_NOT_FOUND", "evaluation-set-does-not-exist-or")
 		}
 		if _, err := tx.Exec(r.Context(), `UPDATE prompt_evaluation_sets SET name=$2, description=$3, updated_at=now() WHERE id=$1`, setID, strings.TrimSpace(body.Name), strings.TrimSpace(body.Description)); err != nil {
 			return err
@@ -113,7 +113,7 @@ func (d ServerDeps) UpdatePromptEvaluationSet(w http.ResponseWriter, r *http.Req
 		return err
 	})
 	if err != nil {
-		writeAssetError(w, err, "EVALUATION_SET_UPDATE_FAILED", "更新测试集失败")
+		writeAssetError(w, err, "EVALUATION_SET_UPDATE_FAILED", "update-evaluation-set-failed")
 		return
 	}
 	adminOK(w, nil)

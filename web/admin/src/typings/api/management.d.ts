@@ -74,8 +74,8 @@ declare namespace Api {
       name: string;
       group: string;
       family_id: string;
-      family_name: string;
-      version_label: string;
+      version_kind: string;
+      region_kind: string;
       base_url: string;
       api_base_url: string;
       website_url: string;
@@ -86,7 +86,6 @@ declare namespace Api {
 
     interface ProviderCatalogGroup {
       group: string;
-      label: string;
       entries: ProviderCatalogEntry[];
     }
 
@@ -98,9 +97,8 @@ declare namespace Api {
     }
 
     interface ProviderBalanceEntry {
-      label: string;
+      label_key: string;
       kind: 'balance' | 'quota';
-      window?: '5 小时' | '每周';
       remaining: number | null;
       total: number | null;
       used: number | null;
@@ -239,7 +237,6 @@ declare namespace Api {
     interface CreateApiKeyResult {
       id: string;
       key: string;
-      hint: string;
     }
 
     interface UpdateProjectParams {
@@ -335,6 +332,14 @@ declare namespace Api {
 
     interface UpdateAssetParams<S = PromptSpec> extends CreateAssetParams<S> {
       expected_version: number;
+    }
+
+    interface AssetDiff {
+      from_version: number;
+      to_version: number;
+      asset_type: 'prompt_template' | 'agent';
+      from_spec: Record<string, unknown>;
+      to_spec: Record<string, unknown>;
     }
 
     interface AssetGrant {
@@ -618,7 +623,9 @@ declare namespace Api {
 
     interface ProviderTestResult {
       ok: boolean;
-      message: string;
+      reason: string;
+      detail?: string;
+      status_code?: number;
     }
 
     interface AuditEventDetail extends AuditEvent {

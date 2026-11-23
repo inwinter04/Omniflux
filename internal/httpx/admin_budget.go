@@ -88,7 +88,7 @@ func (d ServerDeps) Budgets(w http.ResponseWriter, r *http.Request) {
 		ORDER BY window_start DESC, updated_at DESC
 	`, principal.OrganizationID)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "BUDGET_LIST_FAILED", "无法查询预算", nil)
+		adminError(w, http.StatusInternalServerError, "BUDGET_LIST_FAILED", "failed-to-query-budgets", nil)
 		return
 	}
 	defer rows.Close()
@@ -99,7 +99,7 @@ func (d ServerDeps) Budgets(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&id, &item.ScopeType, &scopeID, &item.WindowStart, &item.WindowEnd,
 			&item.LimitAmount, &item.SpentAmount, &item.Currency); err != nil {
 			d.Logger.Error("scan budget failed", "error", err)
-			adminError(w, http.StatusInternalServerError, "BUDGET_LIST_FAILED", "无法查询预算", nil)
+			adminError(w, http.StatusInternalServerError, "BUDGET_LIST_FAILED", "failed-to-query-budgets", nil)
 			return
 		}
 		item.ID = id.String()
@@ -127,28 +127,28 @@ func (d ServerDeps) CreateBudget(w http.ResponseWriter, r *http.Request) {
 	}
 	body.ScopeType = strings.TrimSpace(body.ScopeType)
 	if !allowedBudgetScopes[body.ScopeType] {
-		adminError(w, http.StatusBadRequest, "BUDGET_SCOPE_UNSUPPORTED", "不支持的预算范围类型", nil)
+		adminError(w, http.StatusBadRequest, "BUDGET_SCOPE_UNSUPPORTED", "unsupported-budget-scope-type", nil)
 		return
 	}
 	scopeID, err := uuid.Parse(body.ScopeID)
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "BUDGET_SCOPE_INVALID", "scope_id 不合法", nil)
+		adminError(w, http.StatusBadRequest, "BUDGET_SCOPE_INVALID", "invalid-scope-id", nil)
 		return
 	}
 	if _, err := d.resolveBudgetScope(r.Context(), body.ScopeType, scopeID, principal.OrganizationID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			adminError(w, http.StatusBadRequest, "BUDGET_SCOPE_NOT_FOUND", "预算对象不存在或不属于当前组织", nil)
+			adminError(w, http.StatusBadRequest, "BUDGET_SCOPE_NOT_FOUND", "budget-subject-does-not-exist-or", nil)
 			return
 		}
-		adminError(w, http.StatusInternalServerError, "BUDGET_CREATE_FAILED", "创建预算失败", nil)
+		adminError(w, http.StatusInternalServerError, "BUDGET_CREATE_FAILED", "failed-to-create-the-budget", nil)
 		return
 	}
 	if !body.WindowStart.Before(body.WindowEnd) {
-		adminError(w, http.StatusBadRequest, "BUDGET_WINDOW_INVALID", "window_start 必须早于 window_end", nil)
+		adminError(w, http.StatusBadRequest, "BUDGET_WINDOW_INVALID", "window-start-must-be-earlier-than", nil)
 		return
 	}
 	if !amountValid(body.LimitAmount) {
-		adminError(w, http.StatusBadRequest, "BUDGET_AMOUNT_INVALID", "limit_amount 必须是非负数字", nil)
+		adminError(w, http.StatusBadRequest, "BUDGET_AMOUNT_INVALID", "limit-amount-must-be-a-non", nil)
 		return
 	}
 	if strings.TrimSpace(body.Currency) == "" {
@@ -164,10 +164,10 @@ func (d ServerDeps) CreateBudget(w http.ResponseWriter, r *http.Request) {
 		body.WindowStart, body.WindowEnd, body.LimitAmount, body.Currency); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && strings.Contains(pgErr.ConstraintName, "budget_windows_scope_type_scope_id_window_start_key") {
-			adminError(w, http.StatusConflict, "BUDGET_WINDOW_EXISTS", "同一对象在相同窗口起点已存在预算", nil)
+			adminError(w, http.StatusConflict, "BUDGET_WINDOW_EXISTS", "a-budget-already-exists-for-the", nil)
 			return
 		}
-		adminError(w, http.StatusInternalServerError, "BUDGET_CREATE_FAILED", "创建预算失败", nil)
+		adminError(w, http.StatusInternalServerError, "BUDGET_CREATE_FAILED", "failed-to-create-the-budget", nil)
 		return
 	}
 	_, _ = d.Pool.Exec(r.Context(), `
@@ -189,12 +189,12 @@ func (d ServerDeps) UpdateBudget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !amountValid(body.LimitAmount) {
-		adminError(w, http.StatusBadRequest, "BUDGET_AMOUNT_INVALID", "limit_amount 必须是非负数字", nil)
+		adminError(w, http.StatusBadRequest, "BUDGET_AMOUNT_INVALID", "limit-amount-must-be-a-non", nil)
 		return
 	}
 	budgetID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "BUDGET_ID_INVALID", "预算 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "BUDGET_ID_INVALID", "invalid-budget-id", nil)
 		return
 	}
 	var oldLimit string
@@ -202,17 +202,17 @@ func (d ServerDeps) UpdateBudget(w http.ResponseWriter, r *http.Request) {
 		SELECT limit_amount::text FROM budget_windows WHERE id = $1 AND organization_id = $2
 	`, budgetID, principal.OrganizationID).Scan(&oldLimit)
 	if errors.Is(err, pgx.ErrNoRows) {
-		adminError(w, http.StatusNotFound, "BUDGET_NOT_FOUND", "预算不存在或不属于当前组织", nil)
+		adminError(w, http.StatusNotFound, "BUDGET_NOT_FOUND", "budget-does-not-exist-or-does", nil)
 		return
 	}
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "BUDGET_UPDATE_FAILED", "更新预算失败", nil)
+		adminError(w, http.StatusInternalServerError, "BUDGET_UPDATE_FAILED", "failed-to-update-the-budget", nil)
 		return
 	}
 	if _, err := d.Pool.Exec(r.Context(), `
 		UPDATE budget_windows SET limit_amount = $3, updated_at = now() WHERE id = $1 AND organization_id = $2
 	`, budgetID, principal.OrganizationID, body.LimitAmount); err != nil {
-		adminError(w, http.StatusInternalServerError, "BUDGET_UPDATE_FAILED", "更新预算失败", nil)
+		adminError(w, http.StatusInternalServerError, "BUDGET_UPDATE_FAILED", "failed-to-update-the-budget", nil)
 		return
 	}
 	_, _ = d.Pool.Exec(r.Context(), `
@@ -231,34 +231,34 @@ func (d ServerDeps) DeleteBudget(w http.ResponseWriter, r *http.Request) {
 	}
 	budgetID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "BUDGET_ID_INVALID", "预算 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "BUDGET_ID_INVALID", "invalid-budget-id", nil)
 		return
 	}
 	var exists bool
 	if err := d.Pool.QueryRow(r.Context(), `
 		SELECT EXISTS (SELECT 1 FROM budget_windows WHERE id = $1 AND organization_id = $2)
 	`, budgetID, principal.OrganizationID).Scan(&exists); err != nil {
-		adminError(w, http.StatusInternalServerError, "BUDGET_DELETE_FAILED", "删除预算失败", nil)
+		adminError(w, http.StatusInternalServerError, "BUDGET_DELETE_FAILED", "failed-to-delete-the-budget", nil)
 		return
 	}
 	if !exists {
-		adminError(w, http.StatusNotFound, "BUDGET_NOT_FOUND", "预算不存在或不属于当前组织", nil)
+		adminError(w, http.StatusNotFound, "BUDGET_NOT_FOUND", "budget-does-not-exist-or-does", nil)
 		return
 	}
 	var reservationCount int
 	if err := d.Pool.QueryRow(r.Context(), `
 		SELECT count(*) FROM budget_reservations WHERE budget_window_id = $1
 	`, budgetID).Scan(&reservationCount); err != nil {
-		adminError(w, http.StatusInternalServerError, "BUDGET_DELETE_FAILED", "删除预算失败", nil)
+		adminError(w, http.StatusInternalServerError, "BUDGET_DELETE_FAILED", "failed-to-delete-the-budget", nil)
 		return
 	}
 	if reservationCount > 0 {
 		adminError(w, http.StatusConflict, "BUDGET_HAS_RESERVATIONS",
-			"预算窗口存在结算记录,为保留审计数据无法删除", nil)
+			"budget-delete-has-settlements", nil)
 		return
 	}
 	if _, err := d.Pool.Exec(r.Context(), `DELETE FROM budget_windows WHERE id = $1`, budgetID); err != nil {
-		adminError(w, http.StatusInternalServerError, "BUDGET_DELETE_FAILED", "删除预算失败", nil)
+		adminError(w, http.StatusInternalServerError, "BUDGET_DELETE_FAILED", "failed-to-delete-the-budget", nil)
 		return
 	}
 	_, _ = d.Pool.Exec(r.Context(), `
@@ -267,8 +267,3 @@ func (d ServerDeps) DeleteBudget(w http.ResponseWriter, r *http.Request) {
 	`, principal.OrganizationID, principal.UserID, budgetID.String())
 	adminOK(w, nil)
 }
-
-
-
-
-

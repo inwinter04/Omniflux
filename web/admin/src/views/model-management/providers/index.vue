@@ -12,6 +12,7 @@ import {
   statusText
 } from '@/utils/admin-status';
 import { formatCostUSD, formatResetTime, formatUnitAmount, settlementCurrencyOptions } from '@/utils/currency';
+import { providerFamilyLabel, providerGroupLabel, providerVersionLabel } from '@/utils/provider-catalog';
 import {
   fetchCreateProviderAccount,
   fetchDeleteProviderAccount,
@@ -27,6 +28,23 @@ import { $t } from '@/locales';
 
 defineOptions({ name: 'ModelManagementProviders' });
 
+function providerTestMessage(result: Api.Management.ProviderTestResult) {
+  if (result.reason === 'network_error') {
+    return $t('business.providerTestNetworkError', { detail: result.detail ?? '' });
+  }
+  if (result.reason === 'connected') {
+    return $t('business.providerTestConnected', { status: result.status_code ?? 0 });
+  }
+  if (result.reason === 'credentials_rejected') {
+    return $t('business.providerTestCredentialsRejected', { status: result.status_code ?? 0 });
+  }
+  if (result.reason === 'v1_suffix_suspected') return $t('business.providerTestV1SuffixSuspected');
+  if (result.reason === 'upstream_http_error') {
+    return $t('business.providerTestUpstreamHTTPError', { status: result.status_code ?? 0 });
+  }
+  return $t('business.providerTestUnknown');
+}
+
 const router = useRouter();
 const catalogGroups = ref<Api.Management.ProviderCatalogGroup[]>([]);
 const catalogLoading = ref(true);
@@ -34,10 +52,10 @@ const catalogEntries = computed(() => catalogGroups.value.flatMap(group => group
 const vendorOptions = computed<SelectGroupOption[]>(() =>
   catalogGroups.value.map(group => {
     const families = new Map<string, string>();
-    for (const entry of group.entries) families.set(entry.family_id || entry.id, entry.family_name || entry.name);
+    for (const entry of group.entries) families.set(entry.family_id || entry.id, providerFamilyLabel(entry));
     return {
       type: 'group',
-      label: group.label,
+      label: providerGroupLabel(group),
       key: group.group,
       children: Array.from(families, ([value, label]) => ({ label, value }))
     };
@@ -99,7 +117,7 @@ const versionOptions = computed(() =>
   catalogEntries.value
     .filter(entry => (entry.family_id || entry.id) === selectedFamilyID.value)
     .map(entry => ({
-      label: entry.version_label || entry.name,
+      label: providerVersionLabel(entry),
       value: entry.id
     }))
 );
@@ -110,7 +128,7 @@ function findVendor(id: string) {
 
 function providerLabel(value: string) {
   const vendor = findVendor(value);
-  return vendor?.family_name || vendor?.name || value;
+  return vendor ? providerFamilyLabel(vendor) : value;
 }
 
 function applyVendor(value: string, resetName = false) {
@@ -119,7 +137,7 @@ function applyVendor(value: string, resetName = false) {
   formModel.provider = value;
   selectedFamilyID.value = vendor.family_id || vendor.id;
   formModel.base_url = vendor.editable_url ? vendor.base_url : '';
-  if (resetName || !formModel.name) formModel.name = vendor.family_name || vendor.name;
+  if (resetName || !formModel.name) formModel.name = providerFamilyLabel(vendor);
 }
 
 function handleFamilyChange(value: string) {
@@ -147,7 +165,7 @@ const columns = computed<DataTableColumns<Api.Management.ProviderAccount>>(() =>
     title: $t('business.service-version'),
     key: 'version',
     width: 160,
-    render: row => findVendor(row.provider)?.version_label ?? $t('business.custom')
+    render: row => providerVersionLabel(findVendor(row.provider))
   },
   {
     title: $t('business.settlement-currency'),
@@ -379,8 +397,8 @@ async function toggleStatus(row: Api.Management.ProviderAccount) {
 async function handleTest(row: Api.Management.ProviderAccount) {
   const { data, error } = await fetchTestProviderAccount(row.id);
   if (!error && data) {
-    if (data.ok) window.$message?.success($t('business.connection-normal'));
-    else window.$message?.error(data.message);
+    if (data.ok) window.$message?.success(providerTestMessage(data));
+    else window.$message?.error(providerTestMessage(data));
   }
 }
 
@@ -439,10 +457,35 @@ const showBalance = ref(false);
 const balanceLoading = ref(false);
 const balanceRows = ref<Api.Management.ProviderBalanceEntry[]>([]);
 const balanceTitle = ref('');
+const balanceLabelKeys: Record<string, App.I18n.I18nKey> = {
+  wallet_cny: 'business.balanceWalletCNY',
+  wallet_usd: 'business.balanceWalletUSD',
+  provider_zhipu: 'business.balanceProviderZhipu',
+  provider_zai: 'business.balanceProviderZAI',
+  provider_stepfun: 'business.balanceProviderStepFun',
+  provider_stepfun_global: 'business.balanceProviderStepFunGlobal',
+  provider_siliconflow: 'business.balanceProviderSiliconFlow',
+  provider_siliconflow_global: 'business.balanceProviderSiliconFlowGlobal',
+  provider_openrouter: 'business.balanceProviderOpenRouter',
+  provider_novita: 'business.balanceProviderNovita',
+  quota_5h: 'business.balanceQuota5h',
+  quota_weekly: 'business.balanceQuotaWeekly'
+};
+
+function balanceLabel(row: Api.Management.ProviderBalanceEntry) {
+  const key = balanceLabelKeys[row.label_key];
+  return key ? $t(key) : row.label_key;
+}
+
 const balanceEntries = computed(() => balanceRows.value.filter(item => item.kind !== 'quota'));
 const quotaEntries = computed(() => balanceRows.value.filter(item => item.kind === 'quota'));
 const balanceColumns = computed<DataTableColumns<Api.Management.ProviderBalanceEntry>>(() => [
-  { title: $t('business.account'), key: 'label', minWidth: 130 },
+  {
+    title: $t('business.account'),
+    key: 'label_key',
+    minWidth: 130,
+    render: row => balanceLabel(row)
+  },
   {
     title: $t('business.available'),
     key: 'remaining',
@@ -573,7 +616,7 @@ onMounted(() => {
       <NForm ref="editFormRef" :model="editModel" :rules="editRules" label-placement="left" label-width="100">
         <NFormItem :label="$t('business.provider')">
           <NTag :bordered="false">{{ providerLabel(editModel.provider) }}</NTag>
-          <NText depth="2">{{ editVendor?.version_label }}</NText>
+          <NText depth="2">{{ editVendor ? providerVersionLabel(editVendor) : '' }}</NText>
         </NFormItem>
         <NFormItem v-if="editVendor?.website_url" :label="$t('business.website')">
           <NButton text type="primary" @click="openWebsite(editVendor)">{{ editVendor.website_url }} ↗</NButton>
@@ -629,9 +672,9 @@ onMounted(() => {
     <NModal v-model:show="showBalance" preset="card" :title="balanceTitle" class="w-680px">
       <NSpin :show="balanceLoading">
         <div v-if="quotaEntries.length" class="mb-16px">
-          <NCard v-for="row in quotaEntries" :key="row.label" size="small" class="mb-8px" embedded>
+          <NCard v-for="row in quotaEntries" :key="row.label_key" size="small" class="mb-8px" embedded>
             <NSpace justify="space-between" align="center" class="mb-8px">
-              <NText strong>{{ row.label }}</NText>
+              <NText strong>{{ balanceLabel(row) }}</NText>
               <NText depth="2">
                 {{ $t('business.used') }}
                 {{ formatUnitAmount(row.used, row.unit) }}

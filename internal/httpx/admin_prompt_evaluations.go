@@ -63,7 +63,7 @@ func (d ServerDeps) PromptEvaluationSets(w http.ResponseWriter, r *http.Request)
 	}
 	assetID, err := parseAssetID(r)
 	if err != nil {
-		writeAssetError(w, err, "EVALUATION_SET_LIST_FAILED", "查询测试集失败")
+		writeAssetError(w, err, "EVALUATION_SET_LIST_FAILED", "failed-to-query-evaluation-sets")
 		return
 	}
 	rows, err := d.Pool.Query(r.Context(), `
@@ -71,7 +71,7 @@ func (d ServerDeps) PromptEvaluationSets(w http.ResponseWriter, r *http.Request)
 		WHERE organization_id = $1 AND asset_id = $2 ORDER BY created_at DESC
 	`, principal.OrganizationID, assetID)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "EVALUATION_SET_LIST_FAILED", "查询测试集失败", nil)
+		adminError(w, http.StatusInternalServerError, "EVALUATION_SET_LIST_FAILED", "failed-to-query-evaluation-sets", nil)
 		return
 	}
 	defer rows.Close()
@@ -82,7 +82,7 @@ func (d ServerDeps) PromptEvaluationSets(w http.ResponseWriter, r *http.Request)
 		var item evaluationSetResponse
 		var id uuid.UUID
 		if err := rows.Scan(&id, &item.Name, &item.Description, &item.CreatedAt, &item.UpdatedAt); err != nil {
-			adminError(w, http.StatusInternalServerError, "EVALUATION_SET_LIST_FAILED", "读取测试集失败", nil)
+			adminError(w, http.StatusInternalServerError, "EVALUATION_SET_LIST_FAILED", "failed-to-read-evaluation-sets", nil)
 			return
 		}
 		item.ID, item.Cases = id.String(), []evaluationCaseOutput{}
@@ -102,7 +102,7 @@ func (d ServerDeps) PromptEvaluationSets(w http.ResponseWriter, r *http.Request)
 		ORDER BY c.position, c.created_at
 	`, principal.OrganizationID, assetID, ids)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "EVALUATION_SET_LIST_FAILED", "查询测试用例失败", nil)
+		adminError(w, http.StatusInternalServerError, "EVALUATION_SET_LIST_FAILED", "failed-to-query-test-cases", nil)
 		return
 	}
 	defer caseRows.Close()
@@ -110,7 +110,7 @@ func (d ServerDeps) PromptEvaluationSets(w http.ResponseWriter, r *http.Request)
 		var item evaluationCaseOutput
 		var id, setID uuid.UUID
 		if err := caseRows.Scan(&id, &setID, &item.Input, &item.MatchType, &item.Expected); err != nil {
-			adminError(w, http.StatusInternalServerError, "EVALUATION_SET_LIST_FAILED", "读取测试用例失败", nil)
+			adminError(w, http.StatusInternalServerError, "EVALUATION_SET_LIST_FAILED", "failed-to-read-test-cases", nil)
 			return
 		}
 		item.ID = id.String()
@@ -128,7 +128,7 @@ func (d ServerDeps) CreatePromptEvaluationSet(w http.ResponseWriter, r *http.Req
 	}
 	assetID, err := parseAssetID(r)
 	if err != nil {
-		writeAssetError(w, err, "EVALUATION_SET_CREATE_FAILED", "创建测试集失败")
+		writeAssetError(w, err, "EVALUATION_SET_CREATE_FAILED", "create-evaluation-set-failed")
 		return
 	}
 	var body evaluationSetRequest
@@ -136,7 +136,7 @@ func (d ServerDeps) CreatePromptEvaluationSet(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if err := validateEvaluationSet(body); err != nil {
-		writeAssetError(w, err, "EVALUATION_SET_CREATE_FAILED", "创建测试集失败")
+		writeAssetError(w, err, "EVALUATION_SET_CREATE_FAILED", "create-evaluation-set-failed")
 		return
 	}
 	setID := uuid.New()
@@ -152,7 +152,7 @@ func (d ServerDeps) CreatePromptEvaluationSet(w http.ResponseWriter, r *http.Req
 			return err
 		}
 		if !exists {
-			return assetError(http.StatusNotFound, "ASSET_NOT_FOUND", "资产不存在或不属于当前组织")
+			return assetError(http.StatusNotFound, "ASSET_NOT_FOUND", "asset-does-not-exist-or-does")
 		}
 		for index, item := range body.Cases {
 			input, _ := json.Marshal(item.Input)
@@ -170,7 +170,7 @@ func (d ServerDeps) CreatePromptEvaluationSet(w http.ResponseWriter, r *http.Req
 		return err
 	})
 	if err != nil {
-		writeAssetError(w, err, "EVALUATION_SET_CREATE_FAILED", "创建测试集失败")
+		writeAssetError(w, err, "EVALUATION_SET_CREATE_FAILED", "create-evaluation-set-failed")
 		return
 	}
 	adminOK(w, map[string]string{"id": setID.String()})
@@ -183,21 +183,21 @@ func (d ServerDeps) DeletePromptEvaluationSet(w http.ResponseWriter, r *http.Req
 	}
 	assetID, err := parseAssetID(r)
 	if err != nil {
-		writeAssetError(w, err, "EVALUATION_SET_DELETE_FAILED", "删除测试集失败")
+		writeAssetError(w, err, "EVALUATION_SET_DELETE_FAILED", "failed-to-delete-the-evaluation-set")
 		return
 	}
 	setID, parseErr := uuid.Parse(chi.URLParam(r, "setID"))
 	if parseErr != nil {
-		adminError(w, http.StatusBadRequest, "EVALUATION_SET_ID_INVALID", "测试集 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "EVALUATION_SET_ID_INVALID", "invalid-evaluation-set-id", nil)
 		return
 	}
 	tag, err := d.Pool.Exec(r.Context(), `DELETE FROM prompt_evaluation_sets WHERE id=$1 AND organization_id=$2 AND asset_id=$3`, setID, principal.OrganizationID, assetID)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "EVALUATION_SET_DELETE_FAILED", "删除测试集失败", nil)
+		adminError(w, http.StatusInternalServerError, "EVALUATION_SET_DELETE_FAILED", "failed-to-delete-the-evaluation-set", nil)
 		return
 	}
 	if tag.RowsAffected() == 0 {
-		adminError(w, http.StatusNotFound, "EVALUATION_SET_NOT_FOUND", "测试集不存在", nil)
+		adminError(w, http.StatusNotFound, "EVALUATION_SET_NOT_FOUND", "evaluation-set-does-not-exist", nil)
 		return
 	}
 	adminOK(w, nil)
@@ -210,7 +210,7 @@ func (d ServerDeps) EvaluatePromptAsset(w http.ResponseWriter, r *http.Request) 
 	}
 	assetID, err := parseAssetID(r)
 	if err != nil {
-		writeAssetError(w, err, "PROMPT_EVALUATION_FAILED", "批量评估失败")
+		writeAssetError(w, err, "PROMPT_EVALUATION_FAILED", "evaluation-run-failed")
 		return
 	}
 	var body evaluatePromptRequest
@@ -219,7 +219,7 @@ func (d ServerDeps) EvaluatePromptAsset(w http.ResponseWriter, r *http.Request) 
 	}
 	setID, parseErr := uuid.Parse(body.EvaluationSetID)
 	if parseErr != nil {
-		adminError(w, http.StatusBadRequest, "EVALUATION_SET_ID_INVALID", "测试集 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "EVALUATION_SET_ID_INVALID", "invalid-evaluation-set-id", nil)
 		return
 	}
 	rows, err := d.Pool.Query(r.Context(), `
@@ -229,7 +229,7 @@ func (d ServerDeps) EvaluatePromptAsset(w http.ResponseWriter, r *http.Request) 
 		ORDER BY c.position, c.created_at LIMIT 51
 	`, setID, principal.OrganizationID, assetID)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "PROMPT_EVALUATION_FAILED", "查询测试用例失败", nil)
+		adminError(w, http.StatusInternalServerError, "PROMPT_EVALUATION_FAILED", "failed-to-query-test-cases", nil)
 		return
 	}
 	type caseItem struct {
@@ -243,14 +243,14 @@ func (d ServerDeps) EvaluatePromptAsset(w http.ResponseWriter, r *http.Request) 
 		var item caseItem
 		if err := rows.Scan(&item.id, &item.input, &item.matchType, &item.expected); err != nil {
 			rows.Close()
-			adminError(w, http.StatusInternalServerError, "PROMPT_EVALUATION_FAILED", "读取测试用例失败", nil)
+			adminError(w, http.StatusInternalServerError, "PROMPT_EVALUATION_FAILED", "failed-to-read-test-cases", nil)
 			return
 		}
 		cases = append(cases, item)
 	}
 	rows.Close()
 	if len(cases) == 0 || len(cases) > 50 {
-		adminError(w, http.StatusBadRequest, "EVALUATION_CASE_COUNT_INVALID", "测试集需要包含 1 到 50 个用例", nil)
+		adminError(w, http.StatusBadRequest, "EVALUATION_CASE_COUNT_INVALID", "an-evaluation-set-must-contain-1", nil)
 		return
 	}
 	type job struct {
@@ -262,7 +262,7 @@ func (d ServerDeps) EvaluatePromptAsset(w http.ResponseWriter, r *http.Request) 
 	for index, item := range cases {
 		runContext, err := d.preparePromptRun(r.Context(), principal, assetID, body.VersionID, item.input, body.ModelServiceIDs)
 		if err != nil {
-			writeAssetError(w, err, "PROMPT_EVALUATION_FAILED", "批量评估失败")
+			writeAssetError(w, err, "PROMPT_EVALUATION_FAILED", "evaluation-run-failed")
 			return
 		}
 		for _, serviceID := range runContext.serviceIDs {
@@ -300,26 +300,26 @@ func (d ServerDeps) EvaluatePromptAsset(w http.ResponseWriter, r *http.Request) 
 
 func validateEvaluationSet(body evaluationSetRequest) error {
 	if strings.TrimSpace(body.Name) == "" {
-		return assetError(http.StatusBadRequest, "EVALUATION_SET_NAME_REQUIRED", "请填写测试集名称")
+		return assetError(http.StatusBadRequest, "EVALUATION_SET_NAME_REQUIRED", "enter-an-evaluation-set-name")
 	}
 	if len(body.Cases) == 0 || len(body.Cases) > 50 {
-		return assetError(http.StatusBadRequest, "EVALUATION_CASE_COUNT_INVALID", "测试集需要包含 1 到 50 个用例")
+		return assetError(http.StatusBadRequest, "EVALUATION_CASE_COUNT_INVALID", "an-evaluation-set-must-contain-1")
 	}
 	for _, item := range body.Cases {
 		if len(item.Expected) == 0 || len(item.Expected) > 10000 {
-			return assetError(http.StatusBadRequest, "EVALUATION_EXPECTED_INVALID", "每个用例需要 1 到 10000 字符的期望内容")
+			return assetError(http.StatusBadRequest, "EVALUATION_EXPECTED_INVALID", "each-case-needs-expected-content-of")
 		}
 		switch item.MatchType {
 		case "exact", "contains":
 		case "regex":
 			if len(item.Expected) > 500 {
-				return assetError(http.StatusBadRequest, "EVALUATION_REGEX_TOO_LONG", "正则表达式不能超过 500 字符")
+				return assetError(http.StatusBadRequest, "EVALUATION_REGEX_TOO_LONG", "regex-cannot-exceed-500-characters")
 			}
 			if _, err := regexp.Compile(item.Expected); err != nil {
-				return assetError(http.StatusBadRequest, "EVALUATION_REGEX_INVALID", "正则表达式不正确: "+err.Error())
+				return assetError(http.StatusBadRequest, "EVALUATION_REGEX_INVALID", "evaluationRegexInvalid", map[string]any{"detail": err.Error()})
 			}
 		default:
-			return assetError(http.StatusBadRequest, "EVALUATION_MATCH_TYPE_INVALID", "匹配规则仅支持精确、包含和正则")
+			return assetError(http.StatusBadRequest, "EVALUATION_MATCH_TYPE_INVALID", "match-rules-support-only-exact-contains")
 		}
 	}
 	return nil

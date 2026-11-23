@@ -41,11 +41,17 @@ function sourceText(source: string) {
 }
 
 const modelColumns = computed<DataTableColumns<Api.Management.UsageModelSummary>>(() => [
-  { title: $t('business.provider-c4b9p'), key: 'provider', width: 140 },
+  {
+    title: $t('business.provider-c4b9p'),
+    key: 'provider',
+    width: 140,
+    render: row => row.provider || '-'
+  },
   {
     title: $t('business.upstream-model'),
     key: 'upstream_model',
-    minWidth: 160
+    minWidth: 160,
+    render: row => row.upstream_model || '-'
   },
   {
     title: $t('business.requests'),

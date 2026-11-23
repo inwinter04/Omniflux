@@ -17,6 +17,8 @@ import (
 	"github.com/inwinter04/omniflux/internal/dataplane"
 )
 
+var errAgentEmptyResponse = errors.New("agent_empty_response")
+
 type agentChatRequest struct {
 	VersionID string         `json:"version_id"`
 	SessionID string         `json:"session_id"`
@@ -78,7 +80,7 @@ func (d ServerDeps) AgentSessions(w http.ResponseWriter, r *http.Request) {
 		ORDER BY s.updated_at DESC LIMIT 100
 	`, principal.OrganizationID, assetID, principal.UserID)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "AGENT_SESSION_LIST_FAILED", "无法查询会话", nil)
+		adminError(w, http.StatusInternalServerError, "AGENT_SESSION_LIST_FAILED", "failed-to-query-sessions", nil)
 		return
 	}
 	defer rows.Close()
@@ -86,7 +88,7 @@ func (d ServerDeps) AgentSessions(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		item, err := scanAgentSession(rows.Scan)
 		if err != nil {
-			adminError(w, http.StatusInternalServerError, "AGENT_SESSION_LIST_FAILED", "无法读取会话", nil)
+			adminError(w, http.StatusInternalServerError, "AGENT_SESSION_LIST_FAILED", "failed-to-read-sessions", nil)
 			return
 		}
 		result = append(result, item)
@@ -101,7 +103,7 @@ func (d ServerDeps) AgentSessionDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	sessionID, err := uuid.Parse(chi.URLParam(r, "sessionID"))
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "AGENT_SESSION_ID_INVALID", "会话 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "AGENT_SESSION_ID_INVALID", "invalid-session-id", nil)
 		return
 	}
 	row := d.Pool.QueryRow(r.Context(), `
@@ -111,11 +113,11 @@ func (d ServerDeps) AgentSessionDetail(w http.ResponseWriter, r *http.Request) {
 	`, sessionID, principal.OrganizationID, assetID, principal.UserID)
 	session, err := scanAgentSession(row.Scan)
 	if errors.Is(err, pgx.ErrNoRows) {
-		adminError(w, http.StatusNotFound, "AGENT_SESSION_NOT_FOUND", "会话不存在或无权访问", nil)
+		adminError(w, http.StatusNotFound, "AGENT_SESSION_NOT_FOUND", "session-does-not-exist-or-is", nil)
 		return
 	}
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "AGENT_SESSION_DETAIL_FAILED", "无法查询会话详情", nil)
+		adminError(w, http.StatusInternalServerError, "AGENT_SESSION_DETAIL_FAILED", "failed-to-query-session-details", nil)
 		return
 	}
 	rows, err := d.Pool.Query(r.Context(), `
@@ -123,7 +125,7 @@ func (d ServerDeps) AgentSessionDetail(w http.ResponseWriter, r *http.Request) {
 		WHERE session_id = $1 ORDER BY created_at ASC, id ASC
 	`, sessionID)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "AGENT_MESSAGE_LIST_FAILED", "无法查询会话消息", nil)
+		adminError(w, http.StatusInternalServerError, "AGENT_MESSAGE_LIST_FAILED", "failed-to-query-session-messages", nil)
 		return
 	}
 	defer rows.Close()
@@ -132,7 +134,7 @@ func (d ServerDeps) AgentSessionDetail(w http.ResponseWriter, r *http.Request) {
 		var item agentMessageResponse
 		var id, runID *uuid.UUID
 		if err := rows.Scan(&id, &runID, &item.Role, &item.Content, &item.CreatedAt); err != nil {
-			adminError(w, http.StatusInternalServerError, "AGENT_MESSAGE_LIST_FAILED", "无法读取会话消息", nil)
+			adminError(w, http.StatusInternalServerError, "AGENT_MESSAGE_LIST_FAILED", "failed-to-read-session-messages", nil)
 			return
 		}
 		if id != nil {
@@ -154,18 +156,18 @@ func (d ServerDeps) DeleteAgentSession(w http.ResponseWriter, r *http.Request) {
 	}
 	sessionID, err := uuid.Parse(chi.URLParam(r, "sessionID"))
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "AGENT_SESSION_ID_INVALID", "会话 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "AGENT_SESSION_ID_INVALID", "invalid-session-id", nil)
 		return
 	}
 	command, err := d.Pool.Exec(r.Context(), `
 		DELETE FROM agent_sessions WHERE id = $1 AND organization_id = $2 AND asset_id = $3 AND channel = 'debug' AND created_by = $4
 	`, sessionID, principal.OrganizationID, assetID, principal.UserID)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "AGENT_SESSION_DELETE_FAILED", "删除会话失败", nil)
+		adminError(w, http.StatusInternalServerError, "AGENT_SESSION_DELETE_FAILED", "failed-to-delete-the-session", nil)
 		return
 	}
 	if command.RowsAffected() == 0 {
-		adminError(w, http.StatusNotFound, "AGENT_SESSION_NOT_FOUND", "会话不存在或无权访问", nil)
+		adminError(w, http.StatusNotFound, "AGENT_SESSION_NOT_FOUND", "session-does-not-exist-or-is", nil)
 		return
 	}
 	adminOK(w, nil)
@@ -182,7 +184,7 @@ func (d ServerDeps) RunAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	versionID, sessionID, err := parseAgentChatIDs(body)
 	if err != nil {
-		writeAssetError(w, err, "AGENT_RUN_FAILED", "智能体运行失败")
+		writeAssetError(w, err, "AGENT_RUN_FAILED", "agent-run-failed")
 		return
 	}
 	plane := dataplane.Deps{Logger: d.Logger, Pool: d.Pool, Engine: d.Engine}
@@ -204,19 +206,24 @@ func (d ServerDeps) RunAgent(w http.ResponseWriter, r *http.Request) {
 	result, runErr := plane.DebugConversation(r.Context(), principal.OrganizationID, serviceID, run.Input, params)
 	status := "success"
 	if runErr == nil && strings.TrimSpace(result.Response) == "" {
-		runErr = errors.New("模型未返回内容")
+		runErr = errAgentEmptyResponse
 	}
 	if runErr != nil {
 		status = "failed"
 	}
 	if err := plane.FinishAgentRun(r.Context(), run, status, result, runErr); err != nil {
-		adminError(w, http.StatusInternalServerError, "AGENT_RUN_FINALIZE_FAILED", "无法保存运行结果", nil)
+		adminError(w, http.StatusInternalServerError, "AGENT_RUN_FINALIZE_FAILED", "failed-to-save-the-run-result", nil)
 		return
 	}
 	d.auditAgentRun(r, principal, assetID, run, status)
 	response := agentResponseFromResult(run, status, result, runErr)
 	if runErr != nil {
-		adminError(w, http.StatusBadGateway, "AGENT_UPSTREAM_FAILED", runErr.Error(), map[string]any{"run": response})
+		reason := "agentUpstreamFailed"
+		detail := runErr.Error()
+		if errors.Is(runErr, errAgentEmptyResponse) {
+			reason, detail = "agentEmptyResponse", ""
+		}
+		adminError(w, http.StatusBadGateway, "AGENT_UPSTREAM_FAILED", reason, map[string]any{"run": response}, detail)
 		return
 	}
 	adminOK(w, response)
@@ -225,7 +232,7 @@ func (d ServerDeps) RunAgent(w http.ResponseWriter, r *http.Request) {
 func (d ServerDeps) streamAgentRun(w http.ResponseWriter, r *http.Request, plane dataplane.Deps, run dataplane.AgentRunContext, chatParams *schemas.ChatParameters) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		adminError(w, http.StatusInternalServerError, "AGENT_STREAM_UNSUPPORTED", "当前连接不支持流式响应", nil)
+		adminError(w, http.StatusInternalServerError, "AGENT_STREAM_UNSUPPORTED", "the-current-connection-does-not-support", nil)
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -290,7 +297,7 @@ func (d ServerDeps) streamAgentRun(w http.ResponseWriter, r *http.Request, plane
 	var runErr error
 	if status == "success" && strings.TrimSpace(result.Response) == "" {
 		status = "failed"
-		runErr = errors.New("模型未返回内容")
+		runErr = errAgentEmptyResponse
 	}
 	_ = plane.FinishAgentRun(r.Context(), run, status, result, runErr)
 	writeEvent("result", agentResponseFromResult(run, status, result, runErr))
@@ -310,7 +317,7 @@ func (d ServerDeps) AgentRunHistory(w http.ResponseWriter, r *http.Request) {
 		WHERE r.organization_id = $1 AND r.asset_id = $2 ORDER BY r.created_at DESC LIMIT 100
 	`, principal.OrganizationID, assetID)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "AGENT_RUN_HISTORY_FAILED", "无法查询运行记录", nil)
+		adminError(w, http.StatusInternalServerError, "AGENT_RUN_HISTORY_FAILED", "failed-to-query-run-records-94841f", nil)
 		return
 	}
 	defer rows.Close()
@@ -322,7 +329,7 @@ func (d ServerDeps) AgentRunHistory(w http.ResponseWriter, r *http.Request) {
 			&item.Request, &item.Response, &item.Error, &item.Provider, &item.UpstreamModel, &item.InputTokens,
 			&item.OutputTokens, &item.CachedTokens, &item.ReasoningTokens, &item.Cost, &item.CostCurrency, &item.FirstTokenMS,
 			&item.TotalMS, &item.CreatedAt); err != nil {
-			adminError(w, http.StatusInternalServerError, "AGENT_RUN_HISTORY_FAILED", "无法读取运行记录", nil)
+			adminError(w, http.StatusInternalServerError, "AGENT_RUN_HISTORY_FAILED", "failed-to-read-run-records-184tic1", nil)
 			return
 		}
 		item.ID, item.SessionID, item.VersionID, item.ModelServiceID = id.String(), sessionID.String(), versionID.String(), serviceID.String()
@@ -345,12 +352,12 @@ func (d ServerDeps) agentAdminContext(w http.ResponseWriter, r *http.Request, wr
 	}
 	assetID, err := parseAssetID(r)
 	if err != nil {
-		writeAssetError(w, err, "AGENT_ID_INVALID", "智能体ID 不合法")
+		writeAssetError(w, err, "AGENT_ID_INVALID", "agent-id-invalid")
 		return principal, uuid.Nil, false
 	}
 	var assetType string
 	if err := d.Pool.QueryRow(r.Context(), `SELECT asset_type FROM assets WHERE id = $1 AND organization_id = $2`, assetID, principal.OrganizationID).Scan(&assetType); err != nil || assetType != "agent" {
-		adminError(w, http.StatusNotFound, "AGENT_NOT_FOUND", "智能体不存在或不属于当前组织", nil)
+		adminError(w, http.StatusNotFound, "AGENT_NOT_FOUND", "agent-does-not-exist-or-does", nil)
 		return principal, uuid.Nil, false
 	}
 	return principal, assetID, true
@@ -362,13 +369,13 @@ func parseAgentChatIDs(body agentChatRequest) (uuid.UUID, uuid.UUID, error) {
 	if body.VersionID != "" {
 		versionID, err = uuid.Parse(body.VersionID)
 		if err != nil {
-			return versionID, sessionID, assetError(http.StatusBadRequest, "ASSET_VERSION_ID_INVALID", "版本 ID 不合法")
+			return versionID, sessionID, assetError(http.StatusBadRequest, "ASSET_VERSION_ID_INVALID", "invalid-version-id")
 		}
 	}
 	if body.SessionID != "" {
 		sessionID, err = uuid.Parse(body.SessionID)
 		if err != nil {
-			return versionID, sessionID, assetError(http.StatusBadRequest, "AGENT_SESSION_ID_INVALID", "会话 ID 不合法")
+			return versionID, sessionID, assetError(http.StatusBadRequest, "AGENT_SESSION_ID_INVALID", "invalid-session-id")
 		}
 	}
 	return versionID, sessionID, nil
@@ -384,7 +391,7 @@ func writeAgentRuntimeError(w http.ResponseWriter, err error) {
 		adminError(w, status, inputErr.Code, inputErr.Message, nil)
 		return
 	}
-	adminError(w, http.StatusInternalServerError, "AGENT_RUN_FAILED", "无法开始 智能体运行", nil)
+	adminError(w, http.StatusInternalServerError, "AGENT_RUN_FAILED", "failed-to-start-the-agent-run", nil)
 }
 
 func agentResponseFromResult(run dataplane.AgentRunContext, status string, result dataplane.DebugResult, runErr error) agentRunResponse {

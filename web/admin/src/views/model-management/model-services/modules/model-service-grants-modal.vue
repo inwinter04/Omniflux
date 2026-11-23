@@ -49,7 +49,12 @@ const subjectTypeOptions = computed(() => [
   { label: $t('business.selected-projects'), value: 'project' }
 ]);
 const columns = computed<DataTableColumns<Api.Management.ModelServiceGrant>>(() => [
-  { title: $t('business.access-scope'), key: 'subject_name', minWidth: 170 },
+  {
+    title: $t('business.access-scope'),
+    key: 'subject_name',
+    minWidth: 170,
+    render: row => row.subject_name || $t('business.unknownSubject')
+  },
   {
     title: $t('business.allowed-actions'),
     key: 'actions',

@@ -557,6 +557,7 @@ declare namespace App {
         };
       };
       business: Record<string, string>;
+      backendError: Record<string, string>;
       form: {
         required: string;
         userName: FormMsg;
@@ -642,8 +643,12 @@ declare namespace App {
     type Response<T = unknown> = {
       /** The backend service response code */
       code: string;
-      /** The backend service response message */
-      msg: string;
+      /** The stable machine-readable error reason */
+      reason?: string;
+      /** Structured parameters for localized rendering */
+      params?: Record<string, unknown>;
+      /** Optional technical detail, such as the raw upstream error */
+      detail?: string;
       /** The backend service response data */
       data: T;
     };

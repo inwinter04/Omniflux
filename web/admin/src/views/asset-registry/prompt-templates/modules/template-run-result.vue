@@ -7,6 +7,10 @@ const props = defineProps<{
   run: Api.Management.PromptRun;
 }>();
 
+function runErrorText(error: string) {
+  return error === 'prompt_run_finalize_failed' ? $t('backendError.promptRunFinalizeFailed') : error;
+}
+
 function statusText(status: string) {
   switch (status) {
     case 'success':
@@ -47,7 +51,9 @@ function statusType(status: string): 'success' | 'error' | 'warning' | 'info' {
       </NText>
       <NText depth="2">{{ $t('business.total-latency') }} {{ props.run.total_ms }} ms</NText>
     </NSpace>
-    <NAlert v-if="props.run.error" type="error" :bordered="false" class="mb-12px">{{ props.run.error }}</NAlert>
+    <NAlert v-if="props.run.error" type="error" :bordered="false" class="mb-12px">
+      {{ runErrorText(props.run.error) }}
+    </NAlert>
     <MarkdownPreview v-if="props.run.response" :source="props.run.response" />
     <NCollapse class="mt-12px">
       <NCollapseItem :title="$t('business.view-actual-input')" name="prompt">

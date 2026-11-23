@@ -36,23 +36,23 @@ func (d ServerDeps) AssetGrants(w http.ResponseWriter, r *http.Request) {
 	}
 	assetID, err := parseAssetID(r)
 	if err != nil {
-		writeAssetError(w, err, "ASSET_GRANT_LIST_FAILED", "查询资产授权失败")
+		writeAssetError(w, err, "ASSET_GRANT_LIST_FAILED", "failed-to-query-asset-grants")
 		return
 	}
 	var exists bool
 	if err := d.Pool.QueryRow(r.Context(), `
 		SELECT EXISTS(SELECT 1 FROM assets WHERE id = $1 AND organization_id = $2)
 	`, assetID, principal.OrganizationID).Scan(&exists); err != nil {
-		adminError(w, http.StatusInternalServerError, "ASSET_GRANT_LIST_FAILED", "查询资产授权失败", nil)
+		adminError(w, http.StatusInternalServerError, "ASSET_GRANT_LIST_FAILED", "failed-to-query-asset-grants", nil)
 		return
 	}
 	if !exists {
-		adminError(w, http.StatusNotFound, "ASSET_NOT_FOUND", "资产不存在或不属于当前组织", nil)
+		adminError(w, http.StatusNotFound, "ASSET_NOT_FOUND", "asset-does-not-exist-or-does", nil)
 		return
 	}
 	rows, err := d.Pool.Query(r.Context(), `
 		SELECT g.id, g.asset_id, g.subject_type, g.subject_id,
-		       COALESCE(o.name, dept.name, p.name, '未知对象'), g.actions, g.created_at, g.updated_at
+		       COALESCE(o.name, dept.name, p.name, ''), g.actions, g.created_at, g.updated_at
 		FROM asset_grants g
 		LEFT JOIN organizations o ON g.subject_type = 'organization' AND o.id = g.subject_id
 		LEFT JOIN departments dept ON g.subject_type = 'department' AND dept.id = g.subject_id AND dept.organization_id = g.organization_id
@@ -61,7 +61,7 @@ func (d ServerDeps) AssetGrants(w http.ResponseWriter, r *http.Request) {
 		ORDER BY g.created_at ASC
 	`, assetID, principal.OrganizationID)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "ASSET_GRANT_LIST_FAILED", "查询资产授权失败", nil)
+		adminError(w, http.StatusInternalServerError, "ASSET_GRANT_LIST_FAILED", "failed-to-query-asset-grants", nil)
 		return
 	}
 	defer rows.Close()
@@ -71,7 +71,7 @@ func (d ServerDeps) AssetGrants(w http.ResponseWriter, r *http.Request) {
 		var id, grantAssetID, subjectID uuid.UUID
 		if err := rows.Scan(&id, &grantAssetID, &item.SubjectType, &subjectID, &item.SubjectName,
 			&item.Actions, &item.CreatedAt, &item.UpdatedAt); err != nil {
-			adminError(w, http.StatusInternalServerError, "ASSET_GRANT_LIST_FAILED", "读取资产授权失败", nil)
+			adminError(w, http.StatusInternalServerError, "ASSET_GRANT_LIST_FAILED", "failed-to-read-asset-grants", nil)
 			return
 		}
 		item.ID = id.String()
@@ -89,7 +89,7 @@ func (d ServerDeps) UpsertAssetGrant(w http.ResponseWriter, r *http.Request) {
 	}
 	assetID, err := parseAssetID(r)
 	if err != nil {
-		writeAssetError(w, err, "ASSET_GRANT_SAVE_FAILED", "保存资产授权失败")
+		writeAssetError(w, err, "ASSET_GRANT_SAVE_FAILED", "save-asset-grant-failed")
 		return
 	}
 	var body upsertAssetGrantRequest
@@ -98,29 +98,29 @@ func (d ServerDeps) UpsertAssetGrant(w http.ResponseWriter, r *http.Request) {
 	}
 	subjectID, parseErr := uuid.Parse(body.SubjectID)
 	if parseErr != nil {
-		adminError(w, http.StatusBadRequest, "ASSET_GRANT_SUBJECT_INVALID", "授权对象 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "ASSET_GRANT_SUBJECT_INVALID", "invalid-grant-subject-id", nil)
 		return
 	}
 	switch body.SubjectType {
 	case "organization", "department", "project":
 	default:
-		adminError(w, http.StatusBadRequest, "ASSET_GRANT_SUBJECT_INVALID", "授权对象仅支持组织、部门、项目", nil)
+		adminError(w, http.StatusBadRequest, "ASSET_GRANT_SUBJECT_INVALID", "grant-subjects-support-only-organizations-departments", nil)
 		return
 	}
 	seen := map[string]bool{}
 	for _, action := range body.Actions {
 		if action != "read" && action != "invoke" {
-			adminError(w, http.StatusBadRequest, "ASSET_GRANT_ACTION_INVALID", "授权动作仅支持 read、invoke", nil)
+			adminError(w, http.StatusBadRequest, "ASSET_GRANT_ACTION_INVALID", "grant-actions-support-only-read-and", nil)
 			return
 		}
 		if seen[action] {
-			adminError(w, http.StatusBadRequest, "ASSET_GRANT_ACTION_INVALID", "授权动作不能重复", nil)
+			adminError(w, http.StatusBadRequest, "ASSET_GRANT_ACTION_INVALID", "grant-actions-cannot-be-duplicated", nil)
 			return
 		}
 		seen[action] = true
 	}
 	if len(body.Actions) == 0 {
-		adminError(w, http.StatusBadRequest, "ASSET_GRANT_ACTION_INVALID", "至少选择一项授权动作", nil)
+		adminError(w, http.StatusBadRequest, "ASSET_GRANT_ACTION_INVALID", "select-at-least-one-grant-action", nil)
 		return
 	}
 	var grantID uuid.UUID
@@ -130,13 +130,13 @@ func (d ServerDeps) UpsertAssetGrant(w http.ResponseWriter, r *http.Request) {
 			SELECT status FROM assets WHERE id = $1 AND organization_id = $2 FOR UPDATE
 		`, assetID, principal.OrganizationID).Scan(&status)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return assetError(http.StatusNotFound, "ASSET_NOT_FOUND", "资产不存在或不属于当前组织")
+			return assetError(http.StatusNotFound, "ASSET_NOT_FOUND", "asset-does-not-exist-or-does")
 		}
 		if err != nil {
 			return err
 		}
 		if status == "archived" {
-			return assetError(http.StatusConflict, "ASSET_ARCHIVED", "已归档资产不能新增授权")
+			return assetError(http.StatusConflict, "ASSET_ARCHIVED", "archived-assets-cannot-receive-new-grants")
 		}
 		var subjectExists bool
 		switch body.SubjectType {
@@ -151,7 +151,7 @@ func (d ServerDeps) UpsertAssetGrant(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		if !subjectExists {
-			return assetError(http.StatusBadRequest, "ASSET_GRANT_SUBJECT_NOT_FOUND", "授权对象不存在或不属于当前组织")
+			return assetError(http.StatusBadRequest, "ASSET_GRANT_SUBJECT_NOT_FOUND", "grant-subject-does-not-exist-or")
 		}
 		var beforeActions []string
 		if err := tx.QueryRow(r.Context(), `SELECT actions FROM asset_grants WHERE asset_id = $1 AND subject_type = $2 AND subject_id = $3`, assetID, body.SubjectType, subjectID).Scan(&beforeActions); err != nil && !errors.Is(err, pgx.ErrNoRows) {
@@ -175,7 +175,7 @@ func (d ServerDeps) UpsertAssetGrant(w http.ResponseWriter, r *http.Request) {
 		return err
 	})
 	if err != nil {
-		writeAssetError(w, err, "ASSET_GRANT_SAVE_FAILED", "保存资产授权失败")
+		writeAssetError(w, err, "ASSET_GRANT_SAVE_FAILED", "save-asset-grant-failed")
 		return
 	}
 	adminOK(w, map[string]string{"id": grantID.String()})
@@ -188,12 +188,12 @@ func (d ServerDeps) RevokeAssetGrant(w http.ResponseWriter, r *http.Request) {
 	}
 	assetID, err := parseAssetID(r)
 	if err != nil {
-		writeAssetError(w, err, "ASSET_GRANT_REVOKE_FAILED", "撤销资产授权失败")
+		writeAssetError(w, err, "ASSET_GRANT_REVOKE_FAILED", "revoke-asset-grant-failed")
 		return
 	}
 	grantID, parseErr := uuid.Parse(chi.URLParam(r, "grantID"))
 	if parseErr != nil {
-		adminError(w, http.StatusBadRequest, "ASSET_GRANT_ID_INVALID", "授权 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "ASSET_GRANT_ID_INVALID", "invalid-grant-id", nil)
 		return
 	}
 	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
@@ -208,7 +208,7 @@ func (d ServerDeps) RevokeAssetGrant(w http.ResponseWriter, r *http.Request) {
 			FOR UPDATE OF g
 		`, grantID, assetID, principal.OrganizationID).Scan(&subjectType, &subjectID, &actions)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return assetError(http.StatusNotFound, "ASSET_GRANT_NOT_FOUND", "授权不存在或不属于当前组织")
+			return assetError(http.StatusNotFound, "ASSET_GRANT_NOT_FOUND", "grant-does-not-exist-or-does")
 		}
 		if err != nil {
 			return err
@@ -225,7 +225,7 @@ func (d ServerDeps) RevokeAssetGrant(w http.ResponseWriter, r *http.Request) {
 		return err
 	})
 	if err != nil {
-		writeAssetError(w, err, "ASSET_GRANT_REVOKE_FAILED", "撤销资产授权失败")
+		writeAssetError(w, err, "ASSET_GRANT_REVOKE_FAILED", "revoke-asset-grant-failed")
 		return
 	}
 	adminOK(w, nil)

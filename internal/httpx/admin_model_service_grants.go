@@ -30,12 +30,12 @@ func (d ServerDeps) ModelServiceGrants(w http.ResponseWriter, r *http.Request) {
 	}
 	serviceID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "SERVICE_ID_INVALID", "模型服务 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "SERVICE_ID_INVALID", "invalid-model-service-id", nil)
 		return
 	}
 	rows, err := d.Pool.Query(r.Context(), `
 		SELECT g.id, g.model_service_id, g.subject_type, g.subject_id,
-		       COALESCE(o.name, dept.name, p.name, '未知对象'), g.actions, g.created_at, g.updated_at
+		       COALESCE(o.name, dept.name, p.name, ''), g.actions, g.created_at, g.updated_at
 		FROM model_service_grants g
 		LEFT JOIN organizations o ON g.subject_type = 'organization' AND o.id = g.subject_id
 		LEFT JOIN departments dept ON g.subject_type = 'department' AND dept.id = g.subject_id AND dept.organization_id = g.organization_id
@@ -44,7 +44,7 @@ func (d ServerDeps) ModelServiceGrants(w http.ResponseWriter, r *http.Request) {
 		ORDER BY g.created_at ASC
 	`, serviceID, principal.OrganizationID)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "SERVICE_GRANT_LIST_FAILED", "查询模型服务授权失败", nil)
+		adminError(w, http.StatusInternalServerError, "SERVICE_GRANT_LIST_FAILED", "failed-to-query-model-service-grants", nil)
 		return
 	}
 	defer rows.Close()
@@ -53,7 +53,7 @@ func (d ServerDeps) ModelServiceGrants(w http.ResponseWriter, r *http.Request) {
 		var item modelServiceGrantResponse
 		var id, service, subject uuid.UUID
 		if err := rows.Scan(&id, &service, &item.SubjectType, &subject, &item.SubjectName, &item.Actions, &item.CreatedAt, &item.UpdatedAt); err != nil {
-			adminError(w, http.StatusInternalServerError, "SERVICE_GRANT_LIST_FAILED", "读取模型服务授权失败", nil)
+			adminError(w, http.StatusInternalServerError, "SERVICE_GRANT_LIST_FAILED", "failed-to-read-model-service-grants", nil)
 			return
 		}
 		item.ID = id.String()
@@ -71,7 +71,7 @@ func (d ServerDeps) UpsertModelServiceGrant(w http.ResponseWriter, r *http.Reque
 	}
 	serviceID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "SERVICE_ID_INVALID", "模型服务 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "SERVICE_ID_INVALID", "invalid-model-service-id", nil)
 		return
 	}
 	var body upsertAssetGrantRequest
@@ -80,29 +80,29 @@ func (d ServerDeps) UpsertModelServiceGrant(w http.ResponseWriter, r *http.Reque
 	}
 	subjectID, err := uuid.Parse(body.SubjectID)
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "SERVICE_GRANT_SUBJECT_INVALID", "授权对象 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "SERVICE_GRANT_SUBJECT_INVALID", "invalid-grant-subject-id", nil)
 		return
 	}
 	switch body.SubjectType {
 	case "organization", "department", "project":
 	default:
-		adminError(w, http.StatusBadRequest, "SERVICE_GRANT_SUBJECT_INVALID", "授权对象仅支持组织、部门、项目", nil)
+		adminError(w, http.StatusBadRequest, "SERVICE_GRANT_SUBJECT_INVALID", "grant-subjects-support-only-organizations-departments", nil)
 		return
 	}
 	seen := map[string]bool{}
 	for _, action := range body.Actions {
 		if action != "read" && action != "invoke" {
-			adminError(w, http.StatusBadRequest, "SERVICE_GRANT_ACTION_INVALID", "授权动作仅支持 read、invoke", nil)
+			adminError(w, http.StatusBadRequest, "SERVICE_GRANT_ACTION_INVALID", "grant-actions-support-only-read-and", nil)
 			return
 		}
 		if seen[action] {
-			adminError(w, http.StatusBadRequest, "SERVICE_GRANT_ACTION_INVALID", "授权动作不能重复", nil)
+			adminError(w, http.StatusBadRequest, "SERVICE_GRANT_ACTION_INVALID", "grant-actions-cannot-be-duplicated", nil)
 			return
 		}
 		seen[action] = true
 	}
 	if len(body.Actions) == 0 {
-		adminError(w, http.StatusBadRequest, "SERVICE_GRANT_ACTION_INVALID", "至少选择一项授权动作", nil)
+		adminError(w, http.StatusBadRequest, "SERVICE_GRANT_ACTION_INVALID", "select-at-least-one-grant-action", nil)
 		return
 	}
 	var grantID uuid.UUID
@@ -112,7 +112,7 @@ func (d ServerDeps) UpsertModelServiceGrant(w http.ResponseWriter, r *http.Reque
 			return err
 		}
 		if !exists {
-			return &assetAPIError{status: http.StatusNotFound, code: "SERVICE_NOT_FOUND", message: "模型服务不存在或不属于当前组织"}
+			return &assetAPIError{status: http.StatusNotFound, code: "SERVICE_NOT_FOUND", reason: "model-service-does-not-exist-or"}
 		}
 		var subjectExists bool
 		switch body.SubjectType {
@@ -127,7 +127,7 @@ func (d ServerDeps) UpsertModelServiceGrant(w http.ResponseWriter, r *http.Reque
 			return err
 		}
 		if !subjectExists {
-			return &assetAPIError{status: http.StatusBadRequest, code: "SERVICE_GRANT_SUBJECT_NOT_FOUND", message: "授权对象不存在或不属于当前组织"}
+			return &assetAPIError{status: http.StatusBadRequest, code: "SERVICE_GRANT_SUBJECT_NOT_FOUND", reason: "grant-subject-does-not-exist-or"}
 		}
 		var beforeActions []string
 		if err := tx.QueryRow(r.Context(), `SELECT actions FROM model_service_grants WHERE model_service_id = $1 AND subject_type = $2 AND subject_id = $3`, serviceID, body.SubjectType, subjectID).Scan(&beforeActions); err != nil && !errors.Is(err, pgx.ErrNoRows) {
@@ -151,7 +151,7 @@ func (d ServerDeps) UpsertModelServiceGrant(w http.ResponseWriter, r *http.Reque
 		return err
 	})
 	if err != nil {
-		writeAssetError(w, err, "SERVICE_GRANT_SAVE_FAILED", "保存模型服务授权失败")
+		writeAssetError(w, err, "SERVICE_GRANT_SAVE_FAILED", "save-model-service-grant-failed")
 		return
 	}
 	adminOK(w, map[string]string{"id": grantID.String()})
@@ -164,22 +164,22 @@ func (d ServerDeps) RevokeModelServiceGrant(w http.ResponseWriter, r *http.Reque
 	}
 	serviceID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "SERVICE_ID_INVALID", "模型服务 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "SERVICE_ID_INVALID", "invalid-model-service-id", nil)
 		return
 	}
 	grantID, err := uuid.Parse(chi.URLParam(r, "grantID"))
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "SERVICE_GRANT_ID_INVALID", "授权 ID 不合法", nil)
+		adminError(w, http.StatusBadRequest, "SERVICE_GRANT_ID_INVALID", "invalid-grant-id", nil)
 		return
 	}
 	result, err := d.Pool.Exec(r.Context(), `DELETE FROM model_service_grants WHERE id = $1 AND model_service_id = $2 AND organization_id = $3`,
 		grantID, serviceID, principal.OrganizationID)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "SERVICE_GRANT_REVOKE_FAILED", "撤销模型服务授权失败", nil)
+		adminError(w, http.StatusInternalServerError, "SERVICE_GRANT_REVOKE_FAILED", "failed-to-revoke-the-model-service", nil)
 		return
 	}
 	if result.RowsAffected() == 0 {
-		adminError(w, http.StatusNotFound, "SERVICE_GRANT_NOT_FOUND", "授权不存在或不属于当前组织", nil)
+		adminError(w, http.StatusNotFound, "SERVICE_GRANT_NOT_FOUND", "grant-does-not-exist-or-does", nil)
 		return
 	}
 	_, _ = d.Pool.Exec(r.Context(), `

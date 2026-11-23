@@ -31,13 +31,13 @@ func TestQueryZhipuPlanBalanceUsesQuotaSemantics(t *testing.T) {
 		t.Fatalf("entries = %#v", entries)
 	}
 	first := entries[0]
-	if first.Kind != "quota" || first.Window != "5 小时" || first.Used == nil || *first.Used != 35.5 || first.Remaining == nil || *first.Remaining != 64.5 {
+	if first.Kind != "quota" || first.LabelKey != "quota_5h" || first.Used == nil || *first.Used != 35.5 || first.Remaining == nil || *first.Remaining != 64.5 {
 		t.Fatalf("quota semantics = %#v", first)
 	}
 	if first.NextResetTime == nil || *first.NextResetTime != 1795368000000 {
 		t.Fatalf("reset time = %#v", first.NextResetTime)
 	}
-	if entries[1].Label != "每周限额" || entries[1].Remaining == nil || *entries[1].Remaining != 30 {
+	if entries[1].LabelKey != "quota_weekly" || entries[1].Remaining == nil || *entries[1].Remaining != 30 {
 		t.Fatalf("weekly quota = %#v", entries[1])
 	}
 }
