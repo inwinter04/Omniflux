@@ -60,6 +60,10 @@ declare namespace Api {
       /** 近 24 小时被动健康统计;无流量时为 null */
       requests_24h: number;
       success_rate_24h: number | null;
+      avg_latency_ms_24h: number | null;
+      last_used_at: string | null;
+      active_candidates: number;
+      health_status: 'healthy' | 'degraded' | 'unhealthy' | 'no_data' | 'no_candidates' | 'disabled';
       created_at: string;
       updated_at: string;
     }
@@ -147,6 +151,12 @@ declare namespace Api {
       name: string;
       route_policy_id: string | null;
       status: string;
+      success_rate_24h: number | null;
+      requests_24h: number;
+      avg_latency_ms_24h: number | null;
+      last_used_at: string | null;
+      active_candidates: number;
+      health_status: 'healthy' | 'degraded' | 'unhealthy' | 'no_data' | 'no_candidates' | 'disabled';
       created_at: string;
       updated_at: string;
       candidates: ModelCandidate[];
@@ -160,6 +170,18 @@ declare namespace Api {
       input_cost_per_million: number;
       output_cost_per_million: number;
       quality_score: number;
+      status?: 'active' | 'disabled';
+    }
+
+    interface ModelServiceGrant {
+      id: string;
+      model_service_id: string;
+      subject_type: 'organization' | 'department' | 'project';
+      subject_id: string;
+      subject_name: string;
+      actions: ('read' | 'invoke')[];
+      created_at: string;
+      updated_at: string;
     }
 
     interface CreateModelServiceParams {
@@ -341,6 +363,7 @@ declare namespace Api {
       cached_tokens: number;
       reasoning_tokens: number;
       cost: number;
+      cost_currency: string;
       first_token_ms: number | null;
       total_ms: number;
       score: number | null;
@@ -467,6 +490,7 @@ declare namespace Api {
     interface UsageModelSummary {
       provider: string;
       upstream_model: string;
+      cost_currency: string;
       requests: number;
       input_tokens: number;
       output_tokens: number;
@@ -479,6 +503,7 @@ declare namespace Api {
     }
 
     interface UsageSummary {
+      costs: { currency: string; total: string }[];
       total_requests: number;
       success_requests: number;
       failed_requests: number;
@@ -493,6 +518,9 @@ declare namespace Api {
     interface UsageRecord {
       id: string;
       created_at: string;
+      project_name: string | null;
+      application_name: string | null;
+      key_name: string | null;
       model_service: string;
       state: string;
       status_code: number | null;
@@ -501,6 +529,8 @@ declare namespace Api {
       input_tokens: number;
       output_tokens: number;
       cost: string;
+      cost_currency: string;
+      source: 'api' | 'prompt_debug' | 'agent_debug';
       total_ms: number | null;
     }
 
@@ -540,6 +570,7 @@ declare namespace Api {
       success_rate_7d: string;
       cost_7d: string;
       cost_currency: string;
+      costs: { currency: string; total: string }[];
       active_budgets: number;
       exceeded_budgets: number;
     }

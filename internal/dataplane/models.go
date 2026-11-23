@@ -16,10 +16,20 @@ func (d Deps) ListModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := d.Pool.Query(r.Context(), `
-		SELECT name, created_at FROM model_services
-		WHERE organization_id = $1 AND status = 'active'
-		ORDER BY name ASC
-	`, keyCtx.OrganizationID)
+		SELECT s.name, s.created_at FROM model_services s
+		WHERE s.organization_id = $1 AND s.status = 'active'
+		  AND EXISTS (
+		    SELECT 1 FROM model_service_grants g
+		    WHERE g.model_service_id = s.id AND g.organization_id = $1
+		      AND g.actions && ARRAY['read','invoke']::text[]
+		      AND ((g.subject_type = 'organization' AND g.subject_id = $1)
+		        OR (g.subject_type = 'project' AND g.subject_id = $2)
+		        OR (g.subject_type = 'department' AND g.subject_id = (
+		          SELECT p.department_id FROM projects p WHERE p.id = $2 AND p.organization_id = $1
+		        )))
+		  )
+		ORDER BY s.name ASC
+	`, keyCtx.OrganizationID, keyCtx.ProjectID)
 	if err != nil {
 		apiError(w, http.StatusInternalServerError, "internal_error", "模型列表查询失败")
 		return

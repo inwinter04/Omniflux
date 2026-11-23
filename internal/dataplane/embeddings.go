@@ -81,6 +81,15 @@ func (d Deps) Embeddings(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusNotFound, "model_not_found", "模型服务不存在或未启用: "+meta.Model)
 		return
 	}
+	allowed, err := d.hasModelServiceAccess(r.Context(), keyCtx.OrganizationID, keyCtx.ProjectID, svc.ID, "invoke")
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "internal_error", "模型服务授权校验失败")
+		return
+	}
+	if !allowed {
+		apiError(w, http.StatusForbidden, "model_access_denied", "当前项目没有调用此模型服务的权限")
+		return
+	}
 	if !d.checkBudgets(w, r, keyCtx) {
 		return
 	}

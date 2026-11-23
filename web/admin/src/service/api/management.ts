@@ -444,3 +444,38 @@ export async function streamAgentChat(id: string, params: Api.Management.AgentCh
   if (buffer.trim()) processBlock(buffer);
 }
 
+export function fetchUpdateProviderAccountStatus(id: string, status: 'active' | 'disabled') {
+  return request({ url: `/provider-accounts/${id}/status`, method: 'patch', data: { status } });
+}
+
+export function fetchUpdateModelServiceStatus(id: string, status: 'active' | 'disabled') {
+  return request({ url: `/model-services/${id}/status`, method: 'patch', data: { status } });
+}
+
+export function fetchUpdateModelCandidateStatus(id: string, status: 'active' | 'disabled') {
+  return request({ url: `/model-candidates/${id}/status`, method: 'patch', data: { status } });
+}
+
+export function fetchUpdateProjectStatus(id: string, status: 'active' | 'disabled') {
+  return request({ url: `/projects/${id}/status`, method: 'patch', data: { status } });
+}
+
+export function fetchUpdateApplicationStatus(id: string, status: 'active' | 'disabled') {
+  return request({ url: `/applications/${id}/status`, method: 'patch', data: { status } });
+}
+
+export function fetchUpdateRoutePolicyStatus(id: string, status: 'active' | 'disabled') {
+  return request({ url: `/route-policies/${id}/status`, method: 'patch', data: { status } });
+}
+
+export function fetchModelServiceGrants(id: string) {
+  return request<Api.Management.ModelServiceGrant[]>({ url: `/model-services/${id}/grants` });
+}
+
+export function fetchUpsertModelServiceGrant(id: string, params: Api.Management.UpsertAssetGrantParams) {
+  return request<{ id: string }>({ url: `/model-services/${id}/grants`, method: 'post', data: params });
+}
+
+export function fetchRevokeModelServiceGrant(id: string, grantId: string) {
+  return request({ url: `/model-services/${id}/grants/${grantId}`, method: 'delete' });
+}

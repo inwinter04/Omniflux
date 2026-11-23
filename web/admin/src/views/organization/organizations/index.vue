@@ -30,7 +30,7 @@ const formRules: FormRules = {
     required: true,
     validator: (_rule, value: string) => {
       if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(value)) {
-        return new Error('slug 仅支持小写字母、数字和连字符,长度 1-63,且以字母或数字开头');
+        return new Error('组织标识仅支持小写字母、数字和连字符，长度为 1-63 个字符，且以字母或数字开头');
       }
       return true;
     },
@@ -43,7 +43,7 @@ const editRules: FormRules = {
 
 const columns: DataTableColumns<Api.Management.Organization> = [
   { title: '名称', key: 'name' },
-  { title: 'Slug', key: 'slug' },
+  { title: '组织标识', key: 'slug' },
   { title: '创建时间', key: 'created_at', width: 180, render: row => formatTime(row.created_at) },
   {
     title: '操作',
@@ -143,7 +143,7 @@ onMounted(() => {
         <NFormItem label="组织名称" path="name">
           <NInput v-model:value="formModel.name" placeholder="例如:Acme" />
         </NFormItem>
-        <NFormItem label="Slug" path="slug">
+        <NFormItem label="组织标识" path="slug">
           <NInput v-model:value="formModel.slug" placeholder="例如:acme" />
         </NFormItem>
         <NAlert type="info" :bordered="false">新组织初始没有任何成员,请到「用户」页面将用户归属到该组织。</NAlert>
@@ -161,7 +161,7 @@ onMounted(() => {
         <NFormItem label="组织名称" path="name">
           <NInput v-model:value="editModel.name" placeholder="组织名称" />
         </NFormItem>
-        <NFormItem label="Slug">
+        <NFormItem label="组织标识">
           <NInput :value="editModel.slug" disabled />
         </NFormItem>
       </NForm>

@@ -67,7 +67,7 @@ const columns: DataTableColumns<Api.Management.ApiKey> = [
     key: 'status',
     width: 100,
     render(row) {
-      return h(NTag, { type: statusTagType(row.status), size: 'small', round: true }, { default: () => statusText(row.status) });
+      return h(NTag, { type: statusTagType(row.status), size: 'small', round: true }, { default: () => statusText(row.status, 'api_key') });
     }
   },
   { title: '最近使用', key: 'last_used_at', width: 180, render: row => formatTime(row.last_used_at) },

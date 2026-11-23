@@ -7,7 +7,8 @@ import {
   fetchDeleteProject,
   fetchDepartments,
   fetchProjects,
-  fetchUpdateProject
+  fetchUpdateProject,
+  fetchUpdateProjectStatus
 } from '@/service/api';
 import { formatTime, statusTagType, statusText } from '@/utils/admin-status';
 
@@ -61,11 +62,12 @@ const columns: DataTableColumns<Api.Management.Project> = [
   {
     title: '操作',
     key: 'actions',
-    width: 150,
+    width: 230,
     render(row) {
       return h(NSpace, {}, {
         default: () => [
           h(NButton, { size: 'small', quaternary: true, type: 'primary', onClick: () => openEdit(row) }, { default: () => '编辑' }),
+          h(NButton, { size: 'small', quaternary: true, type: row.status === 'active' ? 'warning' : 'success', onClick: () => toggleStatus(row) }, { default: () => row.status === 'active' ? '停用' : '启用' }),
           h(
             NPopconfirm,
             { onPositiveClick: () => handleDelete(row.id) },
@@ -138,6 +140,15 @@ async function handleUpdate() {
     }
   } finally {
     submitting.value = false;
+  }
+}
+
+async function toggleStatus(row: Api.Management.Project) {
+  const status = row.status === 'active' ? 'disabled' : 'active';
+  const { error } = await fetchUpdateProjectStatus(row.id, status);
+  if (!error) {
+    window.$message?.success(status === 'active' ? '项目已启用' : '项目已停用');
+    await loadData();
   }
 }
 

@@ -140,6 +140,15 @@ func (d Deps) ChatAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	serviceID := uuid.MustParse(agentSpec.ModelServiceID)
+	allowed, err := d.hasModelServiceAccess(r.Context(), keyCtx.OrganizationID, keyCtx.ProjectID, serviceID, "invoke")
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "internal_error", "模型服务授权校验失败")
+		return
+	}
+	if !allowed {
+		apiError(w, http.StatusForbidden, "model_access_denied", "当前项目没有调用 Agent 绑定模型服务的权限")
+		return
+	}
 	if !d.checkBudgets(w, r, keyCtx) {
 		return
 	}

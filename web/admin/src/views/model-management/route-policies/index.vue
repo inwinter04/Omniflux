@@ -2,7 +2,7 @@
 import { h, onMounted, reactive, ref } from 'vue';
 import { NButton, NPopconfirm, NSpace, NTag } from 'naive-ui';
 import type { DataTableColumns, FormInst, FormRules, SelectOption } from 'naive-ui';
-import { fetchCreateRoutePolicy, fetchDeleteRoutePolicy, fetchProviderCatalog, fetchRoutePolicies, fetchUpdateRoutePolicy } from '@/service/api';
+import { fetchCreateRoutePolicy, fetchDeleteRoutePolicy, fetchProviderCatalog, fetchRoutePolicies, fetchUpdateRoutePolicy, fetchUpdateRoutePolicyStatus } from '@/service/api';
 import { formatTime, statusTagType, statusText } from '@/utils/admin-status';
 
 defineOptions({
@@ -10,9 +10,9 @@ defineOptions({
 });
 
 const strategyOptions = [
-  { label: '成本优先 (cost_first)', value: 'cost_first' },
-  { label: '效果优先 (quality_first)', value: 'quality_first' },
-  { label: '均衡 (balanced)', value: 'balanced' }
+  { label: '成本优先', value: 'cost_first' },
+  { label: '效果优先', value: 'quality_first' },
+  { label: '均衡', value: 'balanced' }
 ];
 
 // 厂商目录驱动的约束选项;目录加载失败时保留协议级兜底选项。
@@ -89,26 +89,27 @@ const columns: DataTableColumns<Api.Management.RoutePolicy> = [
   { title: '名称', key: 'name', width: 160 },
   { title: '策略', key: 'strategy', width: 180, render: row => strategyLabel(row.strategy) },
   { title: '版本', key: 'version', width: 70 },
-  { title: 'Fallback 上限', key: 'fallback_limit', width: 120 },
-  { title: '上游超时(ms)', key: 'provider_timeout_ms', width: 120 },
-  { title: '首 Token 超时(ms)', key: 'first_token_timeout_ms', width: 140 },
+  { title: '故障转移上限', key: 'fallback_limit', width: 120 },
+  { title: '上游超时（毫秒）', key: 'provider_timeout_ms', width: 120 },
+  { title: '首字超时（毫秒）', key: 'first_token_timeout_ms', width: 140 },
   {
     title: '状态',
     key: 'status',
     width: 90,
     render(row) {
-      return h(NTag, { type: statusTagType(row.status), size: 'small', round: true }, { default: () => statusText(row.status) });
+      return h(NTag, { type: statusTagType(row.status), size: 'small', round: true }, { default: () => statusText(row.status, 'policy') });
     }
   },
   { title: '更新时间', key: 'updated_at', width: 180, render: row => formatTime(row.updated_at) },
   {
     title: '操作',
     key: 'actions',
-    width: 150,
+    width: 230,
     render(row) {
       return h(NSpace, { size: 4 }, {
         default: () => [
           h(NButton, { size: 'small', quaternary: true, type: 'primary', onClick: () => openEdit(row) }, { default: () => '编辑' }),
+          h(NButton, { size: 'small', quaternary: true, type: row.status === 'active' ? 'warning' : 'success', onClick: () => toggleStatus(row) }, { default: () => row.status === 'active' ? '停用' : '启用' }),
           h(
             NPopconfirm,
             { onPositiveClick: () => handleDelete(row.id) },
@@ -212,6 +213,15 @@ async function handleUpdate() {
   }
 }
 
+async function toggleStatus(row: Api.Management.RoutePolicy) {
+  const status = row.status === 'active' ? 'disabled' : 'active';
+  const { error } = await fetchUpdateRoutePolicyStatus(row.id, status);
+  if (!error) {
+    window.$message?.success(status === 'active' ? '路由策略已启用' : '路由策略已停用');
+    await loadData();
+  }
+}
+
 async function handleDelete(id: string) {
   const { error } = await fetchDeleteRoutePolicy(id);
   if (!error) {
@@ -249,21 +259,21 @@ onMounted(() => {
         <NFormItem label="调度策略" path="strategy">
           <NSelect v-model:value="formModel.strategy" :options="strategyOptions" />
         </NFormItem>
-        <NFormItem label="Fallback 上限" path="fallback_limit">
+        <NFormItem label="故障转移上限" path="fallback_limit">
           <NInputNumber v-model:value="formModel.fallback_limit" :min="0" class="w-full" />
         </NFormItem>
-        <NFormItem label="上游超时(ms)" path="provider_timeout_ms">
+        <NFormItem label="上游超时（毫秒）" path="provider_timeout_ms">
           <NInputNumber v-model:value="formModel.provider_timeout_ms" :min="1" class="w-full" />
         </NFormItem>
-        <NFormItem label="首 Token 超时(ms)" path="first_token_timeout_ms">
+        <NFormItem label="首字超时（毫秒）" path="first_token_timeout_ms">
           <NInputNumber v-model:value="formModel.first_token_timeout_ms" :min="1" class="w-full" />
         </NFormItem>
 
         <NDivider title-placement="left">硬约束(可选,仅创建时可设置)</NDivider>
-        <NFormItem label="允许 Provider" path="allowed_providers">
+        <NFormItem label="允许的供应商" path="allowed_providers">
           <NSelect v-model:value="formModel.allowed_providers" multiple clearable tag :options="constraintProviderOptions" placeholder="留空不限制" />
         </NFormItem>
-        <NFormItem label="禁止 Provider" path="blocked_providers">
+        <NFormItem label="禁止的供应商" path="blocked_providers">
           <NSelect v-model:value="formModel.blocked_providers" multiple clearable tag :options="constraintProviderOptions" placeholder="留空不限制" />
         </NFormItem>
         <NFormItem label="允许上游模型" path="allowed_upstream_models">
@@ -273,7 +283,7 @@ onMounted(() => {
           <NSelect v-model:value="formModel.blocked_upstream_models" multiple clearable filterable tag placeholder="输入模型名后回车" />
         </NFormItem>
         <NFormItem label="混合单价上限" path="max_cost_per_million">
-          <NInputNumber v-model:value="formModel.max_cost_per_million" :min="0" class="w-full" placeholder="$/M,留空不限制" />
+          <NInputNumber v-model:value="formModel.max_cost_per_million" :min="0" class="w-full" placeholder="美元/百万，留空不限制" />
         </NFormItem>
       </NForm>
       <template #footer>
@@ -292,13 +302,13 @@ onMounted(() => {
         <NFormItem label="调度策略" path="strategy">
           <NSelect v-model:value="editModel.strategy" :options="strategyOptions" />
         </NFormItem>
-        <NFormItem label="Fallback 上限" path="fallback_limit">
+        <NFormItem label="故障转移上限" path="fallback_limit">
           <NInputNumber v-model:value="editModel.fallback_limit" :min="0" class="w-full" />
         </NFormItem>
-        <NFormItem label="上游超时(ms)" path="provider_timeout_ms">
+        <NFormItem label="上游超时（毫秒）" path="provider_timeout_ms">
           <NInputNumber v-model:value="editModel.provider_timeout_ms" :min="1" class="w-full" />
         </NFormItem>
-        <NFormItem label="首 Token 超时(ms)" path="first_token_timeout_ms">
+        <NFormItem label="首字超时（毫秒）" path="first_token_timeout_ms">
           <NInputNumber v-model:value="editModel.first_token_timeout_ms" :min="1" class="w-full" />
         </NFormItem>
         <NAlert type="info" :bordered="false">切换策略会按新策略模板重置评分权重;硬约束仅在创建时设置,如需调整请新建策略。</NAlert>

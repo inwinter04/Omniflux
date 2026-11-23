@@ -1,9 +1,16 @@
 /** 管理台业务状态与动作的中文展示,集中维护避免各页面散落映射。 */
 
-export function statusText(status: string) {
+export type StatusResource = 'account' | 'service' | 'candidate' | 'policy' | 'api_key';
+
+export function statusText(status: string, resource?: StatusResource) {
   switch (status) {
-    case 'active':
-      return '启用中';
+    case 'active': {
+      if (resource === 'service') return '可用';
+      if (resource === 'candidate') return '参与路由';
+      if (resource === 'policy') return '生效中';
+      if (resource === 'api_key') return '有效';
+      return '正常';
+    }
     case 'published':
       return '已发布';
     case 'draft':
@@ -32,6 +39,40 @@ export function statusTagType(status: string): 'success' | 'warning' | 'error' |
     default:
       return 'default';
   }
+}
+
+export function healthStatusText(status: string) {
+  const labels: Record<string, string> = {
+    healthy: '健康',
+    degraded: '波动',
+    unhealthy: '异常',
+    no_data: '未验证',
+    no_candidates: '未配置候选',
+    disabled: '已停用'
+  };
+  return labels[status] ?? status;
+}
+
+export function healthTagType(status: string): 'success' | 'warning' | 'error' | 'info' | 'default' {
+  if (status === 'healthy') return 'success';
+  if (status === 'degraded' || status === 'no_data') return 'warning';
+  if (status === 'unhealthy') return 'error';
+  return 'default';
+}
+
+export function healthSummary(row: {
+  requests_24h: number;
+  success_rate_24h: number | null;
+  avg_latency_ms_24h: number | null;
+  last_used_at: string | null;
+  active_candidates: number;
+}) {
+  if (row.active_candidates === 0) return '当前没有可参与路由的候选模型';
+  if (row.requests_24h === 0) return '近 24 小时暂无调用，尚未形成健康评估';
+  const success = Math.round((row.success_rate_24h ?? 0) * 1000) / 10;
+  const latency = row.avg_latency_ms_24h === null ? '暂无数据' : `${Math.round(row.avg_latency_ms_24h)} 毫秒`;
+  const lastUsed = row.last_used_at ? formatTime(row.last_used_at) : '暂无记录';
+  return `近 24 小时：${row.requests_24h} 次调用，成功率 ${success}%，平均延迟 ${latency}；最近调用：${lastUsed}`;
 }
 
 export function usageStateText(state: string) {
