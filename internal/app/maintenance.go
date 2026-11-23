@@ -56,7 +56,7 @@ func reconcilePending(ctx context.Context, logger *slog.Logger, pool *pgxpool.Po
         UPDATE usage_records
         SET state = 'failed', status_code = 504,
             error_type = 'abandoned',
-            error_message = '服务在请求完成前中断,用量按失败对账',
+            error_message = 'server interrupted before completion; usage reconciled as failed',
             finalized_at = now()
         WHERE state = 'pending' AND created_at < now() - interval '`+pendingTTL+`'
     `)

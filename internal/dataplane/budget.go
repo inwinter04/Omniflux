@@ -50,22 +50,6 @@ func (d Deps) loadActiveBudgets(ctx context.Context, keyCtx apiKeyContext) ([]bu
 	return windows, rows.Err()
 }
 
-// scopeDisplayName 把预算 scope 转成用户能看懂的描述。
-func scopeDisplayName(w budgetScopeRow) string {
-	switch w.ScopeType {
-	case "organization":
-		return "组织"
-	case "project":
-		return "项目"
-	case "application":
-		return "应用"
-	case "api_key":
-		return "API Key"
-	default:
-		return w.ScopeType
-	}
-}
-
 // checkBudgets 在请求处理前校验预算;任一命中窗口已花满则拒绝。
 func (d Deps) checkBudgets(w http.ResponseWriter, r *http.Request, keyCtx apiKeyContext) bool {
 	windows, err := d.loadActiveBudgets(r.Context(), keyCtx)
@@ -77,7 +61,8 @@ func (d Deps) checkBudgets(w http.ResponseWriter, r *http.Request, keyCtx apiKey
 	for _, win := range windows {
 		if spentExceeded(win.SpentAmount, win.LimitAmount) {
 			apiError(w, http.StatusTooManyRequests, "budget_exceeded",
-				fmt.Sprintf("%s预算已用尽(窗口限额 %s %s),请联系管理员调整", scopeDisplayName(win), win.LimitAmount, win.Currency))
+				fmt.Sprintf("Budget exceeded for %s window (limit %s %s). Contact an administrator to adjust it.", win.ScopeType, win.LimitAmount, win.Currency),
+				apiErrorOptions{Reason: "budget_exceeded", Params: map[string]any{"scope_type": win.ScopeType, "limit": win.LimitAmount, "currency": win.Currency}})
 			return false
 		}
 	}

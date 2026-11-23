@@ -26,14 +26,14 @@ import (
 	"github.com/inwinter04/omniflux/internal/vault"
 )
 
-const usage = `Omniflux 服务与管理命令。
+const usage = `Omniflux service and management commands.
 
 Usage:
-  omniflux                     启动 HTTP 服务
-  omniflux reset-password      重置用户密码
-    --email <email>            目标用户邮箱
-    --password <new-password>  新密码,至少 16 字符
-  omniflux help                显示本帮助
+  omniflux                     Start the HTTP service
+  omniflux reset-password      Reset a user password
+    --email <email>            Target user email
+    --password <new-password>  New password, at least 16 characters
+  omniflux help                Show this help
 `
 
 func main() {

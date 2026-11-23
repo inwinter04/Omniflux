@@ -82,13 +82,13 @@ func (d Deps) StartAgentRun(ctx context.Context, input AgentRunStart) (AgentRunC
 	result.OrganizationID = input.OrganizationID
 	result.RequestText = input.Message
 	if input.Message == "" {
-		return result, agentInputError("AGENT_MESSAGE_REQUIRED", "请输入消息内容")
+		return result, agentInputError("agent_message_required", "Message is required.")
 	}
 	if len(input.Message) > maxAgentMessageBytes {
-		return result, agentInputError("AGENT_MESSAGE_TOO_LONG", "单条消息不能超过 64 KB")
+		return result, agentInputError("agent_message_too_long", "Message exceeds 64 KB.")
 	}
 	if input.Actor.Channel != "debug" && input.Actor.Channel != "api" {
-		return result, agentInputError("AGENT_ACTOR_INVALID", "会话来源不合法")
+		return result, agentInputError("agent_actor_invalid", "Invalid session actor.")
 	}
 	err := pgx.BeginFunc(ctx, d.Pool, func(tx pgx.Tx) error {
 		var rawSpec, rawPromptSpec json.RawMessage
@@ -102,7 +102,7 @@ func (d Deps) StartAgentRun(ctx context.Context, input AgentRunStart) (AgentRunC
 			}
 		} else {
 			if len(input.Variables) > 0 {
-				return agentInputError("AGENT_SESSION_VARIABLES_IMMUTABLE", "已有会话不能修改初始变量，请新建会话")
+				return agentInputError("agent_session_variables_immutable", "Existing sessions cannot change initial variables. Create a new session.")
 			}
 			if err := queryExistingAgentSession(ctx, tx, input, &result, &rawSpec, &variables); err != nil {
 				return err
@@ -110,7 +110,7 @@ func (d Deps) StartAgentRun(ctx context.Context, input AgentRunStart) (AgentRunC
 		}
 		spec, err := asset.ParseAgentSpec(rawSpec)
 		if err != nil {
-			return fmt.Errorf("Agent 配置无效: %w", err)
+			return fmt.Errorf("Agent configuration is invalid: %w", err)
 		}
 		result.Spec = spec
 		promptID, _ := uuid.Parse(spec.PromptTemplateID)
@@ -120,16 +120,16 @@ func (d Deps) StartAgentRun(ctx context.Context, input AgentRunStart) (AgentRunC
 			JOIN assets a ON a.id = v.asset_id
 			WHERE v.id = $1 AND a.id = $2 AND a.organization_id = $3 AND a.asset_type = 'prompt_template'
 		`, promptVersionID, promptID, input.OrganizationID).Scan(&rawPromptSpec); err != nil {
-			return fmt.Errorf("无法读取 Agent 引用的提示词版本: %w", err)
+			return fmt.Errorf("failed to read the prompt version referenced by the agent: %w", err)
 		}
 		prompt, err := asset.ParsePromptSpec(rawPromptSpec)
 		if err != nil {
-			return fmt.Errorf("Agent 引用的提示词配置无效: %w", err)
+			return fmt.Errorf("prompt configuration referenced by the agent is invalid: %w", err)
 		}
 		result.PromptSpec = prompt
 		result.RenderedPrompt, err = asset.RenderPrompt(prompt, variables)
 		if err != nil {
-			return agentInputError("AGENT_VARIABLES_INVALID", err.Error())
+			return agentInputError("agent_variables_invalid", "Agent variables are invalid.")
 		}
 		result.Input = []schemas.ChatMessage{AgentTextMessage(schemas.ChatMessageRoleSystem, result.RenderedPrompt)}
 		if input.SessionID != uuid.Nil {
@@ -223,7 +223,7 @@ func queryInitialAgentVersion(ctx context.Context, tx pgx.Tx, input AgentRunStar
 		err = tx.QueryRow(ctx, query, input.AssetID, input.OrganizationID, input.PublishedOnly).Scan(&result.VersionID, &result.Version, rawSpec)
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
-		return agentInputError("AGENT_VERSION_NOT_FOUND", "Agent 不存在、未发布或版本不可用")
+		return agentInputError("agent_version_not_found", "Agent version does not exist or is not published.")
 	}
 	return err
 }
@@ -241,13 +241,13 @@ func queryExistingAgentSession(ctx context.Context, tx pgx.Tx, input AgentRunSta
 	`, input.SessionID, input.OrganizationID, input.AssetID, input.Actor.Channel, input.Actor.UserID, input.Actor.ProjectID,
 		input.PublishedOnly).Scan(&rawVariables, &result.VersionID, &result.Version, rawSpec)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return agentInputError("AGENT_SESSION_NOT_FOUND", "会话不存在、已停用或无权访问")
+		return agentInputError("agent_session_not_found", "Agent session does not exist, is disabled, or is not accessible.")
 	}
 	if err != nil {
 		return err
 	}
 	if err := json.Unmarshal(rawVariables, variables); err != nil {
-		return fmt.Errorf("会话变量无法读取: %w", err)
+		return fmt.Errorf("failed to read session variables: %w", err)
 	}
 	return nil
 }

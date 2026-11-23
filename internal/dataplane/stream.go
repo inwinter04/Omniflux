@@ -49,7 +49,8 @@ func (d Deps) handleStreamObserved(bctx *schemas.BifrostContext, streamCtx conte
 				observer.onComplete("failed", DebugResult{TotalMS: int(time.Since(start).Milliseconds())}, context.DeadlineExceeded)
 			}
 			apiError(w, http.StatusGatewayTimeout, "timeout",
-				"上游未在 first_token_timeout_ms 内返回首个 token")
+				"Upstream did not return the first token within first_token_timeout_ms.",
+				apiErrorOptions{Reason: "first_token_timeout"})
 			return
 		}
 		d.recordFailure(r.Context(), requestID, chain, bctx, bifrostErr, start, nil, usageSnapshot{})
@@ -62,9 +63,10 @@ func (d Deps) handleStreamObserved(bctx *schemas.BifrostContext, streamCtx conte
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		if observer != nil {
-			observer.onComplete("failed", DebugResult{TotalMS: int(time.Since(start).Milliseconds())}, errors.New("当前连接不支持流式响应"))
+			observer.onComplete("failed", DebugResult{TotalMS: int(time.Since(start).Milliseconds())}, errors.New("The current connection does not support streaming responses."))
 		}
-		apiError(w, http.StatusInternalServerError, "internal_error", "当前连接不支持流式响应")
+		apiError(w, http.StatusInternalServerError, "internal_error", "The current connection does not support streaming responses.",
+			apiErrorOptions{Reason: "streaming_unsupported"})
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -174,10 +176,8 @@ streamLoop:
 		// 看门狗取消且没有收到任何内容:按首 token 超时定稿并在流内输出错误事件。
 		d.recordFirstTokenTimeout(r.Context(), requestID, chain, start, routingEngineLogs(bctx))
 		finishObserver("failed", context.DeadlineExceeded)
-		errorPayload, _ := json.Marshal(map[string]any{"error": map[string]any{
-			"type":    "timeout",
-			"message": "上游未在 first_token_timeout_ms 内返回首个 token",
-		}})
+		errorPayload := apiErrorEvent(http.StatusGatewayTimeout, "timeout", "Upstream did not return the first token within first_token_timeout_ms.", requestID.String(),
+			apiErrorOptions{Reason: "first_token_timeout"})
 		_ = writeEvent(errorPayload)
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 		flusher.Flush()
@@ -185,10 +185,8 @@ streamLoop:
 	}
 	if streamErr != nil {
 		// 流已开始,状态码无法再改;按 OpenAI 惯例在流内输出错误事件后结束。
-		errorPayload, _ := json.Marshal(map[string]any{"error": map[string]any{
-			"type":    errorTypeOf(streamErr),
-			"message": errorMessageOf(streamErr),
-		}})
+		errorPayload := apiErrorEvent(http.StatusBadGateway, "upstream_error", "Upstream request failed.", requestID.String(),
+			apiErrorOptions{Type: "upstream_error", Reason: "upstream_request_failed", Detail: errorMessageOf(streamErr), Params: map[string]any{"upstream_type": errorTypeOf(streamErr)}})
 		_ = writeEvent(errorPayload)
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 		flusher.Flush()
@@ -231,7 +229,7 @@ func (d Deps) recordFirstTokenTimeout(ctx context.Context, requestID uuid.UUID, 
 		Provider:     stringPtr(primary.Provider),
 		TotalMS:      total,
 		ErrorType:    stringPtr("first_token_timeout"),
-		ErrorMessage: stringPtr("上游未在 first_token_timeout_ms 内返回首个 token"),
+		ErrorMessage: stringPtr("Upstream did not return the first token within first_token_timeout_ms."),
 		AttemptTrail: attemptTrailJSON(chain, candidate{}, "failed", "first_token_timeout", logs),
 	}); err != nil {
 		d.Logger.Warn("finalize first token timeout usage failed", "request_id", requestID, "error", err)

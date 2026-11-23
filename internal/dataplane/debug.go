@@ -112,7 +112,7 @@ func (d Deps) DebugConversationStream(ctx context.Context, organizationID, servi
 					result.FirstTokenMS = &elapsed
 				}
 				if content.Len()+len(delta) > maxDebugResponseBytes {
-					sendDebugStreamEvent(ctx, events, DebugStreamEvent{Err: errors.New("模型输出超过调试大小限制")})
+					sendDebugStreamEvent(ctx, events, DebugStreamEvent{Err: errors.New("Model output exceeds the debug size limit.")})
 					return
 				}
 				content.WriteString(delta)
@@ -144,11 +144,11 @@ func debugPromptParams(outputSchema json.RawMessage) *schemas.ChatParameters {
 func (d Deps) prepareConversationRequest(ctx context.Context, organizationID, serviceID uuid.UUID, messages []schemas.ChatMessage, params *schemas.ChatParameters) (routeChain, *schemas.BifrostContext, *schemas.BifrostChatRequest, time.Time, error) {
 	var name string
 	if err := d.Pool.QueryRow(ctx, `SELECT name FROM model_services WHERE id = $1 AND organization_id = $2 AND status = 'active'`, serviceID, organizationID).Scan(&name); err != nil {
-		return nil, nil, nil, time.Time{}, fmt.Errorf("模型服务不存在或未启用")
+		return nil, nil, nil, time.Time{}, fmt.Errorf("Model service does not exist or is not enabled.")
 	}
 	service, found, err := d.loadService(ctx, organizationID, name)
 	if err != nil || !found {
-		return nil, nil, nil, time.Time{}, fmt.Errorf("模型服务没有可用候选")
+		return nil, nil, nil, time.Time{}, fmt.Errorf("Model service has no available candidates.")
 	}
 	scores := d.loadCandidateHealth(ctx, organizationID, service.Candidates)
 	chain := selectChain(service.Candidates, service.Policy, scores)

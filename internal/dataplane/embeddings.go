@@ -29,11 +29,11 @@ func parseEmbeddingRequest(w http.ResponseWriter, r *http.Request) (embeddingReq
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxEmbeddingBodyBytes))
 	if err := decoder.Decode(&raw); err != nil {
-		apiError(w, http.StatusBadRequest, "invalid_request", "请求体不是合法 JSON: "+err.Error())
+		apiError(w, http.StatusBadRequest, "invalid_request", "Request body is not valid JSON.", apiErrorOptions{Reason: "invalid_json", Detail: err.Error()})
 		return embeddingRequestMeta{}, false
 	}
 	if raw.Model == "" {
-		apiError(w, http.StatusBadRequest, "invalid_request", "缺少 model 字段")
+		apiError(w, http.StatusBadRequest, "invalid_request", "The model parameter is required.", apiErrorOptions{Reason: "missing_model", Param: "model"})
 		return embeddingRequestMeta{}, false
 	}
 	meta := embeddingRequestMeta{Model: raw.Model}
@@ -42,17 +42,17 @@ func parseEmbeddingRequest(w http.ResponseWriter, r *http.Request) (embeddingReq
 		meta.Input = []string{single}
 	} else {
 		if err := json.Unmarshal(raw.Input, &meta.Input); err != nil {
-			apiError(w, http.StatusBadRequest, "invalid_request", "input 字段必须是 string 或 string[]")
+			apiError(w, http.StatusBadRequest, "invalid_request", "The input parameter must be a string or an array of strings.", apiErrorOptions{Reason: "invalid_input", Param: "input"})
 			return embeddingRequestMeta{}, false
 		}
 	}
 	if len(meta.Input) == 0 {
-		apiError(w, http.StatusBadRequest, "invalid_request", "缺少 input 字段")
+		apiError(w, http.StatusBadRequest, "invalid_request", "The input parameter is required.", apiErrorOptions{Reason: "missing_input", Param: "input"})
 		return embeddingRequestMeta{}, false
 	}
 	for _, text := range meta.Input {
 		if text == "" {
-			apiError(w, http.StatusBadRequest, "invalid_request", "input 中存在空文本")
+			apiError(w, http.StatusBadRequest, "invalid_request", "The input array contains empty text.", apiErrorOptions{Reason: "empty_input", Param: "input"})
 			return embeddingRequestMeta{}, false
 		}
 	}
@@ -63,7 +63,7 @@ func parseEmbeddingRequest(w http.ResponseWriter, r *http.Request) (embeddingReq
 func (d Deps) Embeddings(w http.ResponseWriter, r *http.Request) {
 	keyCtx, ok := keyFromContext(r.Context())
 	if !ok {
-		apiError(w, http.StatusUnauthorized, "missing_api_key", "缺少 API Key")
+		apiError(w, http.StatusUnauthorized, "missing_api_key", "Missing API key. Provide Authorization: Bearer <key>.")
 		return
 	}
 	meta, ok := parseEmbeddingRequest(w, r)
@@ -74,20 +74,20 @@ func (d Deps) Embeddings(w http.ResponseWriter, r *http.Request) {
 
 	svc, found, err := d.loadService(r.Context(), keyCtx.OrganizationID, meta.Model)
 	if err != nil {
-		apiError(w, http.StatusInternalServerError, "internal_error", "模型服务解析失败")
+		apiError(w, http.StatusInternalServerError, "internal_error", "Failed to resolve model service.")
 		return
 	}
 	if !found {
-		apiError(w, http.StatusNotFound, "model_not_found", "模型服务不存在或未启用: "+meta.Model)
+		apiError(w, http.StatusNotFound, "model_not_found", "Model service does not exist or is not enabled.", apiErrorOptions{Reason: "model_not_found", Param: "model", Params: map[string]any{"model": meta.Model}})
 		return
 	}
 	allowed, err := d.hasModelServiceAccess(r.Context(), keyCtx.OrganizationID, keyCtx.ProjectID, svc.ID, "invoke")
 	if err != nil {
-		apiError(w, http.StatusInternalServerError, "internal_error", "模型服务授权校验失败")
+		apiError(w, http.StatusInternalServerError, "internal_error", "Failed to check model service access.")
 		return
 	}
 	if !allowed {
-		apiError(w, http.StatusForbidden, "model_access_denied", "当前项目没有调用此模型服务的权限")
+		apiError(w, http.StatusForbidden, "model_access_denied", "The current project is not allowed to invoke this model service.")
 		return
 	}
 	if !d.checkBudgets(w, r, keyCtx) {
@@ -100,12 +100,12 @@ func (d Deps) Embeddings(w http.ResponseWriter, r *http.Request) {
 
 	provider, err := bifrostx.MapProvider(primary.Provider)
 	if err != nil {
-		apiError(w, http.StatusInternalServerError, "internal_error", "候选 provider 无法识别: "+primary.Provider)
+		apiError(w, http.StatusInternalServerError, "internal_error", "Candidate provider is not supported.", apiErrorOptions{Reason: "unsupported_provider", Params: map[string]any{"provider": primary.Provider}})
 		return
 	}
 
 	if err := d.recordPending(r.Context(), requestID, keyCtx, svc, chain); err != nil {
-		apiError(w, http.StatusInternalServerError, "internal_error", "路由决策记录失败")
+		apiError(w, http.StatusInternalServerError, "internal_error", "Failed to record routing decision.")
 		return
 	}
 

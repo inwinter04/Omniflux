@@ -31,7 +31,7 @@ func ParseAgentSpec(raw json.RawMessage) (AgentSpec, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&spec); err != nil {
-		return spec, fmt.Errorf("Agent 配置格式不正确: %w", err)
+		return spec, fmt.Errorf("Agent configuration format is invalid: %w", err)
 	}
 	if err := ensureJSONEOF(decoder); err != nil {
 		return spec, err
@@ -47,25 +47,25 @@ func ParseAgentSpec(raw json.RawMessage) (AgentSpec, error) {
 
 func ValidateAgentSpec(spec AgentSpec) error {
 	for field, value := range map[string]string{
-		"提示词模板": spec.PromptTemplateID,
-		"提示词版本": spec.PromptVersionID,
-		"模型服务":  spec.ModelServiceID,
+		"prompt_template": spec.PromptTemplateID,
+		"prompt_version":  spec.PromptVersionID,
+		"model_service":   spec.ModelServiceID,
 	} {
 		if _, err := uuid.Parse(value); err != nil {
-			return fmt.Errorf("%s ID 不合法", field)
+			return fmt.Errorf("%s ID is invalid", field)
 		}
 	}
 	if spec.Temperature != nil && (math.IsNaN(*spec.Temperature) || math.IsInf(*spec.Temperature, 0) || *spec.Temperature < 0 || *spec.Temperature > 2) {
-		return errors.New("温度必须在 0 到 2 之间")
+		return errors.New("temperature must be between 0 and 2")
 	}
 	if spec.TopP != nil && (math.IsNaN(*spec.TopP) || math.IsInf(*spec.TopP, 0) || *spec.TopP <= 0 || *spec.TopP > 1) {
-		return errors.New("Top P 必须大于 0 且不超过 1")
+		return errors.New("top_p must be greater than 0 and no more than 1")
 	}
 	if spec.MaxTokens < 0 || spec.MaxTokens > MaxAgentOutputTokens {
-		return fmt.Errorf("最大输出 Token 必须在 0 到 %d 之间", MaxAgentOutputTokens)
+		return fmt.Errorf("max output tokens must be between 0 and %d", MaxAgentOutputTokens)
 	}
 	if spec.MaxHistoryMessages < 2 || spec.MaxHistoryMessages > MaxAgentHistoryMessages || spec.MaxHistoryMessages%2 != 0 {
-		return fmt.Errorf("上下文消息数必须是 2 到 %d 之间的偶数", MaxAgentHistoryMessages)
+		return fmt.Errorf("max history messages must be an even number between 2 and %d", MaxAgentHistoryMessages)
 	}
 	return nil
 }

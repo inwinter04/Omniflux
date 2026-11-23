@@ -104,7 +104,7 @@ func queryVendorBalance(ctx context.Context, vendorID, baseURL, apiKey string) (
 func balanceGet(ctx context.Context, url string, headers map[string]string) (map[string]any, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, errors.New("余额接口请求构造失败")
+		return nil, errors.New("failed to build the balance API request")
 	}
 	req.Header.Set("Accept", "application/json")
 	for k, v := range headers {
@@ -112,22 +112,22 @@ func balanceGet(ctx context.Context, url string, headers map[string]string) (map
 	}
 	resp, err := balanceHTTPClient.Do(req)
 	if err != nil {
-		return nil, errors.New("余额接口网络请求失败,请检查服务器网络或厂商地址")
+		return nil, errors.New("balance API network request failed; check server network or provider endpoint")
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return nil, errors.New("读取余额接口响应失败")
+		return nil, errors.New("failed to read the balance API response")
 	}
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return nil, errors.New("鉴权失败:API Key 无效或无余额查询权限")
+		return nil, errors.New("authentication failed: API key is invalid or lacks balance query permission")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, errors.New("余额接口返回 HTTP " + resp.Status)
+		return nil, errors.New("balance API returned HTTP " + resp.Status)
 	}
 	var payload map[string]any
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, errors.New("余额接口响应不是有效 JSON")
+		return nil, errors.New("balance API response is not valid JSON")
 	}
 	return payload, nil
 }
@@ -192,7 +192,7 @@ func queryDeepSeekBalance(ctx context.Context, apiKey string) ([]balanceEntry, e
 		entries = append(entries, balanceEntry{LabelKey: labelKey, Kind: "balance", Remaining: remaining, Unit: unit})
 	}
 	if len(entries) == 0 {
-		return nil, errors.New("余额接口响应缺少 balance_infos 字段")
+		return nil, errors.New("balance API response is missing balance_infos")
 	}
 	// 多币种钱包只保留有余额的行,避免空钱包造成误导。
 	hasPositive := false
@@ -229,13 +229,13 @@ func queryZhipuBalance(ctx context.Context, vendorID, baseURL, apiKey string) ([
 	if success, ok := payload["success"].(bool); ok && !success {
 		msg, _ := payload["msg"].(string)
 		if msg == "" {
-			msg = "未知错误"
+			msg = "unknown error"
 		}
-		return nil, errors.New("厂商接口返回错误: " + msg)
+		return nil, errors.New("provider API error: " + msg)
 	}
 	data, ok := payload["data"].(map[string]any)
 	if !ok {
-		return nil, errors.New("余额接口响应缺少 data 字段")
+		return nil, errors.New("balance API response is missing data")
 	}
 	// availableBalance 是扣掉冻结后的可用余额;没有时退回 balance。
 	remaining := balanceF64(data, "availableBalance")
@@ -243,7 +243,7 @@ func queryZhipuBalance(ctx context.Context, vendorID, baseURL, apiKey string) ([
 		remaining = balanceF64(data, "balance")
 	}
 	if remaining == nil {
-		return nil, errors.New("余额接口响应缺少余额字段")
+		return nil, errors.New("balance API response is missing balance fields")
 	}
 	unit := "CNY"
 	labelKey := "provider_zhipu"
@@ -279,17 +279,17 @@ func queryZhipuPlanBalance(ctx context.Context, vendorID, baseURL, apiKey string
 			return queryZhipuBalance(ctx, vendorID, baseURL, apiKey)
 		}
 		if msg == "" {
-			msg = "未知错误"
+			msg = "unknown error"
 		}
-		return nil, errors.New("厂商接口返回错误: " + msg)
+		return nil, errors.New("provider API error: " + msg)
 	}
 	data, ok := payload["data"].(map[string]any)
 	if !ok {
-		return nil, errors.New("套餐接口响应缺少 data 字段")
+		return nil, errors.New("plan API response is missing data")
 	}
 	limits, ok := data["limits"].([]any)
 	if !ok {
-		return nil, errors.New("套餐接口响应缺少 data.limits 字段")
+		return nil, errors.New("plan API response is missing data.limits")
 	}
 	windowByType := map[string]string{
 		"TOKENS_LIMIT": "quota_5h",
@@ -321,7 +321,7 @@ func queryZhipuPlanBalance(ctx context.Context, vendorID, baseURL, apiKey string
 		entries = append(entries, entry)
 	}
 	if len(entries) == 0 {
-		return nil, errors.New("套餐接口响应不含可用额度窗口")
+		return nil, errors.New("plan API response contains no usable quota window")
 	}
 	return entries, nil
 }
@@ -360,7 +360,7 @@ func queryStepFunBalance(ctx context.Context, vendorID, baseURL, apiKey string) 
 	}
 	remaining := balanceF64(payload, "balance")
 	if remaining == nil {
-		return nil, errors.New("余额接口响应缺少 balance 字段")
+		return nil, errors.New("balance API response is missing balance")
 	}
 	labelKey := "provider_stepfun"
 	if vendorID == "stepfun-api-en" {
@@ -381,7 +381,7 @@ func querySiliconFlowBalance(ctx context.Context, vendorID, baseURL, apiKey stri
 	}
 	remaining := balanceF64(payload, "data", "totalBalance")
 	if remaining == nil {
-		return nil, errors.New("余额接口响应缺少 data.totalBalance 字段")
+		return nil, errors.New("balance API response is missing data.totalBalance")
 	}
 	unit := "CNY"
 	labelKey := "provider_siliconflow"
@@ -405,7 +405,7 @@ func queryOpenRouterBalance(ctx context.Context, apiKey string) ([]balanceEntry,
 	total := balanceF64(payload, "data", "total_credits")
 	used := balanceF64(payload, "data", "total_usage")
 	if total == nil || used == nil {
-		return nil, errors.New("余额接口响应缺少额度字段")
+		return nil, errors.New("balance API response is missing quota fields")
 	}
 	remaining := *total - *used
 	return []balanceEntry{{LabelKey: "provider_openrouter", Total: total, Used: used, Remaining: &remaining, Unit: "USD"}}, nil
@@ -423,7 +423,7 @@ func queryNovitaBalance(ctx context.Context, apiKey string) ([]balanceEntry, err
 	}
 	available := balanceF64(payload, "availableBalance")
 	if available == nil {
-		return nil, errors.New("余额接口响应缺少 availableBalance 字段")
+		return nil, errors.New("balance API response is missing availableBalance")
 	}
 	v := *available / 10000
 	return []balanceEntry{{LabelKey: "provider_novita", Remaining: &v, Unit: "USD"}}, nil

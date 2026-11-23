@@ -39,7 +39,7 @@ type renderPromptTemplateRequest struct {
 func (d Deps) ListPromptTemplates(w http.ResponseWriter, r *http.Request) {
 	keyCtx, ok := keyFromContext(r.Context())
 	if !ok {
-		apiError(w, http.StatusUnauthorized, "missing_api_key", "缺少 API Key")
+		apiError(w, http.StatusUnauthorized, "missing_api_key", "Missing API key. Provide Authorization: Bearer <key>.")
 		return
 	}
 	rows, err := d.Pool.Query(r.Context(), `
@@ -63,7 +63,7 @@ func (d Deps) ListPromptTemplates(w http.ResponseWriter, r *http.Request) {
 		ORDER BY a.name ASC
 	`, keyCtx.OrganizationID, keyCtx.ProjectID)
 	if err != nil {
-		apiError(w, http.StatusInternalServerError, "internal_error", "无法查询 PromptTemplate")
+		apiError(w, http.StatusInternalServerError, "internal_error", "Failed to query prompt template.")
 		return
 	}
 	defer rows.Close()
@@ -72,7 +72,7 @@ func (d Deps) ListPromptTemplates(w http.ResponseWriter, r *http.Request) {
 		var item promptTemplateResponse
 		var id, versionID uuid.UUID
 		if err := rows.Scan(&id, &item.Name, &item.Description, &versionID, &item.Version, &item.ModelServiceID, &item.UpdatedAt); err != nil {
-			apiError(w, http.StatusInternalServerError, "internal_error", "无法读取 PromptTemplate")
+			apiError(w, http.StatusInternalServerError, "internal_error", "Failed to read prompt template.")
 			return
 		}
 		item.ID = id.String()
@@ -85,21 +85,21 @@ func (d Deps) ListPromptTemplates(w http.ResponseWriter, r *http.Request) {
 func (d Deps) GetPromptTemplate(w http.ResponseWriter, r *http.Request) {
 	keyCtx, ok := keyFromContext(r.Context())
 	if !ok {
-		apiError(w, http.StatusUnauthorized, "missing_api_key", "缺少 API Key")
+		apiError(w, http.StatusUnauthorized, "missing_api_key", "Missing API key. Provide Authorization: Bearer <key>.")
 		return
 	}
 	item, rawSpec, err := d.loadPromptTemplate(r, keyCtx, chi.URLParam(r, "name"), "read")
 	if errors.Is(err, pgx.ErrNoRows) {
-		apiError(w, http.StatusNotFound, "prompt_template_not_found", "PromptTemplate 不存在、未发布或当前项目没有读取权限")
+		apiError(w, http.StatusNotFound, "prompt_template_not_found", "Prompt template does not exist, is not published, or is not readable by the current project.")
 		return
 	}
 	if err != nil {
-		apiError(w, http.StatusInternalServerError, "internal_error", "无法查询 PromptTemplate")
+		apiError(w, http.StatusInternalServerError, "internal_error", "Failed to query prompt template.")
 		return
 	}
 	spec, err := asset.ParsePromptSpec(rawSpec)
 	if err != nil {
-		apiError(w, http.StatusInternalServerError, "internal_error", "PromptTemplate 配置无效")
+		apiError(w, http.StatusInternalServerError, "internal_error", "Prompt template configuration is invalid.")
 		return
 	}
 	writePromptJSON(w, http.StatusOK, promptTemplateDetailResponse{promptTemplateResponse: item, Spec: spec})
@@ -108,40 +108,40 @@ func (d Deps) GetPromptTemplate(w http.ResponseWriter, r *http.Request) {
 func (d Deps) RenderPromptTemplate(w http.ResponseWriter, r *http.Request) {
 	keyCtx, ok := keyFromContext(r.Context())
 	if !ok {
-		apiError(w, http.StatusUnauthorized, "missing_api_key", "缺少 API Key")
+		apiError(w, http.StatusUnauthorized, "missing_api_key", "Missing API key. Provide Authorization: Bearer <key>.")
 		return
 	}
 	var body renderPromptTemplateRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxPromptRenderBodyBytes))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&body); err != nil {
-		apiError(w, http.StatusBadRequest, "invalid_request", "请求体格式不正确: "+err.Error())
+		apiError(w, http.StatusBadRequest, "invalid_request", "Request body format is invalid.", apiErrorOptions{Reason: "invalid_json", Detail: err.Error()})
 		return
 	}
 	var extra any
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		apiError(w, http.StatusBadRequest, "invalid_request", "请求体只能包含一个 JSON 对象")
+		apiError(w, http.StatusBadRequest, "invalid_request", "Request body must contain exactly one JSON object.", apiErrorOptions{Reason: "invalid_json"})
 		return
 	}
 	name := chi.URLParam(r, "name")
 	item, rawSpec, err := d.loadPromptTemplate(r, keyCtx, name, "invoke")
 	if errors.Is(err, pgx.ErrNoRows) {
 		d.auditDeniedPromptRender(r, keyCtx, name)
-		apiError(w, http.StatusForbidden, "prompt_template_access_denied", "PromptTemplate 不存在、未发布或当前项目没有调用权限")
+		apiError(w, http.StatusForbidden, "prompt_template_access_denied", "Prompt template does not exist, is not published, or is not invocable by the current project.")
 		return
 	}
 	if err != nil {
-		apiError(w, http.StatusInternalServerError, "internal_error", "无法查询 PromptTemplate")
+		apiError(w, http.StatusInternalServerError, "internal_error", "Failed to query prompt template.")
 		return
 	}
 	spec, err := asset.ParsePromptSpec(rawSpec)
 	if err != nil {
-		apiError(w, http.StatusInternalServerError, "internal_error", "PromptTemplate 配置无效")
+		apiError(w, http.StatusInternalServerError, "internal_error", "Prompt template configuration is invalid.")
 		return
 	}
 	rendered, err := asset.RenderPrompt(spec, body.Variables)
 	if err != nil {
-		apiError(w, http.StatusBadRequest, "prompt_render_invalid", err.Error())
+		apiError(w, http.StatusBadRequest, "invalid_request", "Prompt render input is invalid.", apiErrorOptions{Reason: "prompt_render_invalid"})
 		return
 	}
 	requestID := uuid.New()
@@ -153,7 +153,7 @@ func (d Deps) RenderPromptTemplate(w http.ResponseWriter, r *http.Request) {
 		"application_id": keyCtx.ApplicationID.String(), "version_id": item.VersionID,
 		"version": item.Version, "model_service_id": item.ModelServiceID,
 	}), requestID); err != nil {
-		apiError(w, http.StatusInternalServerError, "audit_error", "调用审计写入失败,请重试")
+		apiError(w, http.StatusInternalServerError, "audit_error", "Failed to write the invocation audit record. Please retry.")
 		return
 	}
 	writePromptJSON(w, http.StatusOK, map[string]any{
@@ -221,7 +221,7 @@ func auditDataJSON(value any) json.RawMessage {
 func writePromptJSON(w http.ResponseWriter, status int, value any) {
 	var output bytes.Buffer
 	if err := json.NewEncoder(&output).Encode(value); err != nil {
-		apiError(w, http.StatusInternalServerError, "internal_error", "响应序列化失败")
+		apiError(w, http.StatusInternalServerError, "internal_error", "Failed to serialize response.")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

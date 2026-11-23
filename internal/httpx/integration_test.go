@@ -374,9 +374,18 @@ func TestIntegrationGovernance(t *testing.T) {
 		if resp.StatusCode != http.StatusTooManyRequests {
 			t.Fatalf("chat with exhausted budget status = %d body = %v", resp.StatusCode, payload)
 		}
+		if resp.Header.Get("X-Request-ID") == "" {
+			t.Fatalf("missing X-Request-ID header")
+		}
 		errObj := payload["error"].(map[string]any)
-		if errObj["code"] != float64(429) {
-			t.Fatalf("error code = %v, want 429", errObj["code"])
+		if errObj["type"] != "rate_limit_error" || errObj["code"] != "budget_exceeded" || errObj["reason"] != "budget_exceeded" {
+			t.Fatalf("error contract = %#v, want budget_exceeded", errObj)
+		}
+		if _, ok := errObj["request_id"].(string); !ok {
+			t.Fatalf("error request_id = %#v, want string", errObj["request_id"])
+		}
+		if _, ok := errObj["params"].(map[string]any); !ok {
+			t.Fatalf("error params = %#v, want object", errObj["params"])
 		}
 		// 用量记录:预算拦截发生在 pending 写入之前,不产生用量。
 		var count int

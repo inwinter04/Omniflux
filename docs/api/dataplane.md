@@ -93,3 +93,34 @@ curl -sS http://127.0.0.1:8080/v1/agents/customer-assistant/chat/completions \
 预算采用后付口径:请求前按已结算用量拦截,请求成功后累加实际成本,并发在途请求可能小幅越过限额(与主流开源网关一致)。
 
 API Key 可配置 Key 级限流(`rate_limit_per_min`),未设置时沿用全局默认阈值(`OMNIFLUX_RATE_LIMIT_PER_MIN`,默认 60);限流基于 Redis 固定窗口实现。
+
+## 错误格式
+
+所有数据面错误使用 OpenAI 兼容的错误包，并附带稳定的机器字段：
+
+```json
+{
+  "error": {
+    "type": "invalid_request_error",
+    "code": "invalid_request",
+    "reason": "missing_model",
+    "message": "The model parameter is required.",
+    "param": "model",
+    "params": {},
+    "request_id": "req_01J..."
+  }
+}
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `type` | OpenAI 风格错误类型，例如 `invalid_request_error`、`authentication_error`、`rate_limit_error`、`upstream_error` |
+| `code` | 稳定的粗粒度错误码 |
+| `reason` | 稳定的细粒度原因，客户端应优先根据它做分支 |
+| `message` | 面向开发者的英文说明，不作为本地化文案使用 |
+| `param` | 相关请求字段，可选 |
+| `params` | 结构化错误参数，例如 `model`、`limit`、`currency` |
+| `detail` | 可选的上游原始错误，已尽量限制在排障所需范围 |
+| `request_id` | 请求追踪 ID，同时通过 `X-Request-ID` 响应头返回 |
+
+客户端应使用 `code` / `reason` / `params` 做判断，不要解析 `message` 文本。流式请求开始后如果失败，会在 SSE `event: error` 中返回同样的 `error` 对象，然后发送 `data: [DONE]`。

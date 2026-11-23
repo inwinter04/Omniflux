@@ -31,19 +31,19 @@ func parseChatRequest(w http.ResponseWriter, r *http.Request) (chatRequestMeta, 
 	var raw map[string]json.RawMessage
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxChatBodyBytes))
 	if err := decoder.Decode(&raw); err != nil {
-		apiError(w, http.StatusBadRequest, "invalid_request", "请求体不是合法 JSON: "+err.Error())
+		apiError(w, http.StatusBadRequest, "invalid_request", "Request body is not valid JSON.", apiErrorOptions{Reason: "invalid_json", Detail: err.Error()})
 		return chatRequestMeta{}, false
 	}
 	meta := chatRequestMeta{}
 	if v, ok := raw["model"]; ok {
 		if err := json.Unmarshal(v, &meta.Model); err != nil {
-			apiError(w, http.StatusBadRequest, "invalid_request", "model 字段必须是字符串")
+			apiError(w, http.StatusBadRequest, "invalid_request", "The model field must be a string.", apiErrorOptions{Reason: "invalid_model", Param: "model"})
 			return chatRequestMeta{}, false
 		}
 	}
 	if v, ok := raw["stream"]; ok {
 		if err := json.Unmarshal(v, &meta.Stream); err != nil {
-			apiError(w, http.StatusBadRequest, "invalid_request", "stream 字段必须是布尔值")
+			apiError(w, http.StatusBadRequest, "invalid_request", "The stream field must be a boolean.", apiErrorOptions{Reason: "invalid_stream", Param: "stream"})
 			return chatRequestMeta{}, false
 		}
 	}
@@ -56,22 +56,22 @@ func parseChatRequest(w http.ResponseWriter, r *http.Request) (chatRequestMeta, 
 	if len(raw) > 0 {
 		paramsBytes, err := json.Marshal(raw)
 		if err != nil {
-			apiError(w, http.StatusBadRequest, "invalid_request", "请求参数无法序列化")
+			apiError(w, http.StatusBadRequest, "invalid_request", "Request parameters cannot be serialized.", apiErrorOptions{Reason: "invalid_parameters"})
 			return chatRequestMeta{}, false
 		}
 		var params schemas.ChatParameters
 		if err := json.Unmarshal(paramsBytes, &params); err != nil {
-			apiError(w, http.StatusBadRequest, "invalid_request", "请求参数不合法: "+err.Error())
+			apiError(w, http.StatusBadRequest, "invalid_request", "Request parameters are invalid.", apiErrorOptions{Reason: "invalid_parameters", Detail: err.Error()})
 			return chatRequestMeta{}, false
 		}
 		meta.Params = &params
 	}
 	if meta.Model == "" {
-		apiError(w, http.StatusBadRequest, "invalid_request", "缺少 model 字段")
+		apiError(w, http.StatusBadRequest, "invalid_request", "The model parameter is required.", apiErrorOptions{Reason: "missing_model", Param: "model"})
 		return chatRequestMeta{}, false
 	}
 	if len(meta.Messages) == 0 {
-		apiError(w, http.StatusBadRequest, "invalid_request", "缺少 messages 字段")
+		apiError(w, http.StatusBadRequest, "invalid_request", "The messages parameter is required.", apiErrorOptions{Reason: "missing_messages", Param: "messages"})
 		return chatRequestMeta{}, false
 	}
 	return meta, true
@@ -226,7 +226,7 @@ func (d Deps) loadService(ctx context.Context, orgID uuid.UUID, name string) (re
 func (d Deps) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	keyCtx, ok := keyFromContext(r.Context())
 	if !ok {
-		apiError(w, http.StatusUnauthorized, "missing_api_key", "缺少 API Key")
+		apiError(w, http.StatusUnauthorized, "missing_api_key", "Missing API key. Provide Authorization: Bearer <key>.")
 		return
 	}
 	meta, ok := parseChatRequest(w, r)
@@ -237,20 +237,20 @@ func (d Deps) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	svc, found, err := d.loadService(r.Context(), keyCtx.OrganizationID, meta.Model)
 	if err != nil {
-		apiError(w, http.StatusInternalServerError, "internal_error", "模型服务解析失败")
+		apiError(w, http.StatusInternalServerError, "internal_error", "Failed to resolve model service.")
 		return
 	}
 	if !found {
-		apiError(w, http.StatusNotFound, "model_not_found", "模型服务不存在或未启用: "+meta.Model)
+		apiError(w, http.StatusNotFound, "model_not_found", "Model service does not exist or is not enabled.", apiErrorOptions{Reason: "model_not_found", Param: "model", Params: map[string]any{"model": meta.Model}})
 		return
 	}
 	allowed, err := d.hasModelServiceAccess(r.Context(), keyCtx.OrganizationID, keyCtx.ProjectID, svc.ID, "invoke")
 	if err != nil {
-		apiError(w, http.StatusInternalServerError, "internal_error", "模型服务授权校验失败")
+		apiError(w, http.StatusInternalServerError, "internal_error", "Failed to check model service access.")
 		return
 	}
 	if !allowed {
-		apiError(w, http.StatusForbidden, "model_access_denied", "当前项目没有调用此模型服务的权限")
+		apiError(w, http.StatusForbidden, "model_access_denied", "The current project is not allowed to invoke this model service.")
 		return
 	}
 	if !d.checkBudgets(w, r, keyCtx) {
@@ -263,18 +263,18 @@ func (d Deps) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	provider, err := bifrostx.MapProvider(primary.Provider)
 	if err != nil {
-		apiError(w, http.StatusInternalServerError, "internal_error", "候选 provider 无法识别: "+primary.Provider)
+		apiError(w, http.StatusInternalServerError, "internal_error", "Candidate provider is not supported.", apiErrorOptions{Reason: "unsupported_provider", Params: map[string]any{"provider": primary.Provider}})
 		return
 	}
 
 	if err := d.recordPending(r.Context(), requestID, keyCtx, svc, chain); err != nil {
-		apiError(w, http.StatusInternalServerError, "internal_error", "路由决策记录失败")
+		apiError(w, http.StatusInternalServerError, "internal_error", "Failed to record routing decision.")
 		return
 	}
 
 	var input []schemas.ChatMessage
 	if err := json.Unmarshal(meta.Messages, &input); err != nil {
-		apiError(w, http.StatusBadRequest, "invalid_request", "messages 字段不合法: "+err.Error())
+		apiError(w, http.StatusBadRequest, "invalid_request", "The messages parameter is invalid.", apiErrorOptions{Reason: "invalid_messages", Param: "messages", Detail: err.Error()})
 		return
 	}
 
@@ -508,5 +508,6 @@ func writeBifrostError(w http.ResponseWriter, bifrostErr *schemas.BifrostError) 
 	if bifrostErr.Error != nil && bifrostErr.Error.Message != "" {
 		message = bifrostErr.Error.Message
 	}
-	apiError(w, status, errType, message)
+	apiError(w, status, "upstream_error", "Upstream request failed.",
+		apiErrorOptions{Type: "upstream_error", Reason: "upstream_request_failed", Detail: message, Params: map[string]any{"upstream_type": errType}})
 }

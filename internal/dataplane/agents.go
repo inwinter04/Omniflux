@@ -45,7 +45,7 @@ type agentChatAPIRequest struct {
 func (d Deps) ListAgents(w http.ResponseWriter, r *http.Request) {
 	keyCtx, ok := keyFromContext(r.Context())
 	if !ok {
-		apiError(w, http.StatusUnauthorized, "missing_api_key", "缺少 API Key")
+		apiError(w, http.StatusUnauthorized, "missing_api_key", "Missing API key. Provide Authorization: Bearer <key>.")
 		return
 	}
 	rows, err := d.Pool.Query(r.Context(), `
@@ -64,7 +64,7 @@ func (d Deps) ListAgents(w http.ResponseWriter, r *http.Request) {
 		ORDER BY a.name ASC
 	`, keyCtx.OrganizationID, keyCtx.ProjectID)
 	if err != nil {
-		apiError(w, http.StatusInternalServerError, "internal_error", "无法查询 Agent")
+		apiError(w, http.StatusInternalServerError, "internal_error", "Failed to query agent.")
 		return
 	}
 	defer rows.Close()
@@ -73,7 +73,7 @@ func (d Deps) ListAgents(w http.ResponseWriter, r *http.Request) {
 		var item agentResponse
 		var id, versionID uuid.UUID
 		if err := rows.Scan(&id, &item.Name, &item.Description, &versionID, &item.Version, &item.UpdatedAt); err != nil {
-			apiError(w, http.StatusInternalServerError, "internal_error", "无法读取 Agent")
+			apiError(w, http.StatusInternalServerError, "internal_error", "Failed to read agent.")
 			return
 		}
 		item.ID, item.VersionID = id.String(), versionID.String()
@@ -85,21 +85,21 @@ func (d Deps) ListAgents(w http.ResponseWriter, r *http.Request) {
 func (d Deps) GetAgent(w http.ResponseWriter, r *http.Request) {
 	keyCtx, ok := keyFromContext(r.Context())
 	if !ok {
-		apiError(w, http.StatusUnauthorized, "missing_api_key", "缺少 API Key")
+		apiError(w, http.StatusUnauthorized, "missing_api_key", "Missing API key. Provide Authorization: Bearer <key>.")
 		return
 	}
 	item, rawSpec, err := d.loadAgent(r, keyCtx, chi.URLParam(r, "name"), "read")
 	if errors.Is(err, pgx.ErrNoRows) {
-		apiError(w, http.StatusNotFound, "agent_not_found", "Agent 不存在、未发布或当前项目没有读取权限")
+		apiError(w, http.StatusNotFound, "agent_not_found", "Agent does not exist, is not published, or is not readable by the current project.")
 		return
 	}
 	if err != nil {
-		apiError(w, http.StatusInternalServerError, "internal_error", "无法查询 Agent")
+		apiError(w, http.StatusInternalServerError, "internal_error", "Failed to query agent.")
 		return
 	}
 	spec, err := asset.ParseAgentSpec(rawSpec)
 	if err != nil {
-		apiError(w, http.StatusInternalServerError, "internal_error", "Agent 配置无效")
+		apiError(w, http.StatusInternalServerError, "internal_error", "Agent configuration is invalid.")
 		return
 	}
 	writePromptJSON(w, http.StatusOK, agentDetailResponse{agentResponse: item, Spec: spec})
@@ -108,45 +108,45 @@ func (d Deps) GetAgent(w http.ResponseWriter, r *http.Request) {
 func (d Deps) ChatAgent(w http.ResponseWriter, r *http.Request) {
 	keyCtx, ok := keyFromContext(r.Context())
 	if !ok {
-		apiError(w, http.StatusUnauthorized, "missing_api_key", "缺少 API Key")
+		apiError(w, http.StatusUnauthorized, "missing_api_key", "Missing API key. Provide Authorization: Bearer <key>.")
 		return
 	}
 	var body agentChatAPIRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxAgentChatBodyBytes))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&body); err != nil {
-		apiError(w, http.StatusBadRequest, "invalid_request", "请求体格式不正确: "+err.Error())
+		apiError(w, http.StatusBadRequest, "invalid_request", "Request body format is invalid.", apiErrorOptions{Reason: "invalid_json", Detail: err.Error()})
 		return
 	}
 	var extra any
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		apiError(w, http.StatusBadRequest, "invalid_request", "请求体只能包含一个 JSON 对象")
+		apiError(w, http.StatusBadRequest, "invalid_request", "Request body must contain exactly one JSON object.", apiErrorOptions{Reason: "invalid_json"})
 		return
 	}
 	name := chi.URLParam(r, "name")
 	item, rawSpec, err := d.loadAgent(r, keyCtx, name, "invoke")
 	if errors.Is(err, pgx.ErrNoRows) {
 		d.auditDeniedAgentChat(r, keyCtx, name)
-		apiError(w, http.StatusForbidden, "agent_access_denied", "Agent 不存在、未发布或当前项目没有调用权限")
+		apiError(w, http.StatusForbidden, "agent_access_denied", "Agent does not exist, is not published, or is not invocable by the current project.")
 		return
 	}
 	if err != nil {
-		apiError(w, http.StatusInternalServerError, "internal_error", "无法查询 Agent")
+		apiError(w, http.StatusInternalServerError, "internal_error", "Failed to query agent.")
 		return
 	}
 	agentSpec, err := asset.ParseAgentSpec(rawSpec)
 	if err != nil {
-		apiError(w, http.StatusInternalServerError, "internal_error", "Agent 配置无效")
+		apiError(w, http.StatusInternalServerError, "internal_error", "Agent configuration is invalid.")
 		return
 	}
 	serviceID := uuid.MustParse(agentSpec.ModelServiceID)
 	allowed, err := d.hasModelServiceAccess(r.Context(), keyCtx.OrganizationID, keyCtx.ProjectID, serviceID, "invoke")
 	if err != nil {
-		apiError(w, http.StatusInternalServerError, "internal_error", "模型服务授权校验失败")
+		apiError(w, http.StatusInternalServerError, "internal_error", "Failed to check model service access.")
 		return
 	}
 	if !allowed {
-		apiError(w, http.StatusForbidden, "model_access_denied", "当前项目没有调用 Agent 绑定模型服务的权限")
+		apiError(w, http.StatusForbidden, "model_access_denied", "The current project is not allowed to invoke the model service bound to this agent.")
 		return
 	}
 	if !d.checkBudgets(w, r, keyCtx) {
@@ -157,7 +157,7 @@ func (d Deps) ChatAgent(w http.ResponseWriter, r *http.Request) {
 	if body.SessionID != "" {
 		sessionID, err = uuid.Parse(body.SessionID)
 		if err != nil {
-			apiError(w, http.StatusBadRequest, "invalid_session_id", "会话 ID 不合法")
+			apiError(w, http.StatusBadRequest, "invalid_request", "The session_id parameter is invalid.", apiErrorOptions{Reason: "invalid_session_id", Param: "session_id"})
 			return
 		}
 	}
@@ -172,14 +172,14 @@ func (d Deps) ChatAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	var serviceName string
 	if err := d.Pool.QueryRow(r.Context(), `SELECT name FROM model_services WHERE id = $1 AND organization_id = $2 AND status = 'active'`, serviceID, keyCtx.OrganizationID).Scan(&serviceName); err != nil {
-		_ = d.FinishAgentRun(r.Context(), run, "failed", DebugResult{}, errors.New("模型服务不存在或未启用"))
-		apiError(w, http.StatusConflict, "agent_model_unavailable", "Agent 绑定的模型服务不存在或未启用")
+		_ = d.FinishAgentRun(r.Context(), run, "failed", DebugResult{}, errors.New("Model service does not exist or is not enabled."))
+		apiError(w, http.StatusConflict, "agent_model_unavailable", "The model service bound to the agent does not exist or is not enabled.", apiErrorOptions{Reason: "agent_model_unavailable"})
 		return
 	}
 	svc, found, err := d.loadService(r.Context(), keyCtx.OrganizationID, serviceName)
 	if err != nil || !found {
-		_ = d.FinishAgentRun(r.Context(), run, "failed", DebugResult{}, errors.New("模型服务没有可用候选"))
-		apiError(w, http.StatusConflict, "agent_model_unavailable", "Agent 绑定的模型服务没有可用候选")
+		_ = d.FinishAgentRun(r.Context(), run, "failed", DebugResult{}, errors.New("Model service has no available candidates."))
+		apiError(w, http.StatusConflict, "agent_model_unavailable", "The model service bound to the agent has no available candidates.", apiErrorOptions{Reason: "agent_model_no_candidates"})
 		return
 	}
 	chain := selectChain(svc.Candidates, svc.Policy, d.loadCandidateHealth(r.Context(), keyCtx.OrganizationID, svc.Candidates))
@@ -187,12 +187,12 @@ func (d Deps) ChatAgent(w http.ResponseWriter, r *http.Request) {
 	provider, err := bifrostx.MapProvider(primary.Provider)
 	if err != nil {
 		_ = d.FinishAgentRun(r.Context(), run, "failed", DebugResult{}, err)
-		apiError(w, http.StatusInternalServerError, "internal_error", "候选 provider 无法识别")
+		apiError(w, http.StatusInternalServerError, "internal_error", "Candidate provider is not supported.", apiErrorOptions{Reason: "unsupported_provider"})
 		return
 	}
 	if err := d.recordPending(r.Context(), run.RunID, keyCtx, svc, chain); err != nil {
-		_ = d.FinishAgentRun(r.Context(), run, "failed", DebugResult{}, errors.New("路由决策记录失败"))
-		apiError(w, http.StatusInternalServerError, "internal_error", "路由决策记录失败")
+		_ = d.FinishAgentRun(r.Context(), run, "failed", DebugResult{}, errors.New("Failed to record routing decision."))
+		apiError(w, http.StatusInternalServerError, "internal_error", "Failed to record routing decision.")
 		return
 	}
 	request := &schemas.BifrostChatRequest{
@@ -255,13 +255,13 @@ func writeAgentAPIError(w http.ResponseWriter, err error) {
 	var inputErr *AgentInputError
 	if errors.As(err, &inputErr) {
 		status := http.StatusBadRequest
-		if inputErr.Code == "AGENT_SESSION_NOT_FOUND" {
+		if inputErr.Code == "agent_session_not_found" || inputErr.Code == "agent_version_not_found" {
 			status = http.StatusNotFound
 		}
-		apiError(w, status, "agent_run_invalid", inputErr.Message)
+		apiError(w, status, "agent_run_invalid", inputErr.Message, apiErrorOptions{Reason: inputErr.Code})
 		return
 	}
-	apiError(w, http.StatusInternalServerError, "internal_error", "无法开始 Agent 运行")
+	apiError(w, http.StatusInternalServerError, "internal_error", "Failed to start agent run.")
 }
 
 func (d Deps) auditAgentChat(r *http.Request, keyCtx apiKeyContext, agentID uuid.UUID, run AgentRunContext, status string) {

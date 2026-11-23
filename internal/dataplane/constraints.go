@@ -73,7 +73,7 @@ func ValidateConstraintsJSON(raw json.RawMessage) error {
 	}
 	var decoded map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &decoded); err != nil {
-		return fmt.Errorf("constraints 不是合法 JSON 对象")
+		return fmt.Errorf("constraints is not a valid JSON object")
 	}
 	allowedKeys := map[string]bool{
 		"allowed_providers": true, "blocked_providers": true,
@@ -82,18 +82,18 @@ func ValidateConstraintsJSON(raw json.RawMessage) error {
 	}
 	for key, value := range decoded {
 		if !allowedKeys[key] {
-			return fmt.Errorf("constraints 不支持字段 %q", key)
+			return fmt.Errorf("constraints does not support field %q", key)
 		}
 		if key == "max_cost_per_million" {
 			var number float64
 			if err := json.Unmarshal(value, &number); err != nil || number < 0 {
-				return fmt.Errorf("constraints.max_cost_per_million 必须是非负数字")
+				return fmt.Errorf("constraints.max_cost_per_million must be a non-negative number")
 			}
 			continue
 		}
 		var list []string
 		if err := json.Unmarshal(value, &list); err != nil {
-			return fmt.Errorf("constraints.%s 必须是字符串数组", key)
+			return fmt.Errorf("constraints.%s must be an array of strings", key)
 		}
 	}
 	return nil

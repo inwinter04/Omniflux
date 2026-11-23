@@ -182,3 +182,25 @@ Agent 配置包含 `prompt_template_id`、`prompt_version_id`、`model_service_i
 | `GET /api/v1/usage/records` | 用量明细分页 |
 | `GET /api/v1/audit-events` | 审计事件分页 |
 | `GET /api/v1/audit-events/{id}` | 审计事件详情 |
+
+## 错误格式
+
+管理面错误只返回机器字段，不返回本地化文案：
+
+```json
+{
+  "code": "ORG_NOT_FOUND",
+  "reason": "organization-does-not-exist",
+  "params": {},
+  "detail": ""
+}
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `code` | 稳定的粗粒度错误码 |
+| `reason` | 稳定的细粒度原因，管理台前端据此渲染当前语言 |
+| `params` | 结构化错误参数，例如重试秒数、字段名、版本号 |
+| `detail` | 可选的技术细节或上游原始错误，不作为 UI 文案使用 |
+
+管理台前端只根据 `reason` 和 `params` 渲染中英文文案；不要依赖后端返回自然语言。

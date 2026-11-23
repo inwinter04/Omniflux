@@ -42,7 +42,7 @@ func ParsePromptSpec(raw json.RawMessage) (PromptSpec, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&spec); err != nil {
-		return spec, fmt.Errorf("模板配置格式不正确: %w", err)
+		return spec, fmt.Errorf("Prompt configuration format is invalid: %w", err)
 	}
 	if err := ensureJSONEOF(decoder); err != nil {
 		return spec, err
@@ -75,57 +75,57 @@ func RenderPrompt(spec PromptSpec, input map[string]any) (string, error) {
 	}
 	normalized, err := normalizeJSON(values)
 	if err != nil {
-		return "", fmt.Errorf("变量不是合法 JSON: %w", err)
+		return "", fmt.Errorf("variables are not valid JSON: %w", err)
 	}
 	if err := schema.Validate(normalized); err != nil {
-		return "", fmt.Errorf("变量校验失败: %w", err)
+		return "", fmt.Errorf("variable validation failed: %w", err)
 	}
 	tmpl, err := template.New("prompt").Option("missingkey=error").Parse(spec.Template)
 	if err != nil {
-		return "", fmt.Errorf("模板解析失败: %w", err)
+		return "", fmt.Errorf("template parsing failed: %w", err)
 	}
 	writer := &limitedWriter{remaining: maxRenderedBytes}
 	if err := tmpl.Execute(writer, normalized); err != nil {
-		return "", fmt.Errorf("模板渲染失败: %w", err)
+		return "", fmt.Errorf("template rendering failed: %w", err)
 	}
 	return writer.String(), nil
 }
 
 func validatePromptSpec(spec PromptSpec) error {
 	if strings.TrimSpace(spec.Template) == "" {
-		return errors.New("模板正文不能为空")
+		return errors.New("template content is required")
 	}
 	if len(spec.Template) > maxTemplateBytes {
-		return fmt.Errorf("模板正文不能超过 %d 字节", maxTemplateBytes)
+		return fmt.Errorf("template content cannot exceed %d bytes", maxTemplateBytes)
 	}
 	if len(spec.Variables) > maxVariables {
-		return fmt.Errorf("变量数量不能超过 %d", maxVariables)
+		return fmt.Errorf("variable count cannot exceed %d", maxVariables)
 	}
 	if spec.ModelServiceID != "" {
 		if _, err := uuid.Parse(spec.ModelServiceID); err != nil {
-			return errors.New("model_service_id 不合法")
+			return errors.New("model_service_id is invalid")
 		}
 	}
 	seen := make(map[string]bool, len(spec.Variables))
 	for _, variable := range spec.Variables {
 		if !variableNamePattern.MatchString(variable.Name) {
-			return fmt.Errorf("变量名 %q 不合法", variable.Name)
+			return fmt.Errorf("variable name %q is invalid", variable.Name)
 		}
 		if seen[variable.Name] {
-			return fmt.Errorf("变量 %q 重复", variable.Name)
+			return fmt.Errorf("variable %q is duplicated", variable.Name)
 		}
 		seen[variable.Name] = true
 		switch variable.Type {
 		case "string", "number", "integer", "boolean":
 		default:
-			return fmt.Errorf("变量 %q 的类型不受支持", variable.Name)
+			return fmt.Errorf("variable %q has an unsupported type", variable.Name)
 		}
 		if len(variable.Description) > 500 {
-			return fmt.Errorf("变量 %q 的描述不能超过 500 字符", variable.Name)
+			return fmt.Errorf("variable %q description cannot exceed 500 characters", variable.Name)
 		}
 		if variable.Default != nil {
 			if err := validateDefault(variable); err != nil {
-				return fmt.Errorf("变量 %q 的默认值不正确: %w", variable.Name, err)
+				return fmt.Errorf("variable %q default value is invalid: %w", variable.Name, err)
 			}
 		}
 	}
@@ -137,7 +137,7 @@ func validatePromptSpec(spec PromptSpec) error {
 	}
 	tmpl, err := template.New("prompt").Option("missingkey=error").Parse(spec.Template)
 	if err != nil {
-		return fmt.Errorf("模板语法不正确: %w", err)
+		return fmt.Errorf("template syntax is invalid: %w", err)
 	}
 	samples := make(map[string]any, len(spec.Variables))
 	for _, variable := range spec.Variables {
@@ -155,7 +155,7 @@ func validatePromptSpec(spec PromptSpec) error {
 		}
 	}
 	if err := tmpl.Execute(io.Discard, samples); err != nil {
-		return fmt.Errorf("模板引用了未定义变量或包含无效操作: %w", err)
+		return fmt.Errorf("template references an undefined variable or contains an invalid operation: %w", err)
 	}
 	return nil
 }
@@ -204,7 +204,7 @@ func compileSchema(document map[string]any) (*jsonschema.Schema, error) {
 	}
 	schema, err := compiler.Compile("prompt.schema.json")
 	if err != nil {
-		return nil, fmt.Errorf("变量 Schema 编译失败: %w", err)
+		return nil, fmt.Errorf("variable schema compilation failed: %w", err)
 	}
 	return schema, nil
 }
@@ -220,7 +220,7 @@ func normalizeJSON(value any) (any, error) {
 func ensureJSONEOF(decoder *json.Decoder) error {
 	var extra any
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		return errors.New("请求体只能包含一个 JSON 对象")
+		return errors.New("request body must contain exactly one JSON object")
 	}
 	return nil
 }
@@ -232,7 +232,7 @@ type limitedWriter struct {
 
 func (w *limitedWriter) Write(p []byte) (int, error) {
 	if len(p) > w.remaining {
-		return 0, fmt.Errorf("渲染结果不能超过 %d 字节", maxRenderedBytes)
+		return 0, fmt.Errorf("rendered result cannot exceed %d bytes", maxRenderedBytes)
 	}
 	n, err := w.Builder.Write(p)
 	w.remaining -= n

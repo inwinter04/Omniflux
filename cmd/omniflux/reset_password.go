@@ -17,8 +17,8 @@ import (
 // 密码重置只依赖数据库连接,不需要 MASTER_KEY 与 API_KEY_PEPPER。
 func runPasswordReset(args []string) error {
 	fs := flag.NewFlagSet("reset-password", flag.ContinueOnError)
-	email := fs.String("email", "", "目标用户邮箱")
-	password := fs.String("password", "", "新密码,至少 16 字符")
+	email := fs.String("email", "", "target user email")
+	password := fs.String("password", "", "new password, at least 16 characters")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

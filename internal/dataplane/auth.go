@@ -35,12 +35,12 @@ func (d Deps) RequireAPIKey(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		header := r.Header.Get("Authorization")
 		if !strings.HasPrefix(header, "Bearer ") {
-			apiError(w, http.StatusUnauthorized, "missing_api_key", "缺少 API Key,请通过 Authorization: Bearer 请求头提供")
+			apiError(w, http.StatusUnauthorized, "missing_api_key", "Missing API key. Provide Authorization: Bearer <key>.")
 			return
 		}
 		full := strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
 		if !apikeys.ValidFormat(full) {
-			apiError(w, http.StatusUnauthorized, "invalid_api_key", "API Key 格式不正确")
+			apiError(w, http.StatusUnauthorized, "invalid_api_key", "Invalid API key format.", apiErrorOptions{Reason: "invalid_api_key_format"})
 			return
 		}
 		hash := apikeys.Hash(d.APIKeyPepper, full)
@@ -52,19 +52,19 @@ func (d Deps) RequireAPIKey(next http.Handler) http.Handler {
 			FROM api_keys WHERE secret_hash = $1 AND deleted_at IS NULL
 		`, hash).Scan(&ctxValue.KeyID, &ctxValue.OrganizationID, &ctxValue.ProjectID, &ctxValue.ApplicationID, &ctxValue.RateLimitPerMin, &status, &expiresAt)
 		if errors.Is(err, pgx.ErrNoRows) {
-			apiError(w, http.StatusUnauthorized, "invalid_api_key", "API Key 不存在或已失效")
+			apiError(w, http.StatusUnauthorized, "invalid_api_key", "API key does not exist or has expired.")
 			return
 		}
 		if err != nil {
-			apiError(w, http.StatusInternalServerError, "internal_error", "认证服务暂时不可用")
+			apiError(w, http.StatusInternalServerError, "internal_error", "Authentication service is temporarily unavailable.")
 			return
 		}
 		if status != "active" {
-			apiError(w, http.StatusUnauthorized, "invalid_api_key", "API Key 已被禁用")
+			apiError(w, http.StatusUnauthorized, "invalid_api_key", "API key is disabled.", apiErrorOptions{Reason: "api_key_disabled"})
 			return
 		}
 		if expiresAt != nil && !expiresAt.After(time.Now()) {
-			apiError(w, http.StatusUnauthorized, "invalid_api_key", "API Key 已过期")
+			apiError(w, http.StatusUnauthorized, "invalid_api_key", "API key has expired.", apiErrorOptions{Reason: "api_key_expired"})
 			return
 		}
 		if _, err := d.Pool.Exec(r.Context(), `UPDATE api_keys SET last_used_at = now() WHERE id = $1`, ctxValue.KeyID); err != nil {

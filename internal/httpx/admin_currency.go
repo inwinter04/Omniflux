@@ -12,11 +12,11 @@ func normalizeCurrency(value string) (string, error) {
 		return "USD", nil
 	}
 	if len(value) != 3 {
-		return "", errors.New("结算币种必须是三个字母的货币代码")
+		return "", errors.New("settlement currency must be a three-letter currency code")
 	}
 	for _, r := range value {
 		if r < 'A' || r > 'Z' {
-			return "", errors.New("结算币种必须是三个字母的货币代码")
+			return "", errors.New("settlement currency must be a three-letter currency code")
 		}
 	}
 	return value, nil
@@ -40,7 +40,7 @@ func normalizeCandidateCurrencies(ctx context.Context, q rowQuerier, candidates 
 			currency = candidateCurrency
 		}
 		if candidateCurrency != currency {
-			return "", errors.New("同一模型服务的候选必须使用相同结算币种")
+			return "", errors.New("candidates for the same model service must use the same settlement currency")
 		}
 		candidates[index].CostCurrency = candidateCurrency
 	}

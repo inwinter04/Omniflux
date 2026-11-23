@@ -12,7 +12,7 @@ import (
 func (d Deps) ListModels(w http.ResponseWriter, r *http.Request) {
 	keyCtx, ok := keyFromContext(r.Context())
 	if !ok {
-		apiError(w, http.StatusUnauthorized, "missing_api_key", "缺少 API Key")
+		apiError(w, http.StatusUnauthorized, "missing_api_key", "Missing API key. Provide Authorization: Bearer <key>.")
 		return
 	}
 	rows, err := d.Pool.Query(r.Context(), `
@@ -31,7 +31,7 @@ func (d Deps) ListModels(w http.ResponseWriter, r *http.Request) {
 		ORDER BY s.name ASC
 	`, keyCtx.OrganizationID, keyCtx.ProjectID)
 	if err != nil {
-		apiError(w, http.StatusInternalServerError, "internal_error", "模型列表查询失败")
+		apiError(w, http.StatusInternalServerError, "internal_error", "Failed to query model list.")
 		return
 	}
 	defer rows.Close()
@@ -46,7 +46,7 @@ func (d Deps) ListModels(w http.ResponseWriter, r *http.Request) {
 		var name string
 		var createdAt time.Time
 		if err := rows.Scan(&name, &createdAt); err != nil {
-			apiError(w, http.StatusInternalServerError, "internal_error", "模型列表查询失败")
+			apiError(w, http.StatusInternalServerError, "internal_error", "Failed to query model list.")
 			return
 		}
 		data = append(data, modelEntry{
@@ -57,7 +57,7 @@ func (d Deps) ListModels(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	if err := rows.Err(); err != nil {
-		apiError(w, http.StatusInternalServerError, "internal_error", "模型列表查询失败")
+		apiError(w, http.StatusInternalServerError, "internal_error", "Failed to query model list.")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": data})

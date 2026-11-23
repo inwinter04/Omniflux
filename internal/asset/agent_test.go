@@ -54,11 +54,11 @@ func TestParseAgentSpecRejectsInvalidValues(t *testing.T) {
 		want   string
 	}{
 		{name: "unknown field", mutate: func(value map[string]any) { value["system_prompt"] = "unexpected" }, want: "unknown field"},
-		{name: "prompt id", mutate: func(value map[string]any) { value["prompt_template_id"] = "bad" }, want: "提示词模板 ID"},
-		{name: "temperature", mutate: func(value map[string]any) { value["temperature"] = 2.1 }, want: "温度"},
-		{name: "top p", mutate: func(value map[string]any) { value["top_p"] = 0 }, want: "Top P"},
-		{name: "tokens", mutate: func(value map[string]any) { value["max_tokens"] = 40000 }, want: "最大输出 Token"},
-		{name: "odd history", mutate: func(value map[string]any) { value["max_history_messages"] = 21 }, want: "偶数"},
+		{name: "prompt id", mutate: func(value map[string]any) { value["prompt_template_id"] = "bad" }, want: "prompt_template ID"},
+		{name: "temperature", mutate: func(value map[string]any) { value["temperature"] = 2.1 }, want: "temperature"},
+		{name: "top p", mutate: func(value map[string]any) { value["top_p"] = 0 }, want: "top_p"},
+		{name: "tokens", mutate: func(value map[string]any) { value["max_tokens"] = 40000 }, want: "max output tokens"},
+		{name: "odd history", mutate: func(value map[string]any) { value["max_history_messages"] = 21 }, want: "even number"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
