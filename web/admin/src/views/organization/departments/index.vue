@@ -4,10 +4,13 @@ import { NButton, NPopconfirm, NSpace, NTag } from 'naive-ui';
 import type { DataTableColumns, FormInst, FormRules } from 'naive-ui';
 import { fetchCreateDepartment, fetchDeleteDepartment, fetchDepartments, fetchUpdateDepartment } from '@/service/api';
 import { $t } from '@/locales';
+import { usePermission } from '@/hooks/common/permission';
 
 defineOptions({
   name: 'OrganizationDepartments'
 });
+
+const { canManage } = usePermission();
 
 const loading = ref(true);
 const list = ref<Api.Management.Department[]>([]);
@@ -35,6 +38,7 @@ const columns = computed<DataTableColumns<Api.Management.Department>>(() => [
     key: 'actions',
     width: 150,
     render(row) {
+      if (!canManage.value) return '';
       return h(
         NSpace,
         { size: 4 },
@@ -146,7 +150,7 @@ onMounted(() => {
       <template #header-extra>
         <NSpace>
           <NButton quaternary type="primary" :loading="loading" @click="loadData">{{ $t('business.refresh') }}</NButton>
-          <NButton type="primary" @click="openCreate">{{ $t('business.create-department') }}</NButton>
+          <NButton v-if="canManage" type="primary" @click="openCreate">{{ $t('business.create-department') }}</NButton>
         </NSpace>
       </template>
       <NDataTable :columns="columns" :data="list" :loading="loading" :bordered="false" />

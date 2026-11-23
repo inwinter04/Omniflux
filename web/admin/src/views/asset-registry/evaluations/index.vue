@@ -17,9 +17,12 @@ import {
   fetchUpdatePromptEvaluationSet
 } from '@/service/api';
 import { $t } from '@/locales';
+import { usePermission } from '@/hooks/common/permission';
 import JsonEditor from '../prompt-templates/modules/json-editor.vue';
 
 defineOptions({ name: 'AssetRegistryEvaluations' });
+
+const { canManage } = usePermission();
 
 interface CaseDraft {
   id?: string;
@@ -117,19 +120,23 @@ const overviewColumns = computed<DataTableColumns<Api.Management.EvaluationSetOv
               },
               { default: () => $t('business.manage') }
             ),
-            h(
-              NPopconfirm,
-              { onPositiveClick: () => deleteOverview(row) },
-              {
-                trigger: () =>
+            ...(canManage.value
+              ? [
                   h(
-                    NButton,
-                    { size: 'small', quaternary: true, type: 'error' },
-                    { default: () => $t('business.delete') }
-                  ),
-                default: () => $t('business.deleting-this-evaluation-set-does')
-              }
-            )
+                    NPopconfirm,
+                    { onPositiveClick: () => deleteOverview(row) },
+                    {
+                      trigger: () =>
+                        h(
+                          NButton,
+                          { size: 'small', quaternary: true, type: 'error' },
+                          { default: () => $t('business.delete') }
+                        ),
+                      default: () => $t('business.deleting-this-evaluation-set-does')
+                    }
+                  )
+                ]
+              : [])
           ]
         }
       )
@@ -497,10 +504,10 @@ function accuracyText(value: number | null) {
       <template #header-extra>
         <NSpace>
           <NButton @click="pageMode === 'edit' ? cancelEdit() : (pageMode = 'list')">{{ $t('business.back') }}</NButton>
-          <NButton v-if="pageMode === 'detail'" type="primary" @click="startEdit">
+          <NButton v-if="canManage && pageMode === 'detail'" type="primary" @click="startEdit">
             {{ $t('business.edit-evaluation-set') }}
           </NButton>
-          <NPopconfirm v-if="pageMode === 'detail'" @positive-click="removeSet">
+          <NPopconfirm v-if="canManage && pageMode === 'detail'" @positive-click="removeSet">
             <template #trigger>
               <NButton>{{ $t('business.delete-evaluation-set') }}</NButton>
             </template>
@@ -547,7 +554,7 @@ function accuracyText(value: number | null) {
           <NButton :disabled="form.cases.length >= 50" @click="form.cases.push(newCase())">
             {{ $t('business.add-case') }}
           </NButton>
-          <NButton type="primary" :loading="saving" @click="save">{{ $t('business.save-evaluation-set') }}</NButton>
+          <NButton v-if="canManage" type="primary" :loading="saving" @click="save">{{ $t('business.save-evaluation-set') }}</NButton>
         </NSpace>
 
         <template v-if="pageMode === 'detail'">

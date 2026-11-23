@@ -218,7 +218,7 @@ export function fetchUpdateRoutePolicy(id: string, params: Api.Management.Update
   });
 }
 
-/** Update model service and fully replace its candidates */
+/** Update model service and upsert candidates by stable key; removed candidates are retired */
 export function fetchUpdateModelService(id: string, params: Api.Management.UpdateModelServiceParams) {
   return request({
     url: `/model-services/${id}`,

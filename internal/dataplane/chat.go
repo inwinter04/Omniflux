@@ -199,7 +199,7 @@ func (d Deps) loadService(ctx context.Context, orgID uuid.UUID, name string) (re
 		       c.input_cost_per_million, c.output_cost_per_million, c.cost_currency, c.quality_score
 		FROM model_candidates c
 		JOIN provider_accounts a ON a.id = c.provider_account_id
-		WHERE c.model_service_id = $1 AND c.status = 'active' AND a.status = 'active'
+		WHERE c.model_service_id = $1 AND c.status = 'active' AND a.status = 'active' AND c.retired_at IS NULL
 		ORDER BY c.priority ASC
 	`, svc.ID)
 	if err != nil {
@@ -250,6 +250,7 @@ func (d Deps) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !allowed {
+		d.auditDeniedModelAccess(r, keyCtx, svc.ID, "chat")
 		apiError(w, http.StatusForbidden, "model_access_denied", "The current project is not allowed to invoke this model service.")
 		return
 	}

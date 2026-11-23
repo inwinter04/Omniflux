@@ -5,14 +5,13 @@ import type { DataTableColumns, FormInst, FormRules } from 'naive-ui';
 import { formatTime } from '@/utils/admin-status';
 import { fetchCreateOrganization, fetchOrganizations, fetchUpdateOrganization } from '@/service/api';
 import { $t } from '@/locales';
-import { useAuthStore } from '@/store/modules/auth';
+import { usePermission } from '@/hooks/common/permission';
 
 defineOptions({
   name: 'OrganizationOrganizations'
 });
 
-const authStore = useAuthStore();
-const isPlatformAdmin = computed(() => authStore.userInfo.roles.includes('platform_admin'));
+const { canManage, isPlatformAdmin } = usePermission();
 
 const loading = ref(true);
 const list = ref<Api.Management.Organization[]>([]);
@@ -64,6 +63,7 @@ const columns = computed<DataTableColumns<Api.Management.Organization>>(() => [
     key: 'actions',
     width: 120,
     render(row) {
+      if (!canManage.value) return '';
       if (!isPlatformAdmin.value && row.id !== currentOrgId()) return '';
       return h(
         NButton,

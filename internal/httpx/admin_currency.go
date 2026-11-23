@@ -22,19 +22,29 @@ func normalizeCurrency(value string) (string, error) {
 	return value, nil
 }
 
+var errCandidateCurrencyMismatch = errors.New("candidate currency must match provider account settlement currency")
+
 func normalizeCandidateCurrencies(ctx context.Context, q rowQuerier, candidates []createCandidateRequest) (string, error) {
 	currency := ""
+	accountCurrencies := map[string]string{}
 	for index := range candidates {
-		candidateCurrency, err := normalizeCurrency(candidates[index].CostCurrency)
-		if err != nil {
-			return "", err
-		}
-		if candidates[index].CostCurrency == "" {
-			var accountCurrency string
+		accountCurrency, ok := accountCurrencies[candidates[index].ProviderAccountID]
+		if !ok {
 			if err := q.QueryRow(ctx, `SELECT billing_currency FROM provider_accounts WHERE id = $1`, candidates[index].ProviderAccountID).Scan(&accountCurrency); err != nil {
 				return "", err
 			}
-			candidateCurrency = accountCurrency
+			accountCurrencies[candidates[index].ProviderAccountID] = accountCurrency
+		}
+		candidateCurrency := accountCurrency
+		if candidates[index].CostCurrency != "" {
+			normalized, err := normalizeCurrency(candidates[index].CostCurrency)
+			if err != nil {
+				return "", err
+			}
+			if normalized != accountCurrency {
+				return "", errCandidateCurrencyMismatch
+			}
+			candidateCurrency = normalized
 		}
 		if currency == "" {
 			currency = candidateCurrency

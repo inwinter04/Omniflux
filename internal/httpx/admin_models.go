@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -110,7 +111,7 @@ func (d ServerDeps) ModelServices(w http.ResponseWriter, r *http.Request) {
 		       c.input_cost_per_million, c.output_cost_per_million, c.quality_score, c.cost_currency, c.status
 		FROM model_candidates c
 		JOIN provider_accounts a ON a.id = c.provider_account_id
-		WHERE a.organization_id = $1
+		WHERE a.organization_id = $1 AND c.retired_at IS NULL
 		ORDER BY c.priority ASC
 	`, principal.OrganizationID)
 	if err != nil {
@@ -201,6 +202,7 @@ func (d ServerDeps) CreateModelService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	accountIDs := make([]uuid.UUID, 0, len(body.Candidates))
+	candidateKeys := map[string]bool{}
 	for _, c := range body.Candidates {
 		if strings.TrimSpace(c.UpstreamModel) == "" {
 			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "candidate-is-missing-upstream-model", nil)
@@ -215,6 +217,12 @@ func (d ServerDeps) CreateModelService(w http.ResponseWriter, r *http.Request) {
 			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "invalid-candidate-provider-account-id", nil)
 			return
 		}
+		key := parsed.String() + "|" + strings.TrimSpace(c.UpstreamModel)
+		if candidateKeys[key] {
+			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "duplicate-model-candidate", nil)
+			return
+		}
+		candidateKeys[key] = true
 		accountIDs = append(accountIDs, parsed)
 	}
 	// 同一账号可挂多个候选,校验前去重;候选引用的账号必须属于当前组织。
@@ -258,7 +266,11 @@ func (d ServerDeps) CreateModelService(w http.ResponseWriter, r *http.Request) {
 		policyID = &parsed
 	}
 	if _, err := normalizeCandidateCurrencies(r.Context(), d.Pool, body.Candidates); err != nil {
-		adminError(w, http.StatusBadRequest, "SERVICE_CURRENCY_INVALID", "serviceCurrencyInvalid", nil)
+		reason := "serviceCurrencyInvalid"
+		if errors.Is(err, errCandidateCurrencyMismatch) {
+			reason = "candidate-currency-must-match-provider-account"
+		}
+		adminError(w, http.StatusBadRequest, "SERVICE_CURRENCY_INVALID", reason, nil)
 		return
 	}
 	serviceID := uuid.New()
@@ -379,7 +391,8 @@ func (d ServerDeps) DeleteModelService(w http.ResponseWriter, r *http.Request) {
 	adminOK(w, nil)
 }
 
-// UpdateModelService 更新服务名称/绑定策略,并用提交的候选全量替换现有候选。
+// UpdateModelService 更新服务名称/绑定策略,并按稳定业务键 upsert 候选。
+// 已不再提交的候选只标记 retired,保留 ID 让历史 usage 继续关联。
 func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
 	if !ok || d.requireProjectAdmin(w, principal) != nil {
@@ -404,6 +417,7 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	accountIDs := make([]uuid.UUID, 0, len(body.Candidates))
+	candidateKeys := map[string]bool{}
 	for _, c := range body.Candidates {
 		if strings.TrimSpace(c.UpstreamModel) == "" {
 			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "candidate-is-missing-upstream-model", nil)
@@ -418,6 +432,12 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "invalid-candidate-provider-account-id", nil)
 			return
 		}
+		key := parsed.String() + "|" + strings.TrimSpace(c.UpstreamModel)
+		if candidateKeys[key] {
+			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "duplicate-model-candidate", nil)
+			return
+		}
+		candidateKeys[key] = true
 		accountIDs = append(accountIDs, parsed)
 	}
 	// 同一账号可挂多个候选,校验前去重。
@@ -461,13 +481,18 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 		policyID = &parsed
 	}
 	if _, err := normalizeCandidateCurrencies(r.Context(), d.Pool, body.Candidates); err != nil {
-		adminError(w, http.StatusBadRequest, "SERVICE_CURRENCY_INVALID", "serviceCurrencyInvalid", nil)
+		reason := "serviceCurrencyInvalid"
+		if errors.Is(err, errCandidateCurrencyMismatch) {
+			reason = "candidate-currency-must-match-provider-account"
+		}
+		adminError(w, http.StatusBadRequest, "SERVICE_CURRENCY_INVALID", reason, nil)
 		return
 	}
 	var oldName string
+	var oldPolicyID *uuid.UUID
 	err = d.Pool.QueryRow(r.Context(), `
-		SELECT name FROM model_services WHERE id = $1 AND organization_id = $2
-	`, serviceID, principal.OrganizationID).Scan(&oldName)
+		SELECT name, route_policy_id FROM model_services WHERE id = $1 AND organization_id = $2
+	`, serviceID, principal.OrganizationID).Scan(&oldName, &oldPolicyID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		adminError(w, http.StatusNotFound, "SERVICE_NOT_FOUND", "model-service-does-not-exist-or", nil)
 		return
@@ -476,15 +501,33 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusInternalServerError, "SERVICE_UPDATE_FAILED", "failed-to-update-the-model-service", nil)
 		return
 	}
+	beforeCandidates, err := loadCandidateAuditStates(r.Context(), d.Pool, serviceID)
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "SERVICE_UPDATE_FAILED", "failed-to-update-the-model-service", nil)
+		return
+	}
+	afterCandidates := make([]candidateAuditState, 0, len(body.Candidates))
+	for _, c := range body.Candidates {
+		weight := c.Weight
+		if weight <= 0 {
+			weight = 1
+		}
+		priority := c.Priority
+		if priority == 0 {
+			priority = 100
+		}
+		afterCandidates = append(afterCandidates, candidateAuditState{
+			ProviderAccountID: c.ProviderAccountID, UpstreamModel: strings.TrimSpace(c.UpstreamModel),
+			Priority: priority, Weight: weight, InputCostPerMillion: c.InputCostPerMillion,
+			OutputCostPerMillion: c.OutputCostPerMillion, QualityScore: candidateQuality(c),
+			CostCurrency: c.CostCurrency, Status: candidateStatus(c),
+		})
+	}
 	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(r.Context(), `
 			UPDATE model_services SET name = $3, route_policy_id = $4, updated_at = now()
 			WHERE id = $1 AND organization_id = $2
 		`, serviceID, principal.OrganizationID, body.Name, nullablePolicyID(policyID)); err != nil {
-			return err
-		}
-		// 候选全量替换:先清空再插入,保持候选与请求一致。
-		if _, err := tx.Exec(r.Context(), `DELETE FROM model_candidates WHERE model_service_id = $1`, serviceID); err != nil {
 			return err
 		}
 		for _, c := range body.Candidates {
@@ -499,10 +542,34 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 			}
 			if _, err := tx.Exec(r.Context(), `
 				INSERT INTO model_candidates(model_service_id, provider_account_id, upstream_model,
-				                             priority, weight, input_cost_per_million, output_cost_per_million, quality_score, cost_currency, status)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-			`, serviceID, accountID, c.UpstreamModel, priority, weight,
+				                             priority, weight, input_cost_per_million, output_cost_per_million,
+				                             quality_score, cost_currency, status, retired_at)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULL)
+				ON CONFLICT (model_service_id, provider_account_id, upstream_model) DO UPDATE SET
+					priority = EXCLUDED.priority,
+					weight = EXCLUDED.weight,
+					input_cost_per_million = EXCLUDED.input_cost_per_million,
+					output_cost_per_million = EXCLUDED.output_cost_per_million,
+					quality_score = EXCLUDED.quality_score,
+					cost_currency = EXCLUDED.cost_currency,
+					status = EXCLUDED.status,
+					retired_at = NULL,
+					updated_at = now()
+			`, serviceID, accountID, strings.TrimSpace(c.UpstreamModel), priority, weight,
 				c.InputCostPerMillion, c.OutputCostPerMillion, candidateQuality(c), c.CostCurrency, candidateStatus(c)); err != nil {
+				return err
+			}
+		}
+		// 请求中不再出现的候选只退役,不删除,保留历史 usage 的 candidate_id。
+		for _, old := range beforeCandidates {
+			key := old.ProviderAccountID + "|" + old.UpstreamModel
+			if candidateKeys[key] {
+				continue
+			}
+			if _, err := tx.Exec(r.Context(), `
+				UPDATE model_candidates SET retired_at = now(), updated_at = now()
+				WHERE model_service_id = $1 AND provider_account_id = $2 AND upstream_model = $3 AND retired_at IS NULL
+			`, serviceID, old.ProviderAccountID, old.UpstreamModel); err != nil {
 				return err
 			}
 		}
@@ -510,8 +577,8 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 			INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, before_state, after_state)
 			VALUES ($1,$2,'user','model_service.updated','model_service',$3,$4,$5)
 		`, principal.OrganizationID, principal.UserID, serviceID.String(),
-			auditJSON(map[string]any{"name": oldName}),
-			auditJSON(map[string]any{"name": body.Name, "route_policy_id": body.RoutePolicyID, "candidates": len(body.Candidates)}))
+			auditJSON(map[string]any{"name": oldName, "route_policy_id": uuidPtrString(oldPolicyID), "candidates": beforeCandidates}),
+			auditJSON(map[string]any{"name": body.Name, "route_policy_id": body.RoutePolicyID, "candidates": afterCandidates}))
 		return err
 	})
 	if err != nil {
@@ -524,4 +591,50 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	adminOK(w, nil)
+}
+
+type candidateAuditState struct {
+	ProviderAccountID    string  `json:"provider_account_id"`
+	UpstreamModel        string  `json:"upstream_model"`
+	Priority             int     `json:"priority"`
+	Weight               float64 `json:"weight"`
+	InputCostPerMillion  float64 `json:"input_cost_per_million"`
+	OutputCostPerMillion float64 `json:"output_cost_per_million"`
+	QualityScore         float64 `json:"quality_score"`
+	CostCurrency         string  `json:"cost_currency"`
+	Status               string  `json:"status"`
+}
+
+func loadCandidateAuditStates(ctx context.Context, q rowQuerier, serviceID uuid.UUID) ([]candidateAuditState, error) {
+	rows, err := q.Query(ctx, `
+		SELECT provider_account_id, upstream_model, priority, weight, input_cost_per_million,
+		       output_cost_per_million, quality_score, cost_currency, status
+		FROM model_candidates
+		WHERE model_service_id = $1 AND retired_at IS NULL
+		ORDER BY priority ASC, upstream_model ASC
+	`, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []candidateAuditState{}
+	for rows.Next() {
+		var item candidateAuditState
+		var accountID uuid.UUID
+		if err := rows.Scan(&accountID, &item.UpstreamModel, &item.Priority, &item.Weight,
+			&item.InputCostPerMillion, &item.OutputCostPerMillion, &item.QualityScore,
+			&item.CostCurrency, &item.Status); err != nil {
+			return nil, err
+		}
+		item.ProviderAccountID = accountID.String()
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func uuidPtrString(value *uuid.UUID) any {
+	if value == nil {
+		return nil
+	}
+	return value.String()
 }

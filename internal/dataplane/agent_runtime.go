@@ -255,7 +255,7 @@ func queryExistingAgentSession(ctx context.Context, tx pgx.Tx, input AgentRunSta
 func (d Deps) FinishAgentRun(ctx context.Context, run AgentRunContext, status string, result DebugResult, runErr error) error {
 	ctx = context.WithoutCancel(ctx)
 	if result.Currency == "" {
-		_ = d.Pool.QueryRow(ctx, `SELECT cost_currency FROM model_candidates WHERE model_service_id = $1 LIMIT 1`, run.Spec.ModelServiceID).Scan(&result.Currency)
+		_ = d.Pool.QueryRow(ctx, `SELECT cost_currency FROM model_candidates WHERE model_service_id = $1 AND retired_at IS NULL LIMIT 1`, run.Spec.ModelServiceID).Scan(&result.Currency)
 	}
 	if result.Currency == "" {
 		result.Currency = "USD"

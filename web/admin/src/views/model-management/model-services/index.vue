@@ -23,10 +23,13 @@ import {
   fetchUpdateModelServiceStatus
 } from '@/service/api';
 import { $t } from '@/locales';
+import { usePermission } from '@/hooks/common/permission';
 import CandidateEditor from './modules/candidate-editor.vue';
 import ModelServiceGrantsModal from './modules/model-service-grants-modal.vue';
 
 defineOptions({ name: 'ModelManagementModelServices' });
+
+const { canManage } = usePermission();
 
 const route = useRoute();
 const router = useRouter();
@@ -119,8 +122,9 @@ const candidateColumns = computed<DataTableColumns<Api.Management.ModelCandidate
     title: $t('business.actions'),
     key: 'actions',
     width: 80,
-    render: row =>
-      h(
+    render: row => {
+      if (!canManage.value) return '';
+      return h(
         NButton,
         {
           size: 'small',
@@ -131,7 +135,8 @@ const candidateColumns = computed<DataTableColumns<Api.Management.ModelCandidate
         {
           default: () => (row.status === 'active' ? $t('business.disabled') : $t('business.enable'))
         }
-      )
+      );
+    }
   }
 ]);
 
@@ -207,8 +212,9 @@ const columns = computed<DataTableColumns<Api.Management.ModelService>>(() => [
     title: $t('business.actions'),
     key: 'actions',
     width: 300,
-    render: row =>
-      h(
+    render: row => {
+      if (!canManage.value) return '';
+      return h(
         NSpace,
         { size: 4 },
         {
@@ -260,7 +266,8 @@ const columns = computed<DataTableColumns<Api.Management.ModelService>>(() => [
             )
           ]
         }
-      )
+      );
+    }
   }
 ]);
 
@@ -481,7 +488,7 @@ onMounted(async () => {
       <template #header-extra>
         <NSpace>
           <NButton quaternary type="primary" :loading="loading" @click="loadData">{{ $t('business.refresh') }}</NButton>
-          <NButton type="primary" :disabled="accountOptions.length === 0" @click="openCreate">
+          <NButton v-if="canManage" type="primary" :disabled="accountOptions.length === 0" @click="openCreate">
             {{ accountOptions.length === 0 ? $t('business.createProviderFirst') : $t('business.create-model-service') }}
           </NButton>
         </NSpace>

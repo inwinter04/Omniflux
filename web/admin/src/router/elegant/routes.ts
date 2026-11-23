@@ -69,7 +69,8 @@ export const generatedRoutes: GeneratedRoute[] = [
           title: 'access_users',
           i18nKey: 'route.access_users',
           order: 1,
-          icon: 'mdi:account-group-outline'
+          icon: 'mdi:account-group-outline',
+          roles: ['org_owner', 'platform_admin']
         }
       }
     ]

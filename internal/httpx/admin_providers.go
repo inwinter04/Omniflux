@@ -96,7 +96,7 @@ func (d ServerDeps) ProviderAccounts(w http.ResponseWriter, r *http.Request) {
 		       avg(CASE WHEN u.state = 'success' THEN 1.0 ELSE 0.0 END),
 		       avg(u.total_ms) FILTER (WHERE u.state = 'success'),
 		       max(u.created_at),
-		       count(DISTINCT mc.id) FILTER (WHERE mc.status = 'active')
+		       count(DISTINCT mc.id) FILTER (WHERE mc.status = 'active' AND mc.retired_at IS NULL)
 		FROM provider_accounts a
 		LEFT JOIN model_candidates mc ON mc.provider_account_id = a.id
 		LEFT JOIN usage_records u ON u.model_candidate_id = mc.id
@@ -248,7 +248,8 @@ func (d ServerDeps) CreateProviderAccount(w http.ResponseWriter, r *http.Request
 	adminOK(w, map[string]string{"id": accountID.String()})
 }
 
-// DeleteProviderAccount 删除 供应商账号;被候选引用时拒绝删除并说明。
+// DeleteProviderAccount 删除供应商账号;仍有在用候选时拒绝删除。
+// 已退役候选会随账号删除,历史 usage 保留 provider/upstream_model,仅失去 candidate_id 关联。
 func (d ServerDeps) DeleteProviderAccount(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
 	if !ok || d.requireProjectAdmin(w, principal) != nil {
@@ -261,7 +262,7 @@ func (d ServerDeps) DeleteProviderAccount(w http.ResponseWriter, r *http.Request
 	}
 	var count int
 	if err := d.Pool.QueryRow(r.Context(), `
-		SELECT count(*) FROM model_candidates WHERE provider_account_id = $1
+		SELECT count(*) FROM model_candidates WHERE provider_account_id = $1 AND retired_at IS NULL
 	`, accountID).Scan(&count); err != nil {
 		adminError(w, http.StatusInternalServerError, "PROVIDER_DELETE_FAILED", "failed-to-delete-the-provider-account", nil)
 		return
@@ -270,21 +271,31 @@ func (d ServerDeps) DeleteProviderAccount(w http.ResponseWriter, r *http.Request
 		adminError(w, http.StatusConflict, "PROVIDER_IN_USE", "this-account-is-still-referenced-by", map[string]any{"candidate_count": count})
 		return
 	}
-	tag, err := d.Pool.Exec(r.Context(), `
-		DELETE FROM provider_accounts WHERE id = $1 AND organization_id = $2
-	`, accountID, principal.OrganizationID)
+	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(r.Context(), `DELETE FROM model_candidates WHERE provider_account_id = $1 AND retired_at IS NOT NULL`, accountID); err != nil {
+			return err
+		}
+		tag, err := tx.Exec(r.Context(), `DELETE FROM provider_accounts WHERE id = $1 AND organization_id = $2`, accountID, principal.OrganizationID)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return pgx.ErrNoRows
+		}
+		_, err = tx.Exec(r.Context(), `
+			INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id)
+			VALUES ($1,$2,'user','provider_account.deleted','provider_account',$3)
+		`, principal.OrganizationID, principal.UserID, accountID.String())
+		return err
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		adminError(w, http.StatusNotFound, "PROVIDER_NOT_FOUND", "provider-account-does-not-exist", nil)
+		return
+	}
 	if err != nil {
 		adminError(w, http.StatusInternalServerError, "PROVIDER_DELETE_FAILED", "failed-to-delete-the-provider-account", nil)
 		return
 	}
-	if tag.RowsAffected() == 0 {
-		adminError(w, http.StatusNotFound, "PROVIDER_NOT_FOUND", "provider-account-does-not-exist", nil)
-		return
-	}
-	_, _ = d.Pool.Exec(r.Context(), `
-		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id)
-		VALUES ($1,$2,'user','provider_account.deleted','provider_account',$3)
-	`, principal.OrganizationID, principal.UserID, accountID.String())
 	if !d.reloadEngine(w, r) {
 		return
 	}
@@ -319,9 +330,10 @@ type updateProviderAccountRequest struct {
 	Region          *string `json:"region"`
 	BaseURL         *string `json:"base_url"`
 	BillingCurrency string  `json:"billing_currency"`
+	APIKey          string  `json:"api_key"`
 }
 
-// UpdateProviderAccount 更新账号名称/区域/Base URL;provider 类型与凭据不可修改。
+// UpdateProviderAccount 更新账号名称、区域、Base URL 与结算币种;API Key 留空表示不更换。
 func (d ServerDeps) UpdateProviderAccount(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
 	if !ok || d.requireProjectAdmin(w, principal) != nil {
@@ -358,10 +370,10 @@ func (d ServerDeps) UpdateProviderAccount(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
-	var oldName, provider string
+	var oldName, provider, oldBillingCurrency string
 	err = d.Pool.QueryRow(r.Context(), `
-		SELECT name, provider FROM provider_accounts WHERE id = $1 AND organization_id = $2
-	`, accountID, principal.OrganizationID).Scan(&oldName, &provider)
+		SELECT name, provider, billing_currency FROM provider_accounts WHERE id = $1 AND organization_id = $2
+	`, accountID, principal.OrganizationID).Scan(&oldName, &provider, &oldBillingCurrency)
 	if errors.Is(err, pgx.ErrNoRows) {
 		adminError(w, http.StatusNotFound, "PROVIDER_NOT_FOUND", "provider-account-does-not-exist-or", nil)
 		return
@@ -388,10 +400,47 @@ func (d ServerDeps) UpdateProviderAccount(w http.ResponseWriter, r *http.Request
 		adminError(w, http.StatusBadRequest, "PROVIDER_CURRENCY_INVALID", "providerCurrencyInvalid", nil)
 		return
 	}
-	if _, err := d.Pool.Exec(r.Context(), `
-		UPDATE provider_accounts SET name = $3, region = $4, base_url = $5, billing_currency = $6, updated_at = now()
-		WHERE id = $1 AND organization_id = $2
-	`, accountID, principal.OrganizationID, body.Name, body.Region, body.BaseURL, billingCurrency); err != nil {
+	newAPIKey := strings.TrimSpace(body.APIKey)
+	rotateCredential := newAPIKey != ""
+	var ciphertext []byte
+	if rotateCredential {
+		ciphertext, err = vault.Encrypt(d.MasterKey, []byte(newAPIKey))
+		if err != nil {
+			adminError(w, http.StatusInternalServerError, "PROVIDER_UPDATE_FAILED", "failed-to-update-the-provider-account", nil)
+			return
+		}
+	}
+	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(r.Context(), `
+			UPDATE provider_accounts SET name = $3, region = $4, base_url = $5, billing_currency = $6, updated_at = now()
+			WHERE id = $1 AND organization_id = $2
+		`, accountID, principal.OrganizationID, body.Name, body.Region, body.BaseURL, billingCurrency); err != nil {
+			return err
+		}
+		if rotateCredential {
+			if _, err := tx.Exec(r.Context(), `
+				UPDATE provider_credentials SET ciphertext = $2, key_id = $3, updated_at = now()
+				WHERE provider_account_id = $1
+			`, accountID, ciphertext, vault.KeyID); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.Exec(r.Context(), `
+			UPDATE model_candidates SET cost_currency = $2, updated_at = now()
+			WHERE provider_account_id = $1 AND retired_at IS NULL AND cost_currency <> $2
+		`, accountID, billingCurrency); err != nil {
+			return err
+		}
+		_, err := tx.Exec(r.Context(), `
+			INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, before_state, after_state)
+			VALUES ($1,$2,'user','provider_account.updated','provider_account',$3,$4,$5)
+		`, principal.OrganizationID, principal.UserID, accountID.String(),
+			auditJSON(map[string]any{"name": oldName, "billing_currency": oldBillingCurrency}),
+			auditJSON(map[string]any{"name": body.Name, "region": body.Region, "base_url": body.BaseURL,
+				"billing_currency": billingCurrency, "credentials_rotated": rotateCredential}))
+		return err
+	})
+	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.ConstraintName == "provider_accounts_organization_id_name_key" {
 			adminError(w, http.StatusConflict, "PROVIDER_NAME_EXISTS", "a-provider-account-with-the-same", nil)
@@ -400,11 +449,6 @@ func (d ServerDeps) UpdateProviderAccount(w http.ResponseWriter, r *http.Request
 		adminError(w, http.StatusInternalServerError, "PROVIDER_UPDATE_FAILED", "failed-to-update-the-provider-account", nil)
 		return
 	}
-	_, _ = d.Pool.Exec(r.Context(), `
-		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, before_state, after_state)
-		VALUES ($1,$2,'user','provider_account.updated','provider_account',$3,$4,$5)
-	`, principal.OrganizationID, principal.UserID, accountID.String(),
-		auditJSON(map[string]any{"name": oldName}), auditJSON(map[string]any{"name": body.Name, "region": body.Region, "base_url": body.BaseURL}))
 	// base_url/凭据相关配置变化需要重建上游引擎。
 	if !d.reloadEngine(w, r) {
 		return

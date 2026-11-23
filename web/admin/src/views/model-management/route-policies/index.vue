@@ -13,10 +13,13 @@ import {
   fetchUpdateRoutePolicyStatus
 } from '@/service/api';
 import { $t } from '@/locales';
+import { usePermission } from '@/hooks/common/permission';
 
 defineOptions({
   name: 'ModelManagementRoutePolicies'
 });
+
+const { canManage } = usePermission();
 
 const strategyOptions = computed(() => [
   { label: $t('business.cost-first'), value: 'cost_first' },
@@ -93,7 +96,12 @@ const editModel = reactive({
   strategy: 'balanced',
   fallback_limit: 2,
   provider_timeout_ms: 60000,
-  first_token_timeout_ms: 15000
+  first_token_timeout_ms: 15000,
+  allowed_providers: [] as string[],
+  blocked_providers: [] as string[],
+  allowed_upstream_models: [] as string[],
+  blocked_upstream_models: [] as string[],
+  max_cost_per_million: null as number | null
 });
 
 const formRules = computed<FormRules>(() => ({
@@ -158,6 +166,7 @@ const columns = computed<DataTableColumns<Api.Management.RoutePolicy>>(() => [
     key: 'actions',
     width: 230,
     render(row) {
+      if (!canManage.value) return '';
       return h(
         NSpace,
         { size: 4 },
@@ -248,7 +257,22 @@ function openEdit(row: Api.Management.RoutePolicy) {
   editModel.fallback_limit = row.fallback_limit;
   editModel.provider_timeout_ms = row.provider_timeout_ms;
   editModel.first_token_timeout_ms = row.first_token_timeout_ms;
+  editModel.allowed_providers = [...(row.constraints.allowed_providers ?? [])];
+  editModel.blocked_providers = [...(row.constraints.blocked_providers ?? [])];
+  editModel.allowed_upstream_models = [...(row.constraints.allowed_upstream_models ?? [])];
+  editModel.blocked_upstream_models = [...(row.constraints.blocked_upstream_models ?? [])];
+  editModel.max_cost_per_million = row.constraints.max_cost_per_million ?? null;
   showEdit.value = true;
+}
+
+function buildEditConstraints(): Api.Management.RouteConstraints {
+  const c: Api.Management.RouteConstraints = {};
+  if (editModel.allowed_providers.length > 0) c.allowed_providers = editModel.allowed_providers;
+  if (editModel.blocked_providers.length > 0) c.blocked_providers = editModel.blocked_providers;
+  if (editModel.allowed_upstream_models.length > 0) c.allowed_upstream_models = editModel.allowed_upstream_models;
+  if (editModel.blocked_upstream_models.length > 0) c.blocked_upstream_models = editModel.blocked_upstream_models;
+  if (editModel.max_cost_per_million != null) c.max_cost_per_million = editModel.max_cost_per_million;
+  return c;
 }
 
 async function handleCreate() {
@@ -282,7 +306,8 @@ async function handleUpdate() {
       strategy: editModel.strategy,
       fallback_limit: editModel.fallback_limit,
       provider_timeout_ms: editModel.provider_timeout_ms,
-      first_token_timeout_ms: editModel.first_token_timeout_ms
+      first_token_timeout_ms: editModel.first_token_timeout_ms,
+      constraints: buildEditConstraints()
     });
     if (!error) {
       window.$message?.success($t('business.route-policy-updated'));
@@ -325,7 +350,7 @@ onMounted(() => {
       <template #header-extra>
         <NSpace>
           <NButton quaternary type="primary" :loading="loading" @click="loadData">{{ $t('business.refresh') }}</NButton>
-          <NButton type="primary" @click="openCreate">{{ $t('business.create-policy') }}</NButton>
+          <NButton v-if="canManage" type="primary" @click="openCreate">{{ $t('business.create-policy') }}</NButton>
         </NSpace>
       </template>
       <NAlert type="info" :bordered="false" class="mb-12px">
@@ -410,7 +435,7 @@ onMounted(() => {
       </template>
     </NModal>
 
-    <NModal v-model:show="showEdit" preset="card" :title="$t('business.edit-route-policy')" class="w-520px">
+    <NModal v-model:show="showEdit" preset="card" :title="$t('business.edit-route-policy')" class="w-620px">
       <NForm ref="editFormRef" :model="editModel" :rules="editRules" label-placement="left" label-width="140">
         <NFormItem :label="$t('business.policy-name')" path="name">
           <NInput v-model:value="editModel.name" :placeholder="$t('business.policy-name')" />
@@ -426,6 +451,56 @@ onMounted(() => {
         </NFormItem>
         <NFormItem :label="$t('business.first-token-timeout-ms')" path="first_token_timeout_ms">
           <NInputNumber v-model:value="editModel.first_token_timeout_ms" :min="1" class="w-full" />
+        </NFormItem>
+
+        <NDivider title-placement="left">{{ $t('business.hard-constraints-optional-settable-only') }}</NDivider>
+        <NFormItem :label="$t('business.allowed-providers')" path="allowed_providers">
+          <NSelect
+            v-model:value="editModel.allowed_providers"
+            multiple
+            clearable
+            tag
+            :options="constraintProviderOptions"
+            :placeholder="$t('business.leave-blank-for-no-limit')"
+          />
+        </NFormItem>
+        <NFormItem :label="$t('business.blocked-providers')" path="blocked_providers">
+          <NSelect
+            v-model:value="editModel.blocked_providers"
+            multiple
+            clearable
+            tag
+            :options="constraintProviderOptions"
+            :placeholder="$t('business.leave-blank-for-no-limit')"
+          />
+        </NFormItem>
+        <NFormItem :label="$t('business.allowed-upstream-models')" path="allowed_upstream_models">
+          <NSelect
+            v-model:value="editModel.allowed_upstream_models"
+            multiple
+            clearable
+            filterable
+            tag
+            :placeholder="$t('business.enter-a-model-name-and')"
+          />
+        </NFormItem>
+        <NFormItem :label="$t('business.blocked-upstream-models')" path="blocked_upstream_models">
+          <NSelect
+            v-model:value="editModel.blocked_upstream_models"
+            multiple
+            clearable
+            filterable
+            tag
+            :placeholder="$t('business.enter-a-model-name-and')"
+          />
+        </NFormItem>
+        <NFormItem :label="$t('business.blended-unit-price-ceiling')" path="max_cost_per_million">
+          <NInputNumber
+            v-model:value="editModel.max_cost_per_million"
+            :min="0"
+            class="w-full"
+            :placeholder="$t('business.usd-per-million-leave-blank')"
+          />
         </NFormItem>
         <NAlert type="info" :bordered="false">{{ $t('business.switching-the-strategy-resets-scoring') }}</NAlert>
       </NForm>

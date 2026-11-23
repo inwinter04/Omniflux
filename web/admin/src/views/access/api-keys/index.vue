@@ -12,10 +12,13 @@ import {
   fetchUpdateApiKey
 } from '@/service/api';
 import { $t } from '@/locales';
+import { usePermission } from '@/hooks/common/permission';
 
 defineOptions({
   name: 'AccessApiKeys'
 });
+
+const { canManage } = usePermission();
 
 const loading = ref(true);
 const list = ref<Api.Management.ApiKey[]>([]);
@@ -121,6 +124,7 @@ const columns = computed<DataTableColumns<Api.Management.ApiKey>>(() => [
     key: 'actions',
     width: 150,
     render(row) {
+      if (!canManage.value) return [];
       const buttons: ReturnType<typeof h>[] = [];
       buttons.push(
         h(
@@ -295,6 +299,7 @@ onMounted(() => {
         <NSpace>
           <NButton quaternary type="primary" :loading="loading" @click="loadData">{{ $t('business.refresh') }}</NButton>
           <NButton
+            v-if="canManage"
             type="primary"
             :disabled="projectOptions.length === 0 || applications.length === 0"
             @click="openCreate"

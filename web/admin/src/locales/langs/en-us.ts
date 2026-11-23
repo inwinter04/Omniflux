@@ -836,7 +836,9 @@ const local: App.I18n.Schema = {
     'create-and-fetch-models': 'Create and fetch models',
     'create-provider-account': 'Create provider account',
     'the-api-key-and-provider':
-      'The API key and provider type cannot be changed after creation. Create another account to change the credential.',
+      'The provider type cannot be changed after creation. The API key can be rotated while editing; leave it blank to keep the current key.',
+    newApiKey: 'New API key',
+    leaveBlankToKeepApiKey: 'Leave blank to keep the current API key',
     'edit-provider-account': 'Edit provider account',
     'the-model-list-comes-from':
       'The model list comes from the account’s upstream. Prices are completed from the public model catalog and can be entered manually when unmatched.',
@@ -863,11 +865,11 @@ const local: App.I18n.Schema = {
     'route-policy-deleted': 'Route policy deleted',
     'create-policy': 'Create policy',
     'scoring-weights-apply-according-to':
-      'Scoring weights apply according to the selected strategy. Hard constraints filter candidates before routing, can be set only during creation, and updating the policy does not change constraints.',
+      'Scoring weights apply according to the selected strategy. Hard constraints filter candidates before routing and can be adjusted when creating or editing a policy.',
     'for-example-default-balanced-policy': 'For example: default balanced policy',
     'policy-name': 'Policy name',
     'scheduling-strategy': 'Scheduling strategy',
-    'hard-constraints-optional-settable-only': 'Hard constraints (optional, settable only during creation)',
+    'hard-constraints-optional-settable-only': 'Hard constraints (optional)',
     'leave-blank-for-no-limit': 'Leave blank for no limit',
     'allowed-providers': 'Allowed providers',
     'blocked-providers': 'Blocked providers',
@@ -878,7 +880,7 @@ const local: App.I18n.Schema = {
     'blended-unit-price-ceiling': 'Blended unit-price ceiling',
     'create-route-policy': 'Create route policy',
     'switching-the-strategy-resets-scoring':
-      'Switching the strategy resets scoring weights to the new template. Hard constraints are set only during creation; create another policy to change them.',
+      'Switching the strategy resets scoring weights to the new template. Saving also updates the hard constraints.',
     'edit-route-policy': 'Edit route policy',
     operator: 'Operator',
     identity: 'Identity',

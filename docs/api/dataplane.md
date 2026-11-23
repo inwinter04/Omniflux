@@ -82,7 +82,7 @@ curl -sS http://127.0.0.1:8080/v1/agents/customer-assistant/chat/completions \
 3. 候选的 `quality_score`(0-1,默认 0.5)参与 quality 评分,latency 与 reliability 来自近 7 天用量统计;Provider 账号的健康可见性来自近 24 小时用量统计(路由已按成功率自动降权);
 4. 主候选之后的候选作为 fallback 链交给上游网关处理,`fallback_limit` 与 `provider_timeout_ms` 生效;流式请求的 `first_token_timeout_ms` 在未收到首个 token 时中断上游并按失败定稿。
 
-自动质量评估(EvaluationSet/EvaluationRun)将在后续版本实现。
+测试集评估(EvaluationSet/EvaluationRun)已支持确定性规则匹配、成本与延迟汇总。
 
 ## 计量与对账
 

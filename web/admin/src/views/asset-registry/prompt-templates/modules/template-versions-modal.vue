@@ -6,6 +6,7 @@ import { formatTime } from '@/utils/admin-status';
 import { buildAssetDiff } from '@/utils/asset-diff';
 import { fetchAssetDetail, fetchAssetDiff, fetchPublishAsset, fetchRollbackAsset } from '@/service/api';
 import { $t } from '@/locales';
+import { usePermission } from '@/hooks/common/permission';
 import TemplateDiff from './template-diff.vue';
 
 const props = defineProps<{
@@ -17,6 +18,8 @@ const emit = defineEmits<{
   'update:show': [value: boolean];
   saved: [];
 }>();
+
+const { canManage } = usePermission();
 
 const loading = ref(false);
 const diffLoading = ref(false);
@@ -78,6 +81,7 @@ const columns = computed<DataTableColumns<Api.Management.AssetVersion>>(() => [
     key: 'actions',
     width: 90,
     render(row) {
+      if (!canManage.value) return null;
       if (latestDraft.value?.id === row.id) {
         return h(
           NPopconfirm,

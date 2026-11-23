@@ -5,12 +5,15 @@ import type { DataTableColumns } from 'naive-ui';
 import { formatTime, statusTagType, statusText } from '@/utils/admin-status';
 import { fetchAssets, fetchUpdateAssetStatus } from '@/service/api';
 import { $t } from '@/locales';
+import { usePermission } from '@/hooks/common/permission';
 import TemplateGrantsModal from '../prompt-templates/modules/template-grants-modal.vue';
 import TemplateVersionsModal from '../prompt-templates/modules/template-versions-modal.vue';
 import AgentChatWorkspace from './modules/agent-chat-workspace.vue';
 import AgentFormModal from './modules/agent-form-modal.vue';
 
 defineOptions({ name: 'AssetRegistryAgents' });
+
+const { canManage } = usePermission();
 
 const loading = ref(true);
 const list = ref<Api.Management.Asset[]>([]);
@@ -78,8 +81,15 @@ const columns = computed<DataTableColumns<Api.Management.Asset>>(() => [
     title: $t('business.actions'),
     key: 'actions',
     width: 330,
-    render: row =>
-      h(
+    render: row => {
+      if (!canManage.value) {
+        return h(
+          NButton,
+          { size: 'small', quaternary: true, type: 'primary', onClick: () => openAction('versions', row) },
+          { default: () => $t('business.version') }
+        );
+      }
+      return h(
         NSpace,
         { size: 4 },
         {
@@ -136,7 +146,8 @@ const columns = computed<DataTableColumns<Api.Management.Asset>>(() => [
             )
           ]
         }
-      )
+      );
+    }
   }
 ]);
 
@@ -205,7 +216,7 @@ async function archiveAsset() {
       <template #header-extra>
         <NSpace>
           <NButton quaternary type="primary" :loading="loading" @click="loadData">{{ $t('business.refresh') }}</NButton>
-          <NButton type="primary" @click="openForm(null)">{{ $t('business.create-agent') }}</NButton>
+          <NButton v-if="canManage" type="primary" @click="openForm(null)">{{ $t('business.create-agent') }}</NButton>
         </NSpace>
       </template>
       <NDataTable

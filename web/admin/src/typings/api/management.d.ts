@@ -252,6 +252,7 @@ declare namespace Api {
       region?: string;
       base_url?: string;
       billing_currency?: string;
+      api_key?: string;
     }
 
     interface UpdateRoutePolicyParams {
@@ -260,6 +261,7 @@ declare namespace Api {
       fallback_limit?: number;
       provider_timeout_ms?: number;
       first_token_timeout_ms?: number;
+      constraints?: RouteConstraints;
     }
 
     type UpdateModelServiceParams = CreateModelServiceParams;

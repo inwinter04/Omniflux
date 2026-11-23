@@ -226,14 +226,15 @@ func (d ServerDeps) DeleteRoutePolicy(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateRoutePolicyRequest struct {
-	Name                string `json:"name"`
-	Strategy            string `json:"strategy"`
-	FallbackLimit       *int   `json:"fallback_limit"`
-	ProviderTimeoutMS   *int   `json:"provider_timeout_ms"`
-	FirstTokenTimeoutMS *int   `json:"first_token_timeout_ms"`
+	Name                string          `json:"name"`
+	Strategy            string          `json:"strategy"`
+	FallbackLimit       *int            `json:"fallback_limit"`
+	ProviderTimeoutMS   *int            `json:"provider_timeout_ms"`
+	FirstTokenTimeoutMS *int            `json:"first_token_timeout_ms"`
+	Constraints         json.RawMessage `json:"constraints"`
 }
 
-// UpdateRoutePolicy 更新路由策略名称与调度参数;weights 真实生效,constraints 由数据面硬过滤执行。
+// UpdateRoutePolicy 更新策略名称、调度参数与硬约束;constraints 缺省时保留原值。
 func (d ServerDeps) UpdateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
 	if !ok || d.requireProjectAdmin(w, principal) != nil {
@@ -267,15 +268,26 @@ func (d ServerDeps) UpdateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusBadRequest, "POLICY_INVALID", "first-token-timeout-ms-must-be", nil)
 		return
 	}
+	constraints := []byte(body.Constraints)
+	if len(constraints) > 0 {
+		if err := dataplane.ValidateConstraintsJSON(constraints); err != nil {
+			adminError(w, http.StatusBadRequest, "POLICY_CONSTRAINTS_INVALID", "policyConstraintsInvalid", nil)
+			return
+		}
+	}
 	policyID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		adminError(w, http.StatusBadRequest, "POLICY_ID_INVALID", "invalid-route-policy-id", nil)
 		return
 	}
-	var oldName string
+	var oldName, oldStrategy string
+	var oldConstraints []byte
+	var oldFallbackLimit, oldProviderTimeout, oldFirstTokenTimeout int
 	err = d.Pool.QueryRow(r.Context(), `
-		SELECT name FROM route_policies WHERE id = $1 AND organization_id = $2
-	`, policyID, principal.OrganizationID).Scan(&oldName)
+		SELECT name, strategy, constraints, fallback_limit, provider_timeout_ms, first_token_timeout_ms
+		FROM route_policies WHERE id = $1 AND organization_id = $2
+	`, policyID, principal.OrganizationID).Scan(&oldName, &oldStrategy, &oldConstraints,
+		&oldFallbackLimit, &oldProviderTimeout, &oldFirstTokenTimeout)
 	if errors.Is(err, pgx.ErrNoRows) {
 		adminError(w, http.StatusNotFound, "POLICY_NOT_FOUND", "route-policy-does-not-exist-or", nil)
 		return
@@ -284,18 +296,42 @@ func (d ServerDeps) UpdateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusInternalServerError, "POLICY_UPDATE_FAILED", "failed-to-update-the-route-policy", nil)
 		return
 	}
-	tag, err := d.Pool.Exec(r.Context(), `
-		UPDATE route_policies SET
-			name = $3, strategy = $4,
-			weights = $5::jsonb,
-			fallback_limit = COALESCE($6, fallback_limit),
-			provider_timeout_ms = COALESCE($7, provider_timeout_ms),
-			first_token_timeout_ms = COALESCE($8, first_token_timeout_ms),
-			version = version + 1, updated_at = now()
-		WHERE id = $1 AND organization_id = $2
-	`, policyID, principal.OrganizationID, body.Name, body.Strategy,
-		json.RawMessage(strategyWeights(body.Strategy)),
-		body.FallbackLimit, body.ProviderTimeoutMS, body.FirstTokenTimeoutMS)
+	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(r.Context(), `
+			UPDATE route_policies SET
+				name = $3, strategy = $4,
+				weights = $5::jsonb,
+				fallback_limit = COALESCE($6, fallback_limit),
+				provider_timeout_ms = COALESCE($7, provider_timeout_ms),
+				first_token_timeout_ms = COALESCE($8, first_token_timeout_ms),
+				constraints = COALESCE($9::jsonb, constraints),
+				version = version + 1, updated_at = now()
+			WHERE id = $1 AND organization_id = $2
+		`, policyID, principal.OrganizationID, body.Name, body.Strategy,
+			json.RawMessage(strategyWeights(body.Strategy)),
+			body.FallbackLimit, body.ProviderTimeoutMS, body.FirstTokenTimeoutMS, constraints)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return pgx.ErrNoRows
+		}
+		_, err = tx.Exec(r.Context(), `
+			INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, before_state, after_state)
+			VALUES ($1,$2,'user','route_policy.updated','route_policy',$3,$4,$5)
+		`, principal.OrganizationID, principal.UserID, policyID.String(),
+			auditJSON(map[string]any{"name": oldName, "strategy": oldStrategy,
+				"fallback_limit": oldFallbackLimit, "provider_timeout_ms": oldProviderTimeout,
+				"first_token_timeout_ms": oldFirstTokenTimeout, "constraints": rawJSONOrEmpty(oldConstraints)}),
+			auditJSON(map[string]any{"name": body.Name, "strategy": body.Strategy,
+				"fallback_limit": body.FallbackLimit, "provider_timeout_ms": body.ProviderTimeoutMS,
+				"first_token_timeout_ms": body.FirstTokenTimeoutMS, "constraints": rawJSONOrEmpty(constraints)}))
+		return err
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		adminError(w, http.StatusNotFound, "POLICY_NOT_FOUND", "route-policy-does-not-exist-or", nil)
+		return
+	}
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.ConstraintName == "route_policies_organization_id_name_key" {
@@ -305,17 +341,12 @@ func (d ServerDeps) UpdateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusInternalServerError, "POLICY_UPDATE_FAILED", "failed-to-update-the-route-policy", nil)
 		return
 	}
-	if tag.RowsAffected() == 0 {
-		adminError(w, http.StatusNotFound, "POLICY_NOT_FOUND", "route-policy-does-not-exist-or", nil)
-		return
-	}
-	_, _ = d.Pool.Exec(r.Context(), `
-		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, before_state, after_state)
-		VALUES ($1,$2,'user','route_policy.updated','route_policy',$3,$4,$5)
-	`, principal.OrganizationID, principal.UserID, policyID.String(),
-		auditJSON(map[string]any{"name": oldName}),
-		auditJSON(map[string]any{"name": body.Name, "strategy": body.Strategy,
-			"fallback_limit": body.FallbackLimit, "provider_timeout_ms": body.ProviderTimeoutMS,
-			"first_token_timeout_ms": body.FirstTokenTimeoutMS}))
 	adminOK(w, nil)
+}
+
+func rawJSONOrEmpty(raw []byte) any {
+	if len(raw) == 0 {
+		return map[string]any{}
+	}
+	return json.RawMessage(raw)
 }

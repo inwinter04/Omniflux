@@ -12,10 +12,13 @@ import {
   fetchUpdateApplicationStatus
 } from '@/service/api';
 import { $t } from '@/locales';
+import { usePermission } from '@/hooks/common/permission';
 
 defineOptions({
   name: 'OrganizationApplications'
 });
+
+const { canManage } = usePermission();
 
 const loading = ref(true);
 const list = ref<Api.Management.Application[]>([]);
@@ -85,6 +88,7 @@ const columns = computed<DataTableColumns<Api.Management.Application>>(() => [
     key: 'actions',
     width: 230,
     render(row) {
+      if (!canManage.value) return '';
       return h(
         NSpace,
         {},
@@ -224,7 +228,7 @@ onMounted(() => {
       <template #header-extra>
         <NSpace>
           <NButton quaternary type="primary" :loading="loading" @click="loadData">{{ $t('business.refresh') }}</NButton>
-          <NButton type="primary" :disabled="projectOptions.length === 0" @click="openCreate">
+          <NButton v-if="canManage" type="primary" :disabled="projectOptions.length === 0" @click="openCreate">
             {{ projectOptions.length === 0 ? $t('business.createProjectFirst') : $t('business.create-application') }}
           </NButton>
         </NSpace>

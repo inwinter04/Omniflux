@@ -25,8 +25,11 @@ import {
   fetchUpdateProviderAccountStatus
 } from '@/service/api';
 import { $t } from '@/locales';
+import { usePermission } from '@/hooks/common/permission';
 
 defineOptions({ name: 'ModelManagementProviders' });
+
+const { canManage } = usePermission();
 
 function providerTestMessage(result: Api.Management.ProviderTestResult) {
   if (result.reason === 'network_error') {
@@ -84,7 +87,8 @@ const editModel = reactive({
   name: '',
   region: '',
   base_url: '',
-  billing_currency: 'USD'
+  billing_currency: 'USD',
+  api_key: ''
 });
 const formRules = computed<FormRules>(() => ({
   provider: {
@@ -227,6 +231,7 @@ const columns = computed<DataTableColumns<Api.Management.ProviderAccount>>(() =>
     key: 'actions',
     width: 310,
     render(row) {
+      if (!canManage.value) return '';
       const moreOptions = [{ label: $t('business.delete-account'), key: 'delete' }];
       if (findVendor(row.provider)?.balance_kind)
         moreOptions.unshift({
@@ -337,7 +342,8 @@ function openEdit(row: Api.Management.ProviderAccount) {
     name: row.name,
     region: row.region ?? '',
     base_url: row.base_url ?? findVendor(row.provider)?.base_url ?? '',
-    billing_currency: row.billing_currency
+    billing_currency: row.billing_currency,
+    api_key: ''
   });
   showEdit.value = true;
 }
@@ -373,7 +379,8 @@ async function handleUpdate() {
       name: editModel.name.trim(),
       region: editModel.region.trim() || undefined,
       base_url: editVendor.value?.editable_url ? editModel.base_url.trim() || undefined : undefined,
-      billing_currency: editModel.billing_currency
+      billing_currency: editModel.billing_currency,
+      api_key: editModel.api_key.trim() || undefined
     });
     if (!error) {
       window.$message?.success($t('business.account-updated'));
@@ -538,7 +545,7 @@ onMounted(() => {
       <template #header-extra>
         <NSpace>
           <NButton quaternary type="primary" :loading="loading" @click="loadData">{{ $t('business.refresh') }}</NButton>
-          <NButton type="primary" @click="openCreate">{{ $t('business.create-account') }}</NButton>
+          <NButton v-if="canManage" type="primary" @click="openCreate">{{ $t('business.create-account') }}</NButton>
         </NSpace>
       </template>
       <NDataTable
@@ -632,6 +639,14 @@ onMounted(() => {
         </NFormItem>
         <NFormItem :label="$t('business.api-endpoint')">
           <NInput v-model:value="editModel.base_url" :readonly="!editVendor?.editable_url" />
+        </NFormItem>
+        <NFormItem :label="$t('business.newApiKey')" path="api_key">
+          <NInput
+            v-model:value="editModel.api_key"
+            type="password"
+            show-password-on="click"
+            :placeholder="$t('business.leaveBlankToKeepApiKey')"
+          />
         </NFormItem>
         <NAlert type="info" :bordered="false">{{ $t('business.the-api-key-and-provider') }}</NAlert>
       </NForm>

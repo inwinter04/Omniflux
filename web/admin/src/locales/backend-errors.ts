@@ -72,6 +72,8 @@ export const zhCNBackendErrors: Record<string, string> = {
   'candidate-is-missing-upstream-model': '候选缺少 upstream_model',
   'the-provider-account-referenced-by-the': '候选引用的 供应商账号不存在或不属于当前组织',
   'candidate-quality-score-must-be-between': '候选质量分必须在 0 到 1 之间',
+  'duplicate-model-candidate': '同一供应商账号下不能重复配置相同模型',
+  'candidate-currency-must-match-provider-account': '候选结算币种必须与供应商账号结算币种一致',
   'invalid-session-id': '会话 ID 不合法',
   'session-does-not-exist-or-is': '会话不存在或无权访问',
   'roles-support-only-org-admin-project': '角色仅支持 org_admin/project_admin/developer/viewer',
@@ -375,6 +377,8 @@ export const enUSBackendErrors: Record<string, string> = {
   'the-provider-account-referenced-by-the':
     'The provider account referenced by the candidate does not exist or does not belong to the current organization',
   'candidate-quality-score-must-be-between': 'Candidate quality score must be between 0 and 1',
+  'duplicate-model-candidate': 'The same model cannot be configured twice for one provider account',
+  'candidate-currency-must-match-provider-account': 'Candidate settlement currency must match the provider account settlement currency',
   'invalid-session-id': 'Invalid session ID',
   'session-does-not-exist-or-is': 'Session does not exist or is inaccessible',
   'roles-support-only-org-admin-project': 'Roles support only org_admin/project_admin/developer/viewer',

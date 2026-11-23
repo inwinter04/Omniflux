@@ -101,7 +101,7 @@ const columns = computed<DataTableColumns<CandidateDraft>>(() => [
       })
   },
   {
-    title: $t('business.input-price-usd-per-million'),
+    title: $t('business.input-price-million'),
     key: 'input_cost_per_million',
     width: 170,
     render: row =>
@@ -113,7 +113,7 @@ const columns = computed<DataTableColumns<CandidateDraft>>(() => [
       })
   },
   {
-    title: $t('business.output-price-usd-per-million'),
+    title: $t('business.output-price-million'),
     key: 'output_cost_per_million',
     width: 170,
     render: row =>
@@ -147,7 +147,7 @@ const columns = computed<DataTableColumns<CandidateDraft>>(() => [
         value: row.cost_currency,
         options: settlementCurrencyOptions(),
         size: 'small',
-        'onUpdate:value': value => (row.cost_currency = value)
+        disabled: true
       })
   },
   {

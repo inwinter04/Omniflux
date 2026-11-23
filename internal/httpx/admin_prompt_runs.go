@@ -241,7 +241,7 @@ func (d ServerDeps) executePromptRun(ctx context.Context, principal auth.Princip
 
 func (d ServerDeps) finalizePromptRun(ctx context.Context, runID uuid.UUID, response promptRunResponse) error {
 	if response.CostCurrency == "" {
-		_ = d.Pool.QueryRow(context.WithoutCancel(ctx), `SELECT cost_currency FROM model_candidates WHERE model_service_id = $1 LIMIT 1`, response.ModelServiceID).Scan(&response.CostCurrency)
+		_ = d.Pool.QueryRow(context.WithoutCancel(ctx), `SELECT cost_currency FROM model_candidates WHERE model_service_id = $1 AND retired_at IS NULL LIMIT 1`, response.ModelServiceID).Scan(&response.CostCurrency)
 	}
 	if response.CostCurrency == "" {
 		response.CostCurrency = "USD"

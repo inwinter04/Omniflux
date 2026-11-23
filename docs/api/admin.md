@@ -85,7 +85,7 @@
 | `GET /api/v1/provider-catalog` | 厂商目录,按模型厂商/云平台/第三方服务分类,同厂商提供套餐和地区版本 |
 | `GET /api/v1/provider-accounts` | 供应商账号列表(含近 24h 被动健康统计) |
 | `POST /api/v1/provider-accounts` | 创建供应商账号(凭据加密入库;openai/anthropic 类 base_url 不含 `/v1`,网关会自动拼接 `/v1/chat/completions` 等路径) |
-| `PATCH /api/v1/provider-accounts/{id}` | 更新供应商账号 |
+| `PATCH /api/v1/provider-accounts/{id}` | 更新供应商账号(可轮换 API Key,留空保持不变) |
 | `PATCH /api/v1/provider-accounts/{id}/status` | 启用或停用账号,并刷新上游引擎 |
 | `GET /api/v1/provider-accounts/{id}/models` | 使用已保存凭据获取上游模型列表,并补全 models.dev 中的已知输入/输出价格 |
 | `GET /api/v1/provider-accounts/{id}/balance` | 查询支持的账户余额与套餐限额,按原币种返回;限额含已用/剩余百分比及重置时间 |
@@ -100,7 +100,7 @@
 | --- | --- |
 | `GET /api/v1/route-policies` | 路由策略列表 |
 | `POST /api/v1/route-policies` | 创建路由策略(含硬约束) |
-| `PATCH /api/v1/route-policies/{id}` | 更新策略参数(constraints 创建后不可改) |
+| `PATCH /api/v1/route-policies/{id}` | 更新策略参数与硬约束 |
 | `PATCH /api/v1/route-policies/{id}/status` | 启用或停用路由策略 |
 | `DELETE /api/v1/route-policies/{id}` | 删除路由策略 |
 
@@ -110,7 +110,7 @@
 | --- | --- |
 | `GET /api/v1/model-services` | 模型服务列表(含候选) |
 | `POST /api/v1/model-services` | 创建模型服务与候选 |
-| `PATCH /api/v1/model-services/{id}` | 更新模型服务(候选全量替换) |
+| `PATCH /api/v1/model-services/{id}` | 更新模型服务(候选按稳定键 upsert,移除候选保留历史) |
 | `PATCH /api/v1/model-services/{id}/status` | 启用或停用模型服务 |
 | `PATCH /api/v1/model-candidates/{id}/status` | 启用或停用单个候选模型 |
 | `GET /api/v1/model-services/{id}/grants` | 查询模型服务组织/部门/项目授权 |

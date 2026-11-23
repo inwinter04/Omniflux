@@ -6,6 +6,7 @@ import type { DataTableColumns } from 'naive-ui';
 import { formatTime, statusTagType, statusText } from '@/utils/admin-status';
 import { fetchAssets, fetchUpdateAssetStatus } from '@/service/api';
 import { $t } from '@/locales';
+import { usePermission } from '@/hooks/common/permission';
 import TemplateEditModal from './modules/template-edit-modal.vue';
 import TemplateFormModal from './modules/template-form-modal.vue';
 import TemplateGrantsModal from './modules/template-grants-modal.vue';
@@ -13,6 +14,8 @@ import TemplateTestModal from './modules/template-test-modal.vue';
 import TemplateVersionsModal from './modules/template-versions-modal.vue';
 
 defineOptions({ name: 'AssetRegistryPromptTemplates' });
+
+const { canManage } = usePermission();
 
 const loading = ref(true);
 const list = ref<Api.Management.Asset[]>([]);
@@ -83,8 +86,29 @@ const columns = computed<DataTableColumns<Api.Management.Asset>>(() => [
     title: $t('business.actions'),
     key: 'actions',
     width: 370,
-    render: row =>
-      h(
+    render: row => {
+      if (!canManage.value) {
+        return h(NSpace, { size: 4 }, {
+          default: () => [
+            h(
+              NButton,
+              { size: 'small', quaternary: true, type: 'primary', onClick: () => openAction('versions', row) },
+              { default: () => $t('business.version') }
+            ),
+            h(
+              NButton,
+              {
+                size: 'small',
+                quaternary: true,
+                type: 'primary',
+                onClick: () => router.push({ name: 'asset-registry_evaluations', query: { asset: row.id } })
+              },
+              { default: () => $t('business.evaluate') }
+            )
+          ]
+        });
+      }
+      return h(
         NSpace,
         { size: 4 },
         {
@@ -155,7 +179,8 @@ const columns = computed<DataTableColumns<Api.Management.Asset>>(() => [
             )
           ]
         }
-      )
+      );
+    }
   }
 ]);
 
@@ -238,7 +263,7 @@ onMounted(loadData);
       <template #header-extra>
         <NSpace>
           <NButton quaternary type="primary" :loading="loading" @click="loadData">{{ $t('business.refresh') }}</NButton>
-          <NButton type="primary" @click="openForm(null)">{{ $t('business.create-template') }}</NButton>
+          <NButton v-if="canManage" type="primary" @click="openForm(null)">{{ $t('business.create-template') }}</NButton>
         </NSpace>
       </template>
       <NDataTable

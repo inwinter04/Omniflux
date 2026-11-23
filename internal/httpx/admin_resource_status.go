@@ -105,7 +105,7 @@ func (d ServerDeps) UpdateModelCandidateStatus(w http.ResponseWriter, r *http.Re
 		return
 	}
 	result, err := d.Pool.Exec(r.Context(), `
-		UPDATE model_candidates SET status = $3 WHERE id = $1 AND model_service_id IN (
+		UPDATE model_candidates SET status = $3 WHERE id = $1 AND retired_at IS NULL AND model_service_id IN (
 			SELECT id FROM model_services WHERE organization_id = $2
 		)
 	`, candidateID, principal.OrganizationID, status)

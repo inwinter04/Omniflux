@@ -13,10 +13,13 @@ import {
   fetchUpdateBudget
 } from '@/service/api';
 import { $t } from '@/locales';
+import { usePermission } from '@/hooks/common/permission';
 
 defineOptions({
   name: 'ObservabilityBudgets'
 });
+
+const { canManage } = usePermission();
 
 const loading = ref(true);
 const list = ref<Api.Management.Budget[]>([]);
@@ -179,6 +182,7 @@ const columns = computed<DataTableColumns<Api.Management.Budget>>(() => [
     key: 'actions',
     width: 150,
     render(row) {
+      if (!canManage.value) return '';
       return h(
         NSpace,
         { size: 4 },
@@ -316,7 +320,7 @@ onMounted(() => {
       <template #header-extra>
         <NSpace>
           <NButton quaternary type="primary" :loading="loading" @click="loadData">{{ $t('business.refresh') }}</NButton>
-          <NButton type="primary" @click="openCreate">{{ $t('business.create-budget') }}</NButton>
+          <NButton v-if="canManage" type="primary" @click="openCreate">{{ $t('business.create-budget') }}</NButton>
         </NSpace>
       </template>
       <NAlert type="info" :bordered="false" class="mb-12px">

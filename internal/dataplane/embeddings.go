@@ -87,6 +87,7 @@ func (d Deps) Embeddings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !allowed {
+		d.auditDeniedModelAccess(r, keyCtx, svc.ID, "embeddings")
 		apiError(w, http.StatusForbidden, "model_access_denied", "The current project is not allowed to invoke this model service.")
 		return
 	}
