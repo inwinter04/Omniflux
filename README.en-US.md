@@ -19,13 +19,15 @@ Starting from v0.1.0, Omniflux is in a stabilization phase; breaking changes to 
 
 ## Features
 
-- **Unified model services** — separate business-facing logical models from provider-specific deployments.
+- **Unified model services** — separate business-facing logical models from provider deployments, with plan/region presets, automatic model discovery and batch selection, organization/department/project grants, independent status controls, and multidimensional health insights.
+- **Balance and cost governance** — declare each model service's settlement currency, aggregate USD, CNY and other currencies separately, preserve original balance units, and keep quota-window usage and reset times distinct from monetary balances.
 - **Governed routing** — select candidates using hard constraints plus cost, quality, latency, and reliability scores.
 - **Multi-tenant governance** — organize departments, projects, applications, users, roles, and API keys.
 - **Metering and attribution** — attribute requests, tokens, and cost to projects, applications, keys, providers, and models.
 - **Auditable decisions** — retain administrative actions, sign-in events, and policy decisions.
 - **Operational visibility** — liveness/readiness probes, structured logs, and Prometheus metrics.
 - **Enterprise asset governance** — immutable PromptTemplate versions, publishing, rollback, organization/department/project grants, Markdown editing, real model debugging, multi-model comparison, evaluation sets, and invocation audits.
+- **Agent conversation runtime** — pin prompt versions and model settings, with persistent multi-turn sessions, streaming debugging, API-key invocation, version-pinned conversations, run history, and token/cost/latency attribution.
 - **Modern admin console** — Vue 3, TypeScript, Naive UI, SoybeanAdmin, and server-backed sessions.
 
 ## Architecture

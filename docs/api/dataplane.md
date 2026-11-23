@@ -8,7 +8,7 @@
 Authorization: Bearer <API Key>
 ```
 
-API Key 在管理台"访问控制 → API Keys"中签发,明文仅创建时返回一次。
+API Key 在管理台"访问控制 → API Keys"中签发,明文仅创建时返回一次。模型服务通过组织、部门或项目授权控制可见与可调用范围:`read` 决定 `GET /v1/models`,`invoke` 决定聊天、向量化和智能体执行。未授权调用返回 `model_access_denied`,不会进入上游模型。
 
 ## 端点
 
@@ -20,6 +20,9 @@ API Key 在管理台"访问控制 → API Keys"中签发,明文仅创建时返�
 | `GET /v1/prompt-templates` | 当前项目可读取或调用的已发布模板 |
 | `GET /v1/prompt-templates/{name}` | 读取已发布模板配置(需 `read` 授权) |
 | `POST /v1/prompt-templates/{name}/render` | 渲染当前发布版本(需 `invoke` 授权) |
+| `GET /v1/agents` | 当前项目可读取或调用的已发布 Agent |
+| `GET /v1/agents/{name}` | 读取已发布 Agent 配置(需 `read` 授权) |
+| `POST /v1/agents/{name}/chat/completions` | 调用 Agent 多轮对话(需 `invoke` 授权,支持流式) |
 
 ## 调用示例
 
@@ -49,6 +52,26 @@ curl -sS http://127.0.0.1:8080/v1/prompt-templates/customer-service/render \
 ```
 
 渲染始终固定到当前发布版本。授权可通过组织、项目所属部门或项目本身授予;未发布、停用、归档或越权资产不可调用。成功调用和拒绝事件写入审计,变量值与渲染内容不会进入审计记录。
+
+## Agent 多轮对话
+
+Agent 将固定提示词版本、模型服务和生成参数组合为可发布资产。首次调用只传 `message` 与模板要求的 `variables`;响应头 `X-Agent-Session-Id` 返回新会话 ID。后续调用携带该 ID,不需要也不能修改变量。会话固定首次使用的 Agent 版本,即使之后发布新版本,旧对话仍保持原有上下文语义;新会话使用当前发布版本。
+
+```bash
+# 首轮:-i 用于查看 X-Agent-Session-Id、X-Agent-Run-Id 和版本响应头
+curl -i -sS http://127.0.0.1:8080/v1/agents/customer-assistant/chat/completions \
+  -H "Authorization: Bearer $OMNIFLUX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"message":"你好","variables":{"customer":"Ada"}}'
+
+# 后续轮次
+curl -sS http://127.0.0.1:8080/v1/agents/customer-assistant/chat/completions \
+  -H "Authorization: Bearer $OMNIFLUX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":"<上一步返回的会话 ID>","message":"继续介绍"}'
+```
+
+非流式与流式响应体保持 OpenAI Chat Completions 格式。请求体使用 `message`、`session_id`、`variables`、`stream`,不接受任意上游参数;生成参数由已发布 Agent 版本控制。会话只允许同一组织、项目和 Agent 访问。每次调用复用模型路由、预算、fallback 和限流,写入 Agent 消息/运行记录、`usage_records` 与审计事件;审计不保存消息正文和变量值。
 
 ## 路由行为
 
