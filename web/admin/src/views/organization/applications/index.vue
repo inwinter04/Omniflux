@@ -2,6 +2,7 @@
 import { computed, h, onMounted, reactive, ref } from 'vue';
 import { NButton, NPopconfirm, NSpace, NTag } from 'naive-ui';
 import type { DataTableColumns, FormInst, FormRules } from 'naive-ui';
+import { statusTagType, statusText } from '@/utils/admin-status';
 import {
   fetchApplications,
   fetchCreateApplication,
@@ -10,7 +11,7 @@ import {
   fetchUpdateApplication,
   fetchUpdateApplicationStatus
 } from '@/service/api';
-import { statusTagType, statusText } from '@/utils/admin-status';
+import { $t } from '@/locales';
 
 defineOptions({
   name: 'OrganizationApplications'
@@ -34,13 +35,25 @@ const editModel = reactive({
   name: ''
 });
 
-const formRules: FormRules = {
-  name: { required: true, message: '请填写应用名称', trigger: 'blur' },
-  project_id: { required: true, message: '请选择项目', trigger: 'change' }
-};
-const editRules: FormRules = {
-  name: { required: true, message: '请填写应用名称', trigger: 'blur' }
-};
+const formRules = computed<FormRules>(() => ({
+  name: {
+    required: true,
+    message: $t('business.enter-an-application-name'),
+    trigger: 'blur'
+  },
+  project_id: {
+    required: true,
+    message: $t('business.select-a-project'),
+    trigger: 'change'
+  }
+}));
+const editRules = computed<FormRules>(() => ({
+  name: {
+    required: true,
+    message: $t('business.enter-an-application-name'),
+    trigger: 'blur'
+  }
+}));
 
 const projectOptions = computed(() => projects.value.map(item => ({ label: item.name, value: item.id })));
 
@@ -48,39 +61,76 @@ function projectName(id: string) {
   return projects.value.find(item => item.id === id)?.name ?? '-';
 }
 
-const columns: DataTableColumns<Api.Management.Application> = [
-  { title: '名称', key: 'name' },
-  { title: '项目', key: 'project_id', render: row => projectName(row.project_id) },
+const columns = computed<DataTableColumns<Api.Management.Application>>(() => [
+  { title: $t('business.name'), key: 'name' },
   {
-    title: '状态',
+    title: $t('business.project'),
+    key: 'project_id',
+    render: row => projectName(row.project_id)
+  },
+  {
+    title: $t('business.status'),
     key: 'status',
     width: 100,
     render(row) {
-      return h(NTag, { type: statusTagType(row.status), size: 'small', round: true }, { default: () => statusText(row.status) });
+      return h(
+        NTag,
+        { type: statusTagType(row.status), size: 'small', round: true },
+        { default: () => statusText(row.status) }
+      );
     }
   },
   {
-    title: '操作',
+    title: $t('business.actions'),
     key: 'actions',
     width: 230,
     render(row) {
-      return h(NSpace, {}, {
-        default: () => [
-          h(NButton, { size: 'small', quaternary: true, type: 'primary', onClick: () => openEdit(row) }, { default: () => '编辑' }),
-          h(NButton, { size: 'small', quaternary: true, type: row.status === 'active' ? 'warning' : 'success', onClick: () => toggleStatus(row) }, { default: () => row.status === 'active' ? '停用' : '启用' }),
-          h(
-            NPopconfirm,
-            { onPositiveClick: () => handleDelete(row.id) },
-            {
-              trigger: () => h(NButton, { size: 'small', type: 'error', quaternary: true }, { default: () => '删除' }),
-              default: () => '应用下存在 API Key 时将无法删除,确认删除?'
-            }
-          )
-        ]
-      });
+      return h(
+        NSpace,
+        {},
+        {
+          default: () => [
+            h(
+              NButton,
+              {
+                size: 'small',
+                quaternary: true,
+                type: 'primary',
+                onClick: () => openEdit(row)
+              },
+              { default: () => $t('business.edit') }
+            ),
+            h(
+              NButton,
+              {
+                size: 'small',
+                quaternary: true,
+                type: row.status === 'active' ? 'warning' : 'success',
+                onClick: () => toggleStatus(row)
+              },
+              {
+                default: () => (row.status === 'active' ? $t('business.disabled') : $t('business.enable'))
+              }
+            ),
+            h(
+              NPopconfirm,
+              { onPositiveClick: () => handleDelete(row.id) },
+              {
+                trigger: () =>
+                  h(
+                    NButton,
+                    { size: 'small', type: 'error', quaternary: true },
+                    { default: () => $t('business.delete') }
+                  ),
+                default: () => $t('business.deletion-is-blocked-when-the-qh8q0y')
+              }
+            )
+          ]
+        }
+      );
     }
   }
-];
+]);
 
 async function loadData() {
   loading.value = true;
@@ -118,7 +168,7 @@ async function handleCreate() {
       project_id: formModel.project_id!
     });
     if (!error) {
-      window.$message?.success('应用已创建');
+      window.$message?.success($t('business.application-created'));
       showCreate.value = false;
       await loadData();
     }
@@ -131,9 +181,11 @@ async function handleUpdate() {
   await editFormRef.value?.validate();
   submitting.value = true;
   try {
-    const { error } = await fetchUpdateApplication(editModel.id, { name: editModel.name.trim() });
+    const { error } = await fetchUpdateApplication(editModel.id, {
+      name: editModel.name.trim()
+    });
     if (!error) {
-      window.$message?.success('应用已更新');
+      window.$message?.success($t('business.application-updated'));
       showEdit.value = false;
       await loadData();
     }
@@ -146,7 +198,9 @@ async function toggleStatus(row: Api.Management.Application) {
   const status = row.status === 'active' ? 'disabled' : 'active';
   const { error } = await fetchUpdateApplicationStatus(row.id, status);
   if (!error) {
-    window.$message?.success(status === 'active' ? '应用已启用' : '应用已停用');
+    window.$message?.success(
+      status === 'active' ? $t('business.application-enabled') : $t('business.application-disabled')
+    );
     await loadData();
   }
 }
@@ -154,7 +208,7 @@ async function toggleStatus(row: Api.Management.Application) {
 async function handleDelete(id: string) {
   const { error } = await fetchDeleteApplication(id);
   if (!error) {
-    window.$message?.success('应用已删除');
+    window.$message?.success($t('business.application-deleted'));
     await loadData();
   }
 }
@@ -166,45 +220,49 @@ onMounted(() => {
 
 <template>
   <div class="min-h-full bg-#f6f7f9 p-4px dark:bg-#101014">
-    <NCard title="应用" :bordered="false" class="card-wrapper">
+    <NCard :title="$t('business.application')" :bordered="false" class="card-wrapper">
       <template #header-extra>
         <NSpace>
-          <NButton quaternary type="primary" :loading="loading" @click="loadData">刷新</NButton>
+          <NButton quaternary type="primary" :loading="loading" @click="loadData">{{ $t('business.refresh') }}</NButton>
           <NButton type="primary" :disabled="projectOptions.length === 0" @click="openCreate">
-            {{ projectOptions.length === 0 ? '请先创建项目' : '新建应用' }}
+            {{ projectOptions.length === 0 ? $t('business.createProjectFirst') : $t('business.create-application') }}
           </NButton>
         </NSpace>
       </template>
       <NDataTable :columns="columns" :data="list" :loading="loading" :bordered="false" />
     </NCard>
 
-    <NModal v-model:show="showCreate" preset="card" title="新建应用" class="w-480px">
+    <NModal v-model:show="showCreate" preset="card" :title="$t('business.create-application')" class="w-480px">
       <NForm ref="formRef" :model="formModel" :rules="formRules" label-placement="left" label-width="80">
-        <NFormItem label="应用名称" path="name">
-          <NInput v-model:value="formModel.name" placeholder="例如:订单服务" />
+        <NFormItem :label="$t('business.application-name')" path="name">
+          <NInput v-model:value="formModel.name" :placeholder="$t('business.for-example-order-service')" />
         </NFormItem>
-        <NFormItem label="所属项目" path="project_id">
-          <NSelect v-model:value="formModel.project_id" :options="projectOptions" placeholder="选择项目" />
+        <NFormItem :label="$t('business.project-csdt0z')" path="project_id">
+          <NSelect
+            v-model:value="formModel.project_id"
+            :options="projectOptions"
+            :placeholder="$t('business.select-project')"
+          />
         </NFormItem>
       </NForm>
       <template #footer>
         <NSpace justify="end">
-          <NButton @click="showCreate = false">取消</NButton>
-          <NButton type="primary" :loading="submitting" @click="handleCreate">创建</NButton>
+          <NButton @click="showCreate = false">{{ $t('business.cancel') }}</NButton>
+          <NButton type="primary" :loading="submitting" @click="handleCreate">{{ $t('business.create') }}</NButton>
         </NSpace>
       </template>
     </NModal>
 
-    <NModal v-model:show="showEdit" preset="card" title="编辑应用" class="w-480px">
+    <NModal v-model:show="showEdit" preset="card" :title="$t('business.edit-application')" class="w-480px">
       <NForm ref="editFormRef" :model="editModel" :rules="editRules" label-placement="left" label-width="80">
-        <NFormItem label="应用名称" path="name">
-          <NInput v-model:value="editModel.name" placeholder="应用名称" />
+        <NFormItem :label="$t('business.application-name')" path="name">
+          <NInput v-model:value="editModel.name" :placeholder="$t('business.application-name')" />
         </NFormItem>
       </NForm>
       <template #footer>
         <NSpace justify="end">
-          <NButton @click="showEdit = false">取消</NButton>
-          <NButton type="primary" :loading="submitting" @click="handleUpdate">保存</NButton>
+          <NButton @click="showEdit = false">{{ $t('business.cancel') }}</NButton>
+          <NButton type="primary" :loading="submitting" @click="handleUpdate">{{ $t('business.save') }}</NButton>
         </NSpace>
       </template>
     </NModal>

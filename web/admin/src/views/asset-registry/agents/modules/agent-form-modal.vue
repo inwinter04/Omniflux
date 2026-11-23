@@ -1,12 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
-import {
-  fetchAssetDetail,
-  fetchAssets,
-  fetchCreateAsset,
-  fetchModelServices,
-  fetchUpdateAsset
-} from '@/service/api';
+import { fetchAssetDetail, fetchAssets, fetchCreateAsset, fetchModelServices, fetchUpdateAsset } from '@/service/api';
+import { $t } from '@/locales';
 
 const props = defineProps<{
   show: boolean;
@@ -36,17 +31,34 @@ const form = reactive({
   max_history_messages: 20
 });
 
-const promptOptions = computed(() => prompts.value.filter(item => item.status !== 'archived').map(item => ({ label: item.name, value: item.id })));
-const modelOptions = computed(() => models.value.filter(item => item.status === 'active').map(item => ({ label: item.name, value: item.id })));
-const versionOptions = computed(() => (promptDetail.value?.versions ?? []).map(item => ({
-  label: `版本 ${item.version}${item.current ? '（当前使用）' : ''}`,
-  value: item.id
-})));
-const historyOptions = [10, 20, 40, 60, 100].map(value => ({ label: `${value} 条消息`, value }));
+const promptOptions = computed(() =>
+  prompts.value.filter(item => item.status !== 'archived').map(item => ({ label: item.name, value: item.id }))
+);
+const modelOptions = computed(() =>
+  models.value.filter(item => item.status === 'active').map(item => ({ label: item.name, value: item.id }))
+);
+const versionOptions = computed(() =>
+  (promptDetail.value?.versions ?? []).map(item => ({
+    label: $t('business.versionWithStatus', {
+      version: item.version,
+      status: item.current ? $t('business.current') : ''
+    }),
+    value: item.id
+  }))
+);
+const historyOptions = computed(() =>
+  [10, 20, 40, 60, 100].map(value => ({
+    label: $t('business.messageCount', { count: value }),
+    value
+  }))
+);
 
-watch(() => props.show, visible => {
-  if (visible) void initialize();
-});
+watch(
+  () => props.show,
+  visible => {
+    if (visible) void initialize();
+  }
+);
 
 async function initialize() {
   loading.value = true;
@@ -74,8 +86,15 @@ async function initialize() {
     } else {
       latestVersion.value = 0;
       Object.assign(form, {
-        name: '', description: '', prompt_template_id: null, prompt_version_id: null,
-        model_service_id: null, temperature: 0.7, top_p: 1, max_tokens: 2048, max_history_messages: 20
+        name: '',
+        description: '',
+        prompt_template_id: null,
+        prompt_version_id: null,
+        model_service_id: null,
+        temperature: 0.7,
+        top_p: 1,
+        max_tokens: 2048,
+        max_history_messages: 20
       });
     }
   } finally {
@@ -102,7 +121,7 @@ async function loadPromptVersions(id: string | null, reset = true) {
 
 async function save() {
   if (!form.name.trim() || !form.prompt_template_id || !form.prompt_version_id || !form.model_service_id) {
-    window.$message?.warning('请填写名称，并选择提示词版本和模型服务');
+    window.$message?.warning($t('business.enter-a-name-and-select'));
     return;
   }
   saving.value = true;
@@ -116,12 +135,22 @@ async function save() {
     };
     if (form.temperature !== null) spec.temperature = form.temperature;
     if (form.top_p !== null) spec.top_p = form.top_p;
-    const params = { asset_type: 'agent' as const, name: form.name.trim(), description: form.description.trim(), spec };
+    const params = {
+      asset_type: 'agent' as const,
+      name: form.name.trim(),
+      description: form.description.trim(),
+      spec
+    };
     const { error } = props.assetId
-      ? await fetchUpdateAsset(props.assetId, { ...params, expected_version: latestVersion.value })
+      ? await fetchUpdateAsset(props.assetId, {
+          ...params,
+          expected_version: latestVersion.value
+        })
       : await fetchCreateAsset(params);
     if (!error) {
-      window.$message?.success(props.assetId ? '智能体配置已保存为新版本' : '智能体已创建');
+      window.$message?.success(
+        props.assetId ? $t('business.agent-configuration-saved-as-a') : $t('business.agent-created')
+      );
       emit('update:show', false);
       emit('saved');
     }
@@ -132,30 +161,65 @@ async function save() {
 </script>
 
 <template>
-  <NModal :show="props.show" preset="card" :title="props.assetId ? '编辑智能体' : '新建智能体'" class="w-760px" @update:show="value => emit('update:show', value)">
+  <NModal
+    :show="props.show"
+    preset="card"
+    :title="props.assetId ? $t('business.editAgent') : $t('business.createAgent')"
+    class="w-760px"
+    @update:show="value => emit('update:show', value)"
+  >
     <NSpin :show="loading">
       <NForm label-placement="top">
         <NGrid cols="1 640:2" :x-gap="16">
-          <NFormItemGi label="名称" required><NInput v-model:value="form.name" placeholder="例如：客户助手" /></NFormItemGi>
-          <NFormItemGi label="模型服务" required><NSelect v-model:value="form.model_service_id" filterable :options="modelOptions" placeholder="选择模型服务" /></NFormItemGi>
+          <NFormItemGi :label="$t('business.name')" required>
+            <NInput v-model:value="form.name" :placeholder="$t('business.for-example-customer-assistant')" />
+          </NFormItemGi>
+          <NFormItemGi :label="$t('business.model-service')" required>
+            <NSelect
+              v-model:value="form.model_service_id"
+              filterable
+              :options="modelOptions"
+              :placeholder="$t('business.select-a-model-service')"
+            />
+          </NFormItemGi>
         </NGrid>
-        <NFormItem label="用途说明"><NInput v-model:value="form.description" placeholder="说明这个 智能体的使用场景" /></NFormItem>
+        <NFormItem :label="$t('business.usage-description')">
+          <NInput v-model:value="form.description" :placeholder="$t('business.describe-where-this-agent-is')" />
+        </NFormItem>
         <NGrid cols="1 640:2" :x-gap="16">
-          <NFormItemGi label="提示词模板" required>
-            <NSelect :value="form.prompt_template_id" filterable :options="promptOptions" placeholder="选择提示词模板" @update:value="loadPromptVersions" />
+          <NFormItemGi :label="$t('business.prompt-template')" required>
+            <NSelect
+              :value="form.prompt_template_id"
+              filterable
+              :options="promptOptions"
+              :placeholder="$t('business.select-a-prompt-template')"
+              @update:value="loadPromptVersions"
+            />
           </NFormItemGi>
-          <NFormItemGi label="提示词版本" required>
-            <NSelect v-model:value="form.prompt_version_id" :options="versionOptions" placeholder="选择固定版本" />
+          <NFormItemGi :label="$t('business.prompt-version')" required>
+            <NSelect
+              v-model:value="form.prompt_version_id"
+              :options="versionOptions"
+              :placeholder="$t('business.select-a-pinned-version')"
+            />
           </NFormItemGi>
         </NGrid>
-        <NAlert type="info" :bordered="false" class="mb-16px">智能体会固定使用所选提示词版本，已有对话不会因后续发布而改变。</NAlert>
+        <NAlert type="info" :bordered="false" class="mb-16px">{{ $t('business.the-agent-always-uses-the') }}</NAlert>
         <NCollapse>
-          <NCollapseItem title="生成与上下文设置" name="advanced">
+          <NCollapseItem :title="$t('business.generation-and-context-settings')" name="advanced">
             <NGrid cols="1 640:2" :x-gap="16">
-              <NFormItemGi label="温度"><NInputNumber v-model:value="form.temperature" :min="0" :max="2" :step="0.1" class="w-full" /></NFormItemGi>
-              <NFormItemGi label="Top P"><NInputNumber v-model:value="form.top_p" :min="0.01" :max="1" :step="0.05" class="w-full" /></NFormItemGi>
-              <NFormItemGi label="最大输出 令牌"><NInputNumber v-model:value="form.max_tokens" :min="1" :max="32768" class="w-full" /></NFormItemGi>
-              <NFormItemGi label="携带历史消息"><NSelect v-model:value="form.max_history_messages" :options="historyOptions" /></NFormItemGi>
+              <NFormItemGi :label="$t('business.temperature')">
+                <NInputNumber v-model:value="form.temperature" :min="0" :max="2" :step="0.1" class="w-full" />
+              </NFormItemGi>
+              <NFormItemGi label="Top P">
+                <NInputNumber v-model:value="form.top_p" :min="0.01" :max="1" :step="0.05" class="w-full" />
+              </NFormItemGi>
+              <NFormItemGi :label="$t('business.max-output-tokens')">
+                <NInputNumber v-model:value="form.max_tokens" :min="1" :max="32768" class="w-full" />
+              </NFormItemGi>
+              <NFormItemGi :label="$t('business.include-history-messages')">
+                <NSelect v-model:value="form.max_history_messages" :options="historyOptions" />
+              </NFormItemGi>
             </NGrid>
           </NCollapseItem>
         </NCollapse>
@@ -163,8 +227,10 @@ async function save() {
     </NSpin>
     <template #footer>
       <NSpace justify="end">
-        <NButton @click="emit('update:show', false)">取消</NButton>
-        <NButton type="primary" :loading="saving" @click="save">{{ props.assetId ? '保存为新版本' : '创建智能体' }}</NButton>
+        <NButton @click="emit('update:show', false)">{{ $t('business.cancel') }}</NButton>
+        <NButton type="primary" :loading="saving" @click="save">
+          {{ props.assetId ? $t('business.save-as-new-version') : $t('business.createAgent') }}
+        </NButton>
       </NSpace>
     </template>
   </NModal>

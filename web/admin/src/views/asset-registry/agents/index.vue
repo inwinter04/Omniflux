@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import { h, onMounted, ref } from 'vue';
+import { h, onMounted, ref, computed } from 'vue';
 import { NButton, NDropdown, NSpace, NTag } from 'naive-ui';
 import type { DataTableColumns } from 'naive-ui';
-import { fetchAssets, fetchUpdateAssetStatus } from '@/service/api';
 import { formatTime, statusTagType, statusText } from '@/utils/admin-status';
-import TemplateVersionsModal from '../prompt-templates/modules/template-versions-modal.vue';
+import { fetchAssets, fetchUpdateAssetStatus } from '@/service/api';
+import { $t } from '@/locales';
 import TemplateGrantsModal from '../prompt-templates/modules/template-grants-modal.vue';
-import AgentFormModal from './modules/agent-form-modal.vue';
+import TemplateVersionsModal from '../prompt-templates/modules/template-versions-modal.vue';
 import AgentChatWorkspace from './modules/agent-chat-workspace.vue';
+import AgentFormModal from './modules/agent-form-modal.vue';
 
 defineOptions({ name: 'AssetRegistryAgents' });
 
@@ -21,35 +22,123 @@ const activeAsset = ref<Api.Management.Asset | null>(null);
 const chatAsset = ref<Api.Management.Asset | null>(null);
 const archiveTarget = ref<Api.Management.Asset | null>(null);
 
-const columns: DataTableColumns<Api.Management.Asset> = [
-  { title: '智能体名称', key: 'name', minWidth: 170 },
-  { title: '用途说明', key: 'description', minWidth: 220, ellipsis: { tooltip: true } },
+const columns = computed<DataTableColumns<Api.Management.Asset>>(() => [
+  { title: $t('business.agent-name'), key: 'name', minWidth: 170 },
   {
-    title: '当前版本', key: 'current_version', width: 150,
-    render: row => h(NSpace, { size: 6 }, {
-      default: () => [
-        h('span', row.current_version ? `版本 ${row.current_version}` : '尚未启用'),
-        row.has_draft ? h(NTag, { size: 'small', type: 'info', bordered: false }, { default: () => '有新修改' }) : null
-      ]
-    })
+    title: $t('business.usage-description'),
+    key: 'description',
+    minWidth: 220,
+    ellipsis: { tooltip: true }
   },
-  { title: '状态', key: 'status', width: 90, render: row => h(NTag, { type: statusTagType(row.status), size: 'small', round: true }, { default: () => statusText(row.status) }) },
-  { title: '更新时间', key: 'updated_at', width: 180, render: row => formatTime(row.updated_at) },
   {
-    title: '操作', key: 'actions', width: 330,
-    render: row => h(NSpace, { size: 4 }, {
-      default: () => [
-        h(NButton, { size: 'small', quaternary: true, type: 'primary', onClick: () => openChat(row) }, { default: () => '对话' }),
-        h(NButton, { size: 'small', quaternary: true, type: 'primary', onClick: () => openForm(row.id) }, { default: () => '配置' }),
-        h(NButton, { size: 'small', quaternary: true, type: 'primary', onClick: () => openAction('versions', row) }, { default: () => '版本' }),
-        h(NButton, { size: 'small', quaternary: true, type: 'primary', onClick: () => openAction('grants', row) }, { default: () => '授权' }),
-        h(NDropdown, { options: lifecycleOptions(row), onSelect: key => handleLifecycle(key, row) }, {
-          default: () => h(NButton, { size: 'small', quaternary: true }, { default: () => '更多' })
-        })
-      ]
-    })
+    title: $t('business.current-version'),
+    key: 'current_version',
+    width: 150,
+    render: row =>
+      h(
+        NSpace,
+        { size: 6 },
+        {
+          default: () => [
+            h(
+              'span',
+              row.current_version
+                ? $t('business.versionValue', { version: row.current_version })
+                : $t('business.not-enabled')
+            ),
+            row.has_draft
+              ? h(
+                  NTag,
+                  { size: 'small', type: 'info', bordered: false },
+                  { default: () => $t('business.has-unsaved-changes') }
+                )
+              : null
+          ]
+        }
+      )
+  },
+  {
+    title: $t('business.status'),
+    key: 'status',
+    width: 90,
+    render: row =>
+      h(
+        NTag,
+        { type: statusTagType(row.status), size: 'small', round: true },
+        { default: () => statusText(row.status) }
+      )
+  },
+  {
+    title: $t('business.updated-at'),
+    key: 'updated_at',
+    width: 180,
+    render: row => formatTime(row.updated_at)
+  },
+  {
+    title: $t('business.actions'),
+    key: 'actions',
+    width: 330,
+    render: row =>
+      h(
+        NSpace,
+        { size: 4 },
+        {
+          default: () => [
+            h(
+              NButton,
+              {
+                size: 'small',
+                quaternary: true,
+                type: 'primary',
+                onClick: () => openChat(row)
+              },
+              { default: () => $t('business.chat') }
+            ),
+            h(
+              NButton,
+              {
+                size: 'small',
+                quaternary: true,
+                type: 'primary',
+                onClick: () => openForm(row.id)
+              },
+              { default: () => $t('business.configuration') }
+            ),
+            h(
+              NButton,
+              {
+                size: 'small',
+                quaternary: true,
+                type: 'primary',
+                onClick: () => openAction('versions', row)
+              },
+              { default: () => $t('business.version') }
+            ),
+            h(
+              NButton,
+              {
+                size: 'small',
+                quaternary: true,
+                type: 'primary',
+                onClick: () => openAction('grants', row)
+              },
+              { default: () => $t('business.grants') }
+            ),
+            h(
+              NDropdown,
+              {
+                options: lifecycleOptions(row),
+                onSelect: key => handleLifecycle(key, row)
+              },
+              {
+                default: () => h(NButton, { size: 'small', quaternary: true }, { default: () => $t('business.more') })
+              }
+            )
+          ]
+        }
+      )
   }
-];
+]);
 
 onMounted(loadData);
 
@@ -80,9 +169,9 @@ function openChat(asset: Api.Management.Asset) {
 
 function lifecycleOptions(asset: Api.Management.Asset) {
   const options: { label: string; key: string }[] = [];
-  if (asset.status === 'published') options.push({ label: '暂停使用', key: 'disabled' });
-  if (asset.status === 'disabled') options.push({ label: '恢复使用', key: 'published' });
-  if (asset.status !== 'archived') options.push({ label: '归档智能体', key: 'archived' });
+  if (asset.status === 'published') options.push({ label: $t('business.pause'), key: 'disabled' });
+  if (asset.status === 'disabled') options.push({ label: $t('business.resume'), key: 'published' });
+  if (asset.status !== 'archived') options.push({ label: $t('business.archive-agent'), key: 'archived' });
   return options;
 }
 
@@ -93,7 +182,7 @@ async function handleLifecycle(key: string, asset: Api.Management.Asset) {
   }
   const { error } = await fetchUpdateAssetStatus(asset.id, key as Api.Management.AssetStatus);
   if (!error) {
-    window.$message?.success(key === 'disabled' ? '智能体已暂停使用' : '智能体已恢复使用');
+    window.$message?.success(key === 'disabled' ? $t('business.agent-paused') : $t('business.agent-resumed'));
     await loadData();
   }
 }
@@ -103,7 +192,7 @@ async function archiveAsset() {
   const { error } = await fetchUpdateAssetStatus(archiveTarget.value.id, 'archived');
   if (!error) {
     archiveTarget.value = null;
-    window.$message?.success('智能体已归档');
+    window.$message?.success($t('business.agent-archived'));
     await loadData();
   }
 }
@@ -112,21 +201,41 @@ async function archiveAsset() {
 <template>
   <div class="min-h-full bg-#f6f7f9 p-4px dark:bg-#101014">
     <AgentChatWorkspace v-if="chatAsset" :asset="chatAsset" @back="chatAsset = null" />
-    <NCard v-else title="智能体管理" :bordered="false" class="card-wrapper">
+    <NCard v-else :title="$t('business.agent-management')" :bordered="false" class="card-wrapper">
       <template #header-extra>
         <NSpace>
-          <NButton quaternary type="primary" :loading="loading" @click="loadData">刷新</NButton>
-          <NButton type="primary" @click="openForm(null)">新建智能体</NButton>
+          <NButton quaternary type="primary" :loading="loading" @click="loadData">{{ $t('business.refresh') }}</NButton>
+          <NButton type="primary" @click="openForm(null)">{{ $t('business.create-agent') }}</NButton>
         </NSpace>
       </template>
-      <NDataTable :columns="columns" :data="list" :loading="loading" :bordered="false" :scroll-x="1080" :pagination="{ pageSize: 15 }" />
+      <NDataTable
+        :columns="columns"
+        :data="list"
+        :loading="loading"
+        :bordered="false"
+        :scroll-x="1080"
+        :pagination="{ pageSize: 15 }"
+      />
     </NCard>
 
     <AgentFormModal v-model:show="formVisible" :asset-id="editingID" @saved="loadData" />
     <TemplateVersionsModal v-model:show="versionsVisible" :asset="activeAsset" @saved="loadData" />
     <TemplateGrantsModal v-model:show="grantsVisible" :asset="activeAsset" @saved="loadData" />
-    <NModal :show="Boolean(archiveTarget)" preset="dialog" type="info" title="归档智能体？" positive-text="确认归档" negative-text="取消" @positive-click="archiveAsset" @update:show="value => { if (!value) archiveTarget = null; }">
-      归档后不能继续编辑或恢复使用，请确认。
+    <NModal
+      :show="Boolean(archiveTarget)"
+      preset="dialog"
+      type="info"
+      :title="$t('business.archive-this-agent')"
+      :positive-text="$t('business.confirm-archive')"
+      :negative-text="$t('business.cancel')"
+      @positive-click="archiveAsset"
+      @update:show="
+        value => {
+          if (!value) archiveTarget = null;
+        }
+      "
+    >
+      {{ $t('business.after-archiving-the-item-cannot') }}
     </NModal>
   </div>
 </template>

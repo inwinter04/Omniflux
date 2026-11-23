@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { h, onMounted, reactive, ref } from 'vue';
+import { h, onMounted, reactive, ref, computed } from 'vue';
 import { NButton, NPopconfirm, NSpace, NTag } from 'naive-ui';
 import type { DataTableColumns, FormInst, FormRules } from 'naive-ui';
 import { fetchCreateDepartment, fetchDeleteDepartment, fetchDepartments, fetchUpdateDepartment } from '@/service/api';
+import { $t } from '@/locales';
 
 defineOptions({
   name: 'OrganizationDepartments'
@@ -19,33 +20,55 @@ const editFormRef = ref<FormInst | null>(null);
 const formModel = reactive({ name: '' });
 const editModel = reactive({ id: '', name: '' });
 
-const formRules: FormRules = {
-  name: { required: true, message: '请填写部门名称', trigger: 'blur' }
-};
+const formRules = computed<FormRules>(() => ({
+  name: {
+    required: true,
+    message: $t('business.enter-a-department-name'),
+    trigger: 'blur'
+  }
+}));
 
-const columns: DataTableColumns<Api.Management.Department> = [
-  { title: '名称', key: 'name' },
+const columns = computed<DataTableColumns<Api.Management.Department>>(() => [
+  { title: $t('business.name'), key: 'name' },
   {
-    title: '操作',
+    title: $t('business.actions'),
     key: 'actions',
     width: 150,
     render(row) {
-      return h(NSpace, { size: 4 }, {
-        default: () => [
-          h(NButton, { size: 'small', quaternary: true, type: 'primary', onClick: () => openEdit(row) }, { default: () => '编辑' }),
-          h(
-            NPopconfirm,
-            { onPositiveClick: () => handleDelete(row.id) },
-            {
-              trigger: () => h(NButton, { size: 'small', type: 'error', quaternary: true }, { default: () => '删除' }),
-              default: () => '部门下存在项目时将无法删除,确认删除?'
-            }
-          )
-        ]
-      });
+      return h(
+        NSpace,
+        { size: 4 },
+        {
+          default: () => [
+            h(
+              NButton,
+              {
+                size: 'small',
+                quaternary: true,
+                type: 'primary',
+                onClick: () => openEdit(row)
+              },
+              { default: () => $t('business.edit') }
+            ),
+            h(
+              NPopconfirm,
+              { onPositiveClick: () => handleDelete(row.id) },
+              {
+                trigger: () =>
+                  h(
+                    NButton,
+                    { size: 'small', type: 'error', quaternary: true },
+                    { default: () => $t('business.delete') }
+                  ),
+                default: () => $t('business.deletion-is-blocked-when-the-33v85u')
+              }
+            )
+          ]
+        }
+      );
     }
   }
-];
+]);
 
 async function loadData() {
   loading.value = true;
@@ -74,9 +97,11 @@ async function handleCreate() {
   await formRef.value?.validate();
   submitting.value = true;
   try {
-    const { error } = await fetchCreateDepartment({ name: formModel.name.trim() });
+    const { error } = await fetchCreateDepartment({
+      name: formModel.name.trim()
+    });
     if (!error) {
-      window.$message?.success('部门已创建');
+      window.$message?.success($t('business.department-created'));
       showCreate.value = false;
       await loadData();
     }
@@ -89,9 +114,11 @@ async function handleUpdate() {
   await editFormRef.value?.validate();
   submitting.value = true;
   try {
-    const { error } = await fetchUpdateDepartment(editModel.id, { name: editModel.name.trim() });
+    const { error } = await fetchUpdateDepartment(editModel.id, {
+      name: editModel.name.trim()
+    });
     if (!error) {
-      window.$message?.success('部门已更新');
+      window.$message?.success($t('business.department-updated'));
       showEdit.value = false;
       await loadData();
     }
@@ -103,7 +130,7 @@ async function handleUpdate() {
 async function handleDelete(id: string) {
   const { error } = await fetchDeleteDepartment(id);
   if (!error) {
-    window.$message?.success('部门已删除');
+    window.$message?.success($t('business.department-deleted'));
     await loadData();
   }
 }
@@ -115,40 +142,40 @@ onMounted(() => {
 
 <template>
   <div class="min-h-full bg-#f6f7f9 p-4px dark:bg-#101014">
-    <NCard title="部门" :bordered="false" class="card-wrapper">
+    <NCard :title="$t('business.department')" :bordered="false" class="card-wrapper">
       <template #header-extra>
         <NSpace>
-          <NButton quaternary type="primary" :loading="loading" @click="loadData">刷新</NButton>
-          <NButton type="primary" @click="openCreate">新建部门</NButton>
+          <NButton quaternary type="primary" :loading="loading" @click="loadData">{{ $t('business.refresh') }}</NButton>
+          <NButton type="primary" @click="openCreate">{{ $t('business.create-department') }}</NButton>
         </NSpace>
       </template>
       <NDataTable :columns="columns" :data="list" :loading="loading" :bordered="false" />
     </NCard>
 
-    <NModal v-model:show="showCreate" preset="card" title="新建部门" class="w-440px">
+    <NModal v-model:show="showCreate" preset="card" :title="$t('business.create-department')" class="w-440px">
       <NForm ref="formRef" :model="formModel" :rules="formRules" label-placement="left" label-width="80">
-        <NFormItem label="部门名称" path="name">
-          <NInput v-model:value="formModel.name" placeholder="例如:平台部" />
+        <NFormItem :label="$t('business.department-name')" path="name">
+          <NInput v-model:value="formModel.name" :placeholder="$t('business.for-example-platform-department')" />
         </NFormItem>
       </NForm>
       <template #footer>
         <NSpace justify="end">
-          <NButton @click="showCreate = false">取消</NButton>
-          <NButton type="primary" :loading="submitting" @click="handleCreate">创建</NButton>
+          <NButton @click="showCreate = false">{{ $t('business.cancel') }}</NButton>
+          <NButton type="primary" :loading="submitting" @click="handleCreate">{{ $t('business.create') }}</NButton>
         </NSpace>
       </template>
     </NModal>
 
-    <NModal v-model:show="showEdit" preset="card" title="编辑部门" class="w-440px">
+    <NModal v-model:show="showEdit" preset="card" :title="$t('business.edit-department')" class="w-440px">
       <NForm ref="editFormRef" :model="editModel" :rules="formRules" label-placement="left" label-width="80">
-        <NFormItem label="部门名称" path="name">
-          <NInput v-model:value="editModel.name" placeholder="部门名称" />
+        <NFormItem :label="$t('business.department-name')" path="name">
+          <NInput v-model:value="editModel.name" :placeholder="$t('business.department-name')" />
         </NFormItem>
       </NForm>
       <template #footer>
         <NSpace justify="end">
-          <NButton @click="showEdit = false">取消</NButton>
-          <NButton type="primary" :loading="submitting" @click="handleUpdate">保存</NButton>
+          <NButton @click="showEdit = false">{{ $t('business.cancel') }}</NButton>
+          <NButton type="primary" :loading="submitting" @click="handleUpdate">{{ $t('business.save') }}</NButton>
         </NSpace>
       </template>
     </NModal>

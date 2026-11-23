@@ -115,7 +115,9 @@ export const useAuthStore = defineStore(SetupStoreId.Auth, () => {
 
         window.$notification?.success({
           title: $t('page.login.common.loginSuccess'),
-          content: $t('page.login.common.welcomeBack', { userName: userInfo.userName }),
+          content: $t('page.login.common.welcomeBack', {
+            userName: userInfo.userName
+          }),
           duration: 4500
         });
 
@@ -126,17 +128,19 @@ export const useAuthStore = defineStore(SetupStoreId.Auth, () => {
 
     const axiosError = error as { response?: { data?: LoginErrorPayload } };
     const payload = axiosError.response?.data;
-    let message = payload?.msg || '登录失败，请稍后重试';
+    let message = payload?.msg || $t('business.login-failed-please-try-again');
 
     if (payload?.code === 'AUTH_INVALID_CREDENTIALS') {
-      message = '邮箱或密码不正确';
+      message = $t('business.incorrect-email-or-password');
     } else if (payload?.code === 'AUTH_ACCOUNT_LOCKED') {
       const retryAfter = payload.data?.retry_after_seconds || 0;
 
       if (retryAfter >= 60) {
-        message = `登录尝试过多，账号已临时锁定，请 ${Math.ceil(retryAfter / 60)} 分钟后重试`;
+        message = $t('business.accountLockedMinutes', {
+          minutes: Math.ceil(retryAfter / 60)
+        });
       } else if (retryAfter > 0) {
-        message = `登录尝试过多，账号已临时锁定，请 ${retryAfter} 秒后重试`;
+        message = $t('business.accountLockedSeconds', { seconds: retryAfter });
       }
     }
 

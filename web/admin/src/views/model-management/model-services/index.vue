@@ -1,8 +1,16 @@
 <script setup lang="ts">
-import { h, onMounted, reactive, ref } from 'vue';
-import { NButton, NDataTable, NPopconfirm, NSpace, NTag } from 'naive-ui';
+import { h, onMounted, reactive, ref, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { NButton, NDataTable, NPopconfirm, NSpace, NTag } from 'naive-ui';
 import type { DataTableColumns, FormInst, FormRules } from 'naive-ui';
+import {
+  formatTime,
+  healthStatusText,
+  healthSummary,
+  healthTagType,
+  statusTagType,
+  statusText
+} from '@/utils/admin-status';
 import {
   fetchCreateModelService,
   fetchDeleteModelService,
@@ -14,7 +22,7 @@ import {
   fetchUpdateModelService,
   fetchUpdateModelServiceStatus
 } from '@/service/api';
-import { formatTime, healthStatusText, healthSummary, healthTagType, statusTagType, statusText } from '@/utils/admin-status';
+import { $t } from '@/locales';
 import CandidateEditor from './modules/candidate-editor.vue';
 import ModelServiceGrantsModal from './modules/model-service-grants-modal.vue';
 
@@ -46,85 +54,240 @@ const activeService = ref<Api.Management.ModelService | null>(null);
 const submitting = ref(false);
 const formRef = ref<FormInst | null>(null);
 const editFormRef = ref<FormInst | null>(null);
-const formModel = reactive({ name: '', route_policy_id: null as string | null, candidates: [] as CandidateForm[] });
-const editModel = reactive({ id: '', name: '', route_policy_id: null as string | null, candidates: [] as CandidateForm[] });
-const formRules: FormRules = { name: { required: true, message: '请填写模型服务名称', trigger: 'blur' } };
+const formModel = reactive({
+  name: '',
+  route_policy_id: null as string | null,
+  candidates: [] as CandidateForm[]
+});
+const editModel = reactive({
+  id: '',
+  name: '',
+  route_policy_id: null as string | null,
+  candidates: [] as CandidateForm[]
+});
+const formRules = computed<FormRules>(() => ({
+  name: {
+    required: true,
+    message: $t('business.enter-a-model-service-name'),
+    trigger: 'blur'
+  }
+}));
 
 function accountLabel(accountId: string | null) {
   return accountOptions.value.find(item => item.value === accountId)?.label ?? '-';
 }
 
-const candidateColumns: DataTableColumns<Api.Management.ModelCandidate> = [
-  { title: '上游模型', key: 'upstream_model', minWidth: 160 },
-  { title: '供应商账号', key: 'provider_account_id', minWidth: 180, render: row => accountLabel(row.provider_account_id) },
-  { title: '优先级', key: 'priority', width: 80 },
-  { title: '权重', key: 'weight', width: 70 },
-  { title: '输入价格/百万', key: 'input_cost_per_million', width: 150, render: row => `${row.input_cost_per_million} ${row.cost_currency}` },
-  { title: '输出价格/百万', key: 'output_cost_per_million', width: 150, render: row => `${row.output_cost_per_million} ${row.cost_currency}` },
-  { title: '质量分', key: 'quality_score', width: 80 },
-  { title: '状态', key: 'status', width: 100, render: row => h(NTag, { type: statusTagType(row.status), size: 'small', round: true }, { default: () => statusText(row.status, 'candidate') }) },
+const candidateColumns = computed<DataTableColumns<Api.Management.ModelCandidate>>(() => [
   {
-    title: '操作', key: 'actions', width: 80,
-    render: row => h(NButton, {
-      size: 'small', quaternary: true, type: row.status === 'active' ? 'warning' : 'success',
-      onClick: () => toggleCandidateStatus(row)
-    }, { default: () => row.status === 'active' ? '停用' : '启用' })
+    title: $t('business.upstream-model'),
+    key: 'upstream_model',
+    minWidth: 160
+  },
+  {
+    title: $t('business.provider-account'),
+    key: 'provider_account_id',
+    minWidth: 180,
+    render: row => accountLabel(row.provider_account_id)
+  },
+  { title: $t('business.priority'), key: 'priority', width: 80 },
+  { title: $t('business.weight'), key: 'weight', width: 70 },
+  {
+    title: $t('business.input-price-million'),
+    key: 'input_cost_per_million',
+    width: 150,
+    render: row => `${row.input_cost_per_million} ${row.cost_currency}`
+  },
+  {
+    title: $t('business.output-price-million'),
+    key: 'output_cost_per_million',
+    width: 150,
+    render: row => `${row.output_cost_per_million} ${row.cost_currency}`
+  },
+  { title: $t('business.quality-score'), key: 'quality_score', width: 80 },
+  {
+    title: $t('business.status'),
+    key: 'status',
+    width: 100,
+    render: row =>
+      h(
+        NTag,
+        { type: statusTagType(row.status), size: 'small', round: true },
+        { default: () => statusText(row.status, 'candidate') }
+      )
+  },
+  {
+    title: $t('business.actions'),
+    key: 'actions',
+    width: 80,
+    render: row =>
+      h(
+        NButton,
+        {
+          size: 'small',
+          quaternary: true,
+          type: row.status === 'active' ? 'warning' : 'success',
+          onClick: () => toggleCandidateStatus(row)
+        },
+        {
+          default: () => (row.status === 'active' ? $t('business.disabled') : $t('business.enable'))
+        }
+      )
   }
-];
+]);
 
-const columns: DataTableColumns<Api.Management.ModelService> = [
+const columns = computed<DataTableColumns<Api.Management.ModelService>>(() => [
   {
     type: 'expand',
     renderExpand(row) {
       return h(NDataTable, {
-        columns: candidateColumns, data: row.candidates, size: 'small', bordered: false,
+        columns: candidateColumns.value,
+        data: row.candidates,
+        size: 'small',
+        bordered: false,
         rowKey: (candidate: Api.Management.ModelCandidate) => candidate.id
       });
     }
   },
-  { title: '名称', key: 'name', width: 180 },
-  { title: '路由策略', key: 'route_policy_id', width: 160, render: row => policyOptions.value.find(item => item.value === row.route_policy_id)?.label ?? '-' },
-  { title: '状态', key: 'status', width: 90, render: row => h(NTag, { type: statusTagType(row.status), size: 'small', round: true }, { default: () => statusText(row.status, 'service') }) },
+  { title: $t('business.name'), key: 'name', width: 180 },
   {
-    title: '健康', key: 'health_status', width: 180,
-    render: row => h('span', { title: healthSummary(row) }, [
-      h(NTag, { type: healthTagType(row.health_status), size: 'small', round: true }, { default: () => healthStatusText(row.health_status) }),
-      h('span', { class: 'ml-6px text-12px text-#6b7280' }, `${row.active_candidates}/${row.candidates.length} 个可用候选`)
-    ])
+    title: $t('business.route-policy'),
+    key: 'route_policy_id',
+    width: 160,
+    render: row => policyOptions.value.find(item => item.value === row.route_policy_id)?.label ?? '-'
   },
-  { title: '候选数', key: 'candidates', width: 90, render: row => String(row.candidates.length) },
-  { title: '创建时间', key: 'created_at', width: 180, render: row => formatTime(row.created_at) },
   {
-    title: '操作', key: 'actions', width: 300,
-    render: row => h(NSpace, { size: 4 }, {
-      default: () => [
-        h(NButton, { size: 'small', quaternary: true, type: 'primary', onClick: () => openEdit(row) }, { default: () => '编辑' }),
-        h(NButton, { size: 'small', quaternary: true, type: 'primary', onClick: () => openGrants(row) }, { default: () => '授权' }),
-        h(NButton, {
-          size: 'small', quaternary: true, type: row.status === 'active' ? 'warning' : 'success',
-          onClick: () => toggleServiceStatus(row)
-        }, { default: () => row.status === 'active' ? '停用' : '启用' }),
-        h(NPopconfirm, { onPositiveClick: () => handleDelete(row.id) }, {
-          trigger: () => h(NButton, { size: 'small', type: 'error', quaternary: true }, { default: () => '删除' }),
-          default: () => '存在用量记录时将无法删除，候选会一并删除，确认删除？'
-        })
-      ]
-    })
+    title: $t('business.status'),
+    key: 'status',
+    width: 90,
+    render: row =>
+      h(
+        NTag,
+        { type: statusTagType(row.status), size: 'small', round: true },
+        { default: () => statusText(row.status, 'service') }
+      )
+  },
+  {
+    title: $t('business.healthy'),
+    key: 'health_status',
+    width: 180,
+    render: row =>
+      h('span', { title: healthSummary(row) }, [
+        h(
+          NTag,
+          {
+            type: healthTagType(row.health_status),
+            size: 'small',
+            round: true
+          },
+          { default: () => healthStatusText(row.health_status) }
+        ),
+        h(
+          'span',
+          { class: 'ml-6px text-12px text-#6b7280' },
+          $t('business.availableCandidateCount', {
+            active: row.active_candidates,
+            total: row.candidates.length
+          })
+        )
+      ])
+  },
+  {
+    title: $t('business.candidates'),
+    key: 'candidates',
+    width: 90,
+    render: row => String(row.candidates.length)
+  },
+  {
+    title: $t('business.created-at'),
+    key: 'created_at',
+    width: 180,
+    render: row => formatTime(row.created_at)
+  },
+  {
+    title: $t('business.actions'),
+    key: 'actions',
+    width: 300,
+    render: row =>
+      h(
+        NSpace,
+        { size: 4 },
+        {
+          default: () => [
+            h(
+              NButton,
+              {
+                size: 'small',
+                quaternary: true,
+                type: 'primary',
+                onClick: () => openEdit(row)
+              },
+              { default: () => $t('business.edit') }
+            ),
+            h(
+              NButton,
+              {
+                size: 'small',
+                quaternary: true,
+                type: 'primary',
+                onClick: () => openGrants(row)
+              },
+              { default: () => $t('business.grants') }
+            ),
+            h(
+              NButton,
+              {
+                size: 'small',
+                quaternary: true,
+                type: row.status === 'active' ? 'warning' : 'success',
+                onClick: () => toggleServiceStatus(row)
+              },
+              {
+                default: () => (row.status === 'active' ? $t('business.disabled') : $t('business.enable'))
+              }
+            ),
+            h(
+              NPopconfirm,
+              { onPositiveClick: () => handleDelete(row.id) },
+              {
+                trigger: () =>
+                  h(
+                    NButton,
+                    { size: 'small', type: 'error', quaternary: true },
+                    { default: () => $t('business.delete') }
+                  ),
+                default: () => $t('business.deletion-is-blocked-when-usage')
+              }
+            )
+          ]
+        }
+      )
   }
-];
+]);
 
 async function loadData() {
   loading.value = true;
   try {
-    const [servicesRes, accountsRes, policiesRes] = await Promise.all([fetchModelServices(), fetchProviderAccounts(), fetchRoutePolicies()]);
+    const [servicesRes, accountsRes, policiesRes] = await Promise.all([
+      fetchModelServices(),
+      fetchProviderAccounts(),
+      fetchRoutePolicies()
+    ]);
     if (!servicesRes.error && servicesRes.data) list.value = servicesRes.data;
     if (!accountsRes.error && accountsRes.data) {
       accountOptions.value = accountsRes.data
         .slice()
         .sort((a, b) => (a.status === 'active' ? 0 : 1) - (b.status === 'active' ? 0 : 1))
-        .map(item => ({ label: `${item.name}${item.status === 'disabled' ? '（已停用）' : ''}`, value: item.id, currency: item.billing_currency }));
+        .map(item => ({
+          label: `${item.name}${item.status === 'disabled' ? $t('business.disabled-excglv') : ''}`,
+          value: item.id,
+          currency: item.billing_currency
+        }));
     }
-    if (!policiesRes.error && policiesRes.data) policyOptions.value = policiesRes.data.map(item => ({ label: item.name, value: item.id }));
+    if (!policiesRes.error && policiesRes.data)
+      policyOptions.value = policiesRes.data.map(item => ({
+        label: item.name,
+        value: item.id
+      }));
   } finally {
     loading.value = false;
   }
@@ -133,9 +296,14 @@ async function loadData() {
 function makeCandidate(): CandidateForm {
   return {
     provider_account_id: accountOptions.value[0]?.value ?? null,
-    upstream_model: '', priority: 100, weight: 1,
-    input_cost_per_million: 0, output_cost_per_million: 0, quality_score: 0.5,
-    cost_currency: accountOptions.value[0]?.currency ?? 'USD', status: 'active'
+    upstream_model: '',
+    priority: 100,
+    weight: 1,
+    input_cost_per_million: 0,
+    output_cost_per_million: 0,
+    quality_score: 0.5,
+    cost_currency: accountOptions.value[0]?.currency ?? 'USD',
+    status: 'active'
   };
 }
 
@@ -149,11 +317,14 @@ function openCreate() {
 async function openDiscoveredModels() {
   const accountID = typeof route.query.account === 'string' ? route.query.account : '';
   const modelIDs = (typeof route.query.models === 'string' ? route.query.models : '')
-    .split(',').filter(Boolean).slice(0, 50);
+    .split(',')
+    .filter(Boolean)
+    .slice(0, 50);
   if (!accountID || !modelIDs.length) return;
   const { data } = await fetchProviderModels(accountID);
   const discovered = new Map((data?.models ?? []).map(item => [item.id, item]));
-  formModel.name = modelIDs.length === 1 ? modelIDs[0] : `${accountLabel(accountID)} 服务`;
+  formModel.name =
+    modelIDs.length === 1 ? modelIDs[0] : $t('business.accountService', { account: accountLabel(accountID) });
   formModel.route_policy_id = null;
   formModel.candidates = modelIDs.map(id => {
     const model = discovered.get(id);
@@ -162,8 +333,14 @@ async function openDiscoveredModels() {
       upstream_model: id,
       priority: 100,
       weight: 1,
-      input_cost_per_million: (accountOptions.value.find(item => item.value === accountID)?.currency ?? 'USD') === 'USD' ? model?.input_cost_per_million ?? 0 : 0,
-      output_cost_per_million: (accountOptions.value.find(item => item.value === accountID)?.currency ?? 'USD') === 'USD' ? model?.output_cost_per_million ?? 0 : 0,
+      input_cost_per_million:
+        (accountOptions.value.find(item => item.value === accountID)?.currency ?? 'USD') === 'USD'
+          ? (model?.input_cost_per_million ?? 0)
+          : 0,
+      output_cost_per_million:
+        (accountOptions.value.find(item => item.value === accountID)?.currency ?? 'USD') === 'USD'
+          ? (model?.output_cost_per_million ?? 0)
+          : 0,
       quality_score: 0.5,
       cost_currency: accountOptions.value.find(item => item.value === accountID)?.currency ?? 'USD',
       status: 'active'
@@ -193,11 +370,11 @@ function openEdit(row: Api.Management.ModelService) {
 
 function validateCandidates(candidates: CandidateForm[]) {
   if (!candidates.length) {
-    window.$message?.error('至少需要一个模型候选');
+    window.$message?.error($t('business.at-least-one-model-candidate'));
     return false;
   }
   if (candidates.some(item => !item.provider_account_id || !item.upstream_model.trim())) {
-    window.$message?.error('每个候选都需要选择供应商账号和上游模型');
+    window.$message?.error($t('business.every-candidate-needs-a-provider'));
     return false;
   }
   return true;
@@ -223,11 +400,12 @@ async function handleCreate() {
   submitting.value = true;
   try {
     const { error } = await fetchCreateModelService({
-      name: formModel.name.trim(), route_policy_id: formModel.route_policy_id,
+      name: formModel.name.trim(),
+      route_policy_id: formModel.route_policy_id,
       candidates: toCandidateParams(formModel.candidates)
     });
     if (!error) {
-      window.$message?.success('模型服务已创建');
+      window.$message?.success($t('business.model-service-created'));
       showCreate.value = false;
       await loadData();
     }
@@ -242,11 +420,12 @@ async function handleUpdate() {
   submitting.value = true;
   try {
     const { error } = await fetchUpdateModelService(editModel.id, {
-      name: editModel.name.trim(), route_policy_id: editModel.route_policy_id,
+      name: editModel.name.trim(),
+      route_policy_id: editModel.route_policy_id,
       candidates: toCandidateParams(editModel.candidates)
     });
     if (!error) {
-      window.$message?.success('模型服务已更新');
+      window.$message?.success($t('business.model-service-updated'));
       showEdit.value = false;
       await loadData();
     }
@@ -264,7 +443,9 @@ async function toggleServiceStatus(row: Api.Management.ModelService) {
   const status = row.status === 'active' ? 'disabled' : 'active';
   const { error } = await fetchUpdateModelServiceStatus(row.id, status);
   if (!error) {
-    window.$message?.success(status === 'active' ? '模型服务已启用' : '模型服务已停用');
+    window.$message?.success(
+      status === 'active' ? $t('business.model-service-enabled') : $t('business.model-service-disabled')
+    );
     await loadData();
   }
 }
@@ -273,7 +454,9 @@ async function toggleCandidateStatus(row: Api.Management.ModelCandidate) {
   const status = row.status === 'active' ? 'disabled' : 'active';
   const { error } = await fetchUpdateModelCandidateStatus(row.id, status);
   if (!error) {
-    window.$message?.success(status === 'active' ? '候选模型已启用' : '候选模型已停用');
+    window.$message?.success(
+      status === 'active' ? $t('business.candidate-model-enabled') : $t('business.candidate-model-disabled')
+    );
     await loadData();
   }
 }
@@ -281,7 +464,7 @@ async function toggleCandidateStatus(row: Api.Management.ModelCandidate) {
 async function handleDelete(id: string) {
   const { error } = await fetchDeleteModelService(id);
   if (!error) {
-    window.$message?.success('模型服务已删除');
+    window.$message?.success($t('business.model-service-deleted'));
     await loadData();
   }
 }
@@ -294,35 +477,72 @@ onMounted(async () => {
 
 <template>
   <div class="min-h-full bg-#f6f7f9 p-4px dark:bg-#101014">
-    <NCard title="模型服务" :bordered="false" class="card-wrapper">
+    <NCard :title="$t('business.model-service')" :bordered="false" class="card-wrapper">
       <template #header-extra>
         <NSpace>
-          <NButton quaternary type="primary" :loading="loading" @click="loadData">刷新</NButton>
-          <NButton type="primary" :disabled="accountOptions.length === 0" @click="openCreate">{{ accountOptions.length === 0 ? '请先创建供应商账号' : '新建模型服务' }}</NButton>
+          <NButton quaternary type="primary" :loading="loading" @click="loadData">{{ $t('business.refresh') }}</NButton>
+          <NButton type="primary" :disabled="accountOptions.length === 0" @click="openCreate">
+            {{ accountOptions.length === 0 ? $t('business.createProviderFirst') : $t('business.create-model-service') }}
+          </NButton>
         </NSpace>
       </template>
-      <NDataTable :columns="columns" :data="list" :loading="loading" :bordered="false" :scroll-x="1100" :row-key="row => row.id" />
+      <NDataTable
+        :columns="columns"
+        :data="list"
+        :loading="loading"
+        :bordered="false"
+        :scroll-x="1100"
+        :row-key="row => row.id"
+      />
     </NCard>
 
-    <NModal v-model:show="showCreate" preset="card" title="新建模型服务" class="w-1200px">
+    <NModal v-model:show="showCreate" preset="card" :title="$t('business.create-model-service')" class="w-1200px">
       <NForm ref="formRef" :model="formModel" :rules="formRules" label-placement="left" label-width="100">
-        <NFormItem label="服务名称" path="name"><NInput v-model:value="formModel.name" placeholder="业务调用的逻辑模型名称" /></NFormItem>
-        <NFormItem label="路由策略"><NSelect v-model:value="formModel.route_policy_id" :options="policyOptions" clearable placeholder="可选，不选则使用默认超时配置" /></NFormItem>
-        <NDivider title-placement="left">候选模型</NDivider>
+        <NFormItem :label="$t('business.service-name')" path="name">
+          <NInput v-model:value="formModel.name" :placeholder="$t('business.logical-model-name-used-by')" />
+        </NFormItem>
+        <NFormItem :label="$t('business.route-policy')">
+          <NSelect
+            v-model:value="formModel.route_policy_id"
+            :options="policyOptions"
+            clearable
+            :placeholder="$t('business.optional-leave-unselected-to-use')"
+          />
+        </NFormItem>
+        <NDivider title-placement="left">{{ $t('business.candidate-models') }}</NDivider>
         <CandidateEditor v-model:candidates="formModel.candidates" :account-options="accountOptions" />
       </NForm>
-      <template #footer><NSpace justify="end"><NButton @click="showCreate = false">取消</NButton><NButton type="primary" :loading="submitting" @click="handleCreate">创建</NButton></NSpace></template>
+      <template #footer>
+        <NSpace justify="end">
+          <NButton @click="showCreate = false">{{ $t('business.cancel') }}</NButton>
+          <NButton type="primary" :loading="submitting" @click="handleCreate">{{ $t('business.create') }}</NButton>
+        </NSpace>
+      </template>
     </NModal>
 
     <ModelServiceGrantsModal v-model:show="grantsVisible" :service="activeService" />
-    <NModal v-model:show="showEdit" preset="card" title="编辑模型服务" class="w-1200px">
+    <NModal v-model:show="showEdit" preset="card" :title="$t('business.edit-model-service')" class="w-1200px">
       <NForm ref="editFormRef" :model="editModel" :rules="formRules" label-placement="left" label-width="100">
-        <NFormItem label="服务名称" path="name"><NInput v-model:value="editModel.name" /></NFormItem>
-        <NFormItem label="路由策略"><NSelect v-model:value="editModel.route_policy_id" :options="policyOptions" clearable placeholder="可选，不选则使用默认超时配置" /></NFormItem>
-        <NDivider title-placement="left">候选模型（保存后全量替换）</NDivider>
+        <NFormItem :label="$t('business.service-name')" path="name">
+          <NInput v-model:value="editModel.name" />
+        </NFormItem>
+        <NFormItem :label="$t('business.route-policy')">
+          <NSelect
+            v-model:value="editModel.route_policy_id"
+            :options="policyOptions"
+            clearable
+            :placeholder="$t('business.optional-leave-unselected-to-use')"
+          />
+        </NFormItem>
+        <NDivider title-placement="left">{{ $t('business.candidate-models-all-replaced-after') }}</NDivider>
         <CandidateEditor v-model:candidates="editModel.candidates" :account-options="accountOptions" />
       </NForm>
-      <template #footer><NSpace justify="end"><NButton @click="showEdit = false">取消</NButton><NButton type="primary" :loading="submitting" @click="handleUpdate">保存</NButton></NSpace></template>
+      <template #footer>
+        <NSpace justify="end">
+          <NButton @click="showEdit = false">{{ $t('business.cancel') }}</NButton>
+          <NButton type="primary" :loading="submitting" @click="handleUpdate">{{ $t('business.save') }}</NButton>
+        </NSpace>
+      </template>
     </NModal>
   </div>
 </template>

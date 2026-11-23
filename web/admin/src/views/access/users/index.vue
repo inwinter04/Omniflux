@@ -2,34 +2,35 @@
 import { computed, h, onMounted, reactive, ref } from 'vue';
 import { NButton, NModal, NPopconfirm, NSpace, NTag } from 'naive-ui';
 import type { DataTableColumns, FormInst, FormRules } from 'naive-ui';
-import { fetchCreateUser, fetchOrganizations, fetchUpdateUser, fetchUsers } from '@/service/api';
-import { useAuthStore } from '@/store/modules/auth';
 import { formatTime, statusTagType, statusText } from '@/utils/admin-status';
+import { fetchCreateUser, fetchOrganizations, fetchUpdateUser, fetchUsers } from '@/service/api';
+import { $t } from '@/locales';
+import { useAuthStore } from '@/store/modules/auth';
 
 defineOptions({
   name: 'AccessUsers'
 });
 
-const roleText: Record<string, string> = {
-  platform_admin: '平台管理员',
-  org_owner: '组织所有者',
-  org_admin: '组织管理员',
-  project_admin: '项目管理员',
-  developer: '开发者',
-  viewer: '查看者'
-};
+const roleText = computed<Record<string, string>>(() => ({
+  platform_admin: $t('business.platform-admin'),
+  org_owner: $t('business.organization-owner'),
+  org_admin: $t('business.organization-admin'),
+  project_admin: $t('business.project-admin'),
+  developer: $t('business.developer'),
+  viewer: $t('business.viewer')
+}));
 
 const authStore = useAuthStore();
 const isPlatformAdmin = computed(() => authStore.userInfo.roles.includes('platform_admin'));
 const orgOptions = ref<{ label: string; value: string }[]>([]);
 const filterOrgId = ref<string | null>(null);
 
-const roleOptions = [
-  { label: '组织管理员', value: 'org_admin' },
-  { label: '项目管理员', value: 'project_admin' },
-  { label: '开发者', value: 'developer' },
-  { label: '查看者', value: 'viewer' }
-];
+const roleOptions = computed(() => [
+  { label: $t('business.organization-admin'), value: 'org_admin' },
+  { label: $t('business.project-admin'), value: 'project_admin' },
+  { label: $t('business.developer'), value: 'developer' },
+  { label: $t('business.viewer'), value: 'viewer' }
+]);
 
 const loading = ref(true);
 const list = ref<Api.Management.User[]>([]);
@@ -62,45 +63,93 @@ const editModel = reactive({
   password: ''
 });
 
-const formRules: FormRules = {
-  email: { required: true, message: '请填写邮箱', trigger: 'blur' },
-  password: { required: true, message: '请填写密码', trigger: 'blur' },
-  role: { required: true, message: '请选择角色', trigger: 'change' }
-};
-const editRules: FormRules = {
-  password: { required: true, message: '请填写新密码', trigger: 'blur' }
-};
+const formRules = computed<FormRules>(() => ({
+  email: {
+    required: true,
+    message: $t('business.enter-an-email-address'),
+    trigger: 'blur'
+  },
+  password: {
+    required: true,
+    message: $t('business.enter-a-password'),
+    trigger: 'blur'
+  },
+  role: {
+    required: true,
+    message: $t('business.select-a-role'),
+    trigger: 'change'
+  }
+}));
+const editRules = computed<FormRules>(() => ({
+  password: {
+    required: true,
+    message: $t('business.enter-a-new-password'),
+    trigger: 'blur'
+  }
+}));
 
-const columns: DataTableColumns<Api.Management.User> = [
-  { title: '邮箱', key: 'email', width: 220 },
+const columns = computed<DataTableColumns<Api.Management.User>>(() => [
+  { title: $t('business.email'), key: 'email', width: 220 },
   {
-    title: '角色',
+    title: $t('business.role'),
     key: 'role',
     width: 120,
-    render: row => roleText[row.role] ?? row.role
+    render: row => roleText.value[row.role] ?? row.role
   },
   {
-    title: '状态',
+    title: $t('business.status'),
     key: 'status',
     width: 100,
     render(row) {
-      return h(NTag, { type: statusTagType(row.status), size: 'small', round: true }, { default: () => statusText(row.status) });
+      return h(
+        NTag,
+        { type: statusTagType(row.status), size: 'small', round: true },
+        { default: () => statusText(row.status) }
+      );
     }
   },
-  { title: '最近登录', key: 'last_login_at', width: 180, render: row => formatTime(row.last_login_at) },
-  { title: '创建时间', key: 'created_at', width: 180, render: row => formatTime(row.created_at) },
   {
-    title: '操作',
+    title: $t('business.last-login'),
+    key: 'last_login_at',
+    width: 180,
+    render: row => formatTime(row.last_login_at)
+  },
+  {
+    title: $t('business.created-at'),
+    key: 'created_at',
+    width: 180,
+    render: row => formatTime(row.created_at)
+  },
+  {
+    title: $t('business.actions'),
     key: 'actions',
     width: 150,
     render(row) {
       if (row.role === 'org_owner' && !isPlatformAdmin.value) return '-';
       const actions = [
-        h(NButton, { size: 'small', quaternary: true, type: 'primary', onClick: () => openEdit(row) }, { default: () => '编辑' })
+        h(
+          NButton,
+          {
+            size: 'small',
+            quaternary: true,
+            type: 'primary',
+            onClick: () => openEdit(row)
+          },
+          { default: () => $t('business.edit') }
+        )
       ];
       if (isPlatformAdmin.value) {
         actions.push(
-          h(NButton, { size: 'small', quaternary: true, type: 'warning', onClick: () => openMove(row) }, { default: () => '移动组织' })
+          h(
+            NButton,
+            {
+              size: 'small',
+              quaternary: true,
+              type: 'warning',
+              onClick: () => openMove(row)
+            },
+            { default: () => $t('business.move-organization') }
+          )
         );
       }
       if (row.status === 'active') {
@@ -109,22 +158,40 @@ const columns: DataTableColumns<Api.Management.User> = [
             NPopconfirm,
             { onPositiveClick: () => handleToggleStatus(row, 'disabled') },
             {
-              trigger: () => h(NButton, { size: 'small', type: 'warning', quaternary: true }, { default: () => '禁用' }),
-              default: () => '禁用后该用户所有会话立即失效,确认禁用?'
+              trigger: () =>
+                h(
+                  NButton,
+                  { size: 'small', type: 'warning', quaternary: true },
+                  { default: () => $t('business.disable') }
+                ),
+              default: () => $t('business.all-sessions-of-this-user')
             }
           )
         );
       } else {
         actions.push(
-          h(NButton, { size: 'small', type: 'primary', quaternary: true, onClick: () => handleToggleStatus(row, 'active') }, { default: () => '启用' })
+          h(
+            NButton,
+            {
+              size: 'small',
+              type: 'primary',
+              quaternary: true,
+              onClick: () => handleToggleStatus(row, 'active')
+            },
+            { default: () => $t('business.enable') }
+          )
         );
       }
-      return h(NSpace, { size: 4 }, {
-        default: () => actions
-      });
+      return h(
+        NSpace,
+        { size: 4 },
+        {
+          default: () => actions
+        }
+      );
     }
   }
-];
+]);
 
 async function loadData() {
   loading.value = true;
@@ -142,7 +209,10 @@ async function loadOrganizations() {
   if (!isPlatformAdmin.value) return;
   const { data, error } = await fetchOrganizations();
   if (!error && data) {
-    orgOptions.value = data.map(item => ({ label: `${item.name} (${item.slug})`, value: item.id }));
+    orgOptions.value = data.map(item => ({
+      label: `${item.name} (${item.slug})`,
+      value: item.id
+    }));
   }
 }
 
@@ -169,9 +239,11 @@ async function handleMove() {
   await moveFormRef.value?.validate();
   submittingMove.value = true;
   try {
-    const { error } = await fetchUpdateUser(moveModel.id, { organization_id: moveModel.organization_id! });
+    const { error } = await fetchUpdateUser(moveModel.id, {
+      organization_id: moveModel.organization_id!
+    });
     if (!error) {
-      window.$message?.success('用户归属组织已更新');
+      window.$message?.success($t('business.user-organization-updated'));
       showMove.value = false;
       await loadData();
     }
@@ -200,7 +272,7 @@ async function handleCreate() {
       organization_id: formModel.organization_id ?? undefined
     });
     if (!error) {
-      window.$message?.success('用户已创建');
+      window.$message?.success($t('business.user-created'));
       showCreate.value = false;
       await loadData();
     }
@@ -213,9 +285,11 @@ async function handleUpdate() {
   await editFormRef.value?.validate();
   submitting.value = true;
   try {
-    const { error } = await fetchUpdateUser(editModel.id, { password: editModel.password });
+    const { error } = await fetchUpdateUser(editModel.id, {
+      password: editModel.password
+    });
     if (!error) {
-      window.$message?.success('密码已重置');
+      window.$message?.success($t('business.password-reset'));
       showEdit.value = false;
       await loadData();
     }
@@ -227,7 +301,7 @@ async function handleUpdate() {
 async function handleToggleStatus(row: Api.Management.User, status: 'active' | 'disabled') {
   const { error } = await fetchUpdateUser(row.id, { status });
   if (!error) {
-    window.$message?.success(status === 'active' ? '用户已启用' : '用户已禁用');
+    window.$message?.success(status === 'active' ? $t('business.user-enabled') : $t('business.user-disabled'));
     await loadData();
   }
 }
@@ -240,7 +314,7 @@ onMounted(() => {
 
 <template>
   <div class="min-h-full bg-#f6f7f9 p-4px dark:bg-#101014">
-    <NCard title="用户" :bordered="false" class="card-wrapper">
+    <NCard :title="$t('business.user')" :bordered="false" class="card-wrapper">
       <template #header-extra>
         <NSpace>
           <NSelect
@@ -248,72 +322,93 @@ onMounted(() => {
             v-model:value="filterOrgId"
             :options="orgOptions"
             clearable
-            placeholder="按组织筛选"
+            :placeholder="$t('business.filter-by-organization')"
             class="w-220px"
             @update:value="handleFilterOrg"
           />
-          <NButton quaternary type="primary" :loading="loading" @click="loadData">刷新</NButton>
-          <NButton type="primary" @click="openCreate">新建用户</NButton>
+          <NButton quaternary type="primary" :loading="loading" @click="loadData">{{ $t('business.refresh') }}</NButton>
+          <NButton type="primary" @click="openCreate">{{ $t('business.create-user') }}</NButton>
         </NSpace>
       </template>
       <NDataTable :columns="columns" :data="list" :loading="loading" :bordered="false" :scroll-x="1000" />
     </NCard>
 
-    <NModal v-model:show="showCreate" preset="card" title="新建用户" class="w-520px">
+    <NModal v-model:show="showCreate" preset="card" :title="$t('business.create-user')" class="w-520px">
       <NForm ref="formRef" :model="formModel" :rules="formRules" label-placement="left" label-width="100">
-        <NFormItem label="邮箱" path="email">
+        <NFormItem :label="$t('business.email')" path="email">
           <NInput v-model:value="formModel.email" placeholder="user@example.com" />
         </NFormItem>
-        <NFormItem label="初始密码" path="password">
-          <NInput v-model:value="formModel.password" type="password" show-password-on="click" placeholder="至少 16 个字符" />
+        <NFormItem :label="$t('business.initial-password')" path="password">
+          <NInput
+            v-model:value="formModel.password"
+            type="password"
+            show-password-on="click"
+            :placeholder="$t('business.at-least-16-characters')"
+          />
         </NFormItem>
-        <NFormItem label="角色" path="role">
+        <NFormItem :label="$t('business.role')" path="role">
           <NSelect v-model:value="formModel.role" :options="roleOptions" />
         </NFormItem>
-        <NFormItem v-if="isPlatformAdmin" label="归属组织" path="organization_id">
-          <NSelect v-model:value="formModel.organization_id" :options="orgOptions" clearable placeholder="默认当前组织" />
+        <NFormItem v-if="isPlatformAdmin" :label="$t('business.owning-organization')" path="organization_id">
+          <NSelect
+            v-model:value="formModel.organization_id"
+            :options="orgOptions"
+            clearable
+            :placeholder="$t('business.current-organization-by-default')"
+          />
         </NFormItem>
       </NForm>
       <template #footer>
         <NSpace justify="end">
-          <NButton @click="showCreate = false">取消</NButton>
-          <NButton type="primary" :loading="submitting" @click="handleCreate">创建</NButton>
+          <NButton @click="showCreate = false">{{ $t('business.cancel') }}</NButton>
+          <NButton type="primary" :loading="submitting" @click="handleCreate">{{ $t('business.create') }}</NButton>
         </NSpace>
       </template>
     </NModal>
 
-    <NModal v-model:show="showEdit" preset="card" title="重置密码" class="w-520px">
+    <NModal v-model:show="showEdit" preset="card" :title="$t('business.reset-password')" class="w-520px">
       <NForm ref="editFormRef" :model="editModel" :rules="editRules" label-placement="left" label-width="100">
-        <NFormItem label="邮箱">
+        <NFormItem :label="$t('business.email')">
           <NInput :value="editModel.email" disabled />
         </NFormItem>
-        <NFormItem label="新密码" path="password">
-          <NInput v-model:value="editModel.password" type="password" show-password-on="click" placeholder="至少 16 个字符" />
+        <NFormItem :label="$t('business.new-password')" path="password">
+          <NInput
+            v-model:value="editModel.password"
+            type="password"
+            show-password-on="click"
+            :placeholder="$t('business.at-least-16-characters')"
+          />
         </NFormItem>
-        <NAlert type="info" :bordered="false">角色与状态调整请使用列表中的操作按钮。</NAlert>
+        <NAlert type="info" :bordered="false">{{ $t('business.use-the-action-buttons-in') }}</NAlert>
       </NForm>
       <template #footer>
         <NSpace justify="end">
-          <NButton @click="showEdit = false">取消</NButton>
-          <NButton type="primary" :loading="submitting" @click="handleUpdate">重置密码</NButton>
+          <NButton @click="showEdit = false">{{ $t('business.cancel') }}</NButton>
+          <NButton type="primary" :loading="submitting" @click="handleUpdate">
+            {{ $t('business.reset-password') }}
+          </NButton>
         </NSpace>
       </template>
     </NModal>
 
-    <NModal v-model:show="showMove" preset="card" title="移动组织" class="w-440px">
+    <NModal v-model:show="showMove" preset="card" :title="$t('business.move-organization')" class="w-440px">
       <NForm ref="moveFormRef" :model="moveModel" label-placement="left" label-width="100">
-        <NFormItem label="邮箱">
+        <NFormItem :label="$t('business.email')">
           <NInput :value="moveModel.email" disabled />
         </NFormItem>
-        <NFormItem label="目标组织" path="organization_id">
-          <NSelect v-model:value="moveModel.organization_id" :options="orgOptions" placeholder="选择用户归属组织" />
+        <NFormItem :label="$t('business.target-organization')" path="organization_id">
+          <NSelect
+            v-model:value="moveModel.organization_id"
+            :options="orgOptions"
+            :placeholder="$t('business.select-the-user-s-owning')"
+          />
         </NFormItem>
-        <NAlert type="info" :bordered="false">移动后该用户的会话仍然有效,下一次请求即按新组织鉴权。</NAlert>
+        <NAlert type="info" :bordered="false">{{ $t('business.after-the-move-the-user') }}</NAlert>
       </NForm>
       <template #footer>
         <NSpace justify="end">
-          <NButton @click="showMove = false">取消</NButton>
-          <NButton type="primary" :loading="submittingMove" @click="handleMove">移动</NButton>
+          <NButton @click="showMove = false">{{ $t('business.cancel') }}</NButton>
+          <NButton type="primary" :loading="submittingMove" @click="handleMove">{{ $t('business.move') }}</NButton>
         </NSpace>
       </template>
     </NModal>
@@ -321,4 +416,3 @@ onMounted(() => {
 </template>
 
 <style scoped></style>
-

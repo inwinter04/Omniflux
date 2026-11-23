@@ -556,6 +556,7 @@ declare namespace App {
           creativity: string;
         };
       };
+      business: Record<string, string>;
       form: {
         required: string;
         userName: FormMsg;

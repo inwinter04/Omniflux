@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { formatCurrency } from '@/utils/currency';
+import { $t } from '@/locales';
 import MarkdownPreview from './markdown-preview.vue';
 
 const props = defineProps<{
@@ -8,10 +9,14 @@ const props = defineProps<{
 
 function statusText(status: string) {
   switch (status) {
-    case 'success': return '成功';
-    case 'failed': return '失败';
-    case 'interrupted': return '已中断';
-    default: return '运行中';
+    case 'success':
+      return $t('business.success');
+    case 'failed':
+      return $t('business.failed');
+    case 'interrupted':
+      return $t('business.interrupted');
+    default:
+      return $t('business.running');
   }
 }
 
@@ -28,22 +33,24 @@ function statusType(status: string): 'success' | 'error' | 'warning' | 'info' {
     <template #header-extra>
       <NSpace>
         <NTag v-if="props.run.schema_valid !== null" size="small" :type="props.run.schema_valid ? 'success' : 'error'">
-          {{ props.run.schema_valid ? '结构校验通过' : '结构校验失败' }}
+          {{ props.run.schema_valid ? $t('business.schemaValidationPassed') : $t('business.schemaValidationFailed') }}
         </NTag>
         <NTag size="small" :type="statusType(props.run.status)">{{ statusText(props.run.status) }}</NTag>
       </NSpace>
     </template>
     <NSpace size="large" class="mb-12px">
-      <NText depth="2">输入 {{ props.run.input_tokens }} 令牌</NText>
-      <NText depth="2">输出 {{ props.run.output_tokens }} 令牌</NText>
-      <NText depth="2">成本 {{ formatCurrency(props.run.cost, props.run.cost_currency) }}</NText>
-      <NText v-if="props.run.first_token_ms !== null" depth="2">首 令牌 {{ props.run.first_token_ms }} ms</NText>
-      <NText depth="2">总耗时 {{ props.run.total_ms }} ms</NText>
+      <NText depth="2">{{ $t('business.input') }} {{ props.run.input_tokens }} {{ $t('business.tokens') }}</NText>
+      <NText depth="2">{{ $t('business.output') }} {{ props.run.output_tokens }} {{ $t('business.tokens') }}</NText>
+      <NText depth="2">{{ $t('business.cost') }} {{ formatCurrency(props.run.cost, props.run.cost_currency) }}</NText>
+      <NText v-if="props.run.first_token_ms !== null" depth="2">
+        {{ $t('business.prompt-tokens') }} {{ props.run.first_token_ms }} ms
+      </NText>
+      <NText depth="2">{{ $t('business.total-latency') }} {{ props.run.total_ms }} ms</NText>
     </NSpace>
     <NAlert v-if="props.run.error" type="error" :bordered="false" class="mb-12px">{{ props.run.error }}</NAlert>
     <MarkdownPreview v-if="props.run.response" :source="props.run.response" />
     <NCollapse class="mt-12px">
-      <NCollapseItem title="查看实际输入" name="prompt">
+      <NCollapseItem :title="$t('business.view-actual-input')" name="prompt">
         <NInput :value="props.run.rendered_prompt" type="textarea" readonly :rows="5" />
       </NCollapseItem>
     </NCollapse>

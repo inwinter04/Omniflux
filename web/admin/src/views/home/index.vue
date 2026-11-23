@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
-import { useRouterPush } from '@/hooks/common/router';
-import { fetchDashboard } from '@/service/api';
-import { useAuthStore } from '@/store/modules/auth';
+import { onMounted, ref, computed } from 'vue';
 import { formatCurrency } from '@/utils/currency';
+import { fetchDashboard } from '@/service/api';
+import { $t } from '@/locales';
+import { useAuthStore } from '@/store/modules/auth';
+import { useRouterPush } from '@/hooks/common/router';
 
 defineOptions({
   name: 'Home'
@@ -22,11 +23,27 @@ interface QuickLink {
   route: string;
 }
 
-const quickLinks = ref<QuickLink[]>([
-  { title: '供应商账号', description: '接入上游模型供应商', route: '/model-management/providers' },
-  { title: '模型服务', description: '配置业务调用的逻辑模型', route: '/model-management/model-services' },
-  { title: 'API Key', description: '为业务签发访问凭证', route: '/access/api-keys' },
-  { title: '预算', description: '设置成本控制窗口', route: '/observability/budgets' }
+const quickLinks = computed<QuickLink[]>(() => [
+  {
+    title: $t('business.provider-account'),
+    description: $t('business.connect-upstream-model-providers'),
+    route: '/model-management/providers'
+  },
+  {
+    title: $t('business.model-service'),
+    description: $t('business.configure-logical-models-for-business'),
+    route: '/model-management/model-services'
+  },
+  {
+    title: 'API Key',
+    description: $t('business.issue-access-credentials-for-business'),
+    route: '/access/api-keys'
+  },
+  {
+    title: $t('business.budget'),
+    description: $t('business.set-cost-control-windows'),
+    route: '/observability/budgets'
+  }
 ]);
 
 function go(route: string) {
@@ -57,29 +74,56 @@ async function loadDashboard() {
 
 function statCards() {
   return [
-    { label: '启用模型服务', value: dash.value ? String(dash.value.active_services) : '-', route: '/model-management/model-services' },
-    { label: '供应商账号', value: dash.value ? String(dash.value.active_providers) : '-', route: '/model-management/providers' },
-    { label: '活跃 API Key', value: dash.value ? String(dash.value.active_api_keys) : '-', route: '/access/api-keys' },
-    { label: '组织成员', value: dash.value ? String(dash.value.user_count) : '-', route: '/access/users' }
+    {
+      label: $t('business.enabled-model-services'),
+      value: dash.value ? String(dash.value.active_services) : '-',
+      route: '/model-management/model-services'
+    },
+    {
+      label: $t('business.provider-account'),
+      value: dash.value ? String(dash.value.active_providers) : '-',
+      route: '/model-management/providers'
+    },
+    {
+      label: $t('business.active-api-keys'),
+      value: dash.value ? String(dash.value.active_api_keys) : '-',
+      route: '/access/api-keys'
+    },
+    {
+      label: $t('business.organization-members'),
+      value: dash.value ? String(dash.value.user_count) : '-',
+      route: '/access/users'
+    }
   ];
 }
 
 function usageCards() {
   return [
-    { label: '近 7 天请求', value: dash.value ? String(dash.value.requests_7d) : '-', route: '/observability/usage' },
-    { label: '近 7 天成功率', value: dash.value ? dash.value.success_rate_7d : '-', route: '/observability/usage' },
     {
-      label: '近 7 天成本',
+      label: $t('business.requests-in-last-7-days'),
+      value: dash.value ? String(dash.value.requests_7d) : '-',
+      route: '/observability/usage'
+    },
+    {
+      label: $t('business.success-rate-in-last-7'),
+      value: dash.value ? dash.value.success_rate_7d : '-',
+      route: '/observability/usage'
+    },
+    {
+      label: $t('business.cost-in-last-7-days'),
       value: dash.value?.costs.length
         ? dash.value.costs.map(item => formatCurrency(item.total, item.currency)).join(' · ')
         : '-',
       route: '/observability/usage'
     },
     {
-      label: '进行中预算',
+      label: $t('business.active-budgets'),
       value: dash.value
         ? dash.value.exceeded_budgets > 0
-          ? `${dash.value.active_budgets} (超限 ${dash.value.exceeded_budgets})`
+          ? $t('business.activeBudgetsWithExceeded', {
+              active: dash.value.active_budgets,
+              exceeded: dash.value.exceeded_budgets
+            })
           : String(dash.value.active_budgets)
         : '-',
       route: '/observability/budgets'
@@ -101,25 +145,37 @@ onMounted(() => {
           <div class="flex-y-center gap-16px">
             <SystemLogo class="size-48px" />
             <div>
-              <h2 class="m-0 text-22px font-semibold">Omniflux 控制台</h2>
-              <p class="m-0 text-14px text-#6b7280">企业 AI 控制平面与共享资产平台</p>
+              <h2 class="m-0 text-22px font-semibold">
+                {{ $t('business.omniflux-console') }}
+              </h2>
+              <p class="m-0 text-14px text-#6b7280">
+                {{ $t('business.enterprise-ai-control-plane-and') }}
+              </p>
             </div>
           </div>
         </NGi>
         <NGi span="24 m:8">
           <div class="flex items-center justify-end gap-12px">
             <NTag :type="ready === 'ready' ? 'success' : ready === 'unavailable' ? 'error' : 'info'" round>
-              {{ ready === 'ready' ? '服务就绪' : ready === 'unavailable' ? '服务异常' : '检查中' }}
+              {{
+                ready === 'ready'
+                  ? $t('business.serviceReady')
+                  : ready === 'unavailable'
+                    ? $t('business.serviceUnavailable')
+                    : $t('business.checking')
+              }}
             </NTag>
-            <NButton quaternary type="primary" @click="checkReadiness">刷新状态</NButton>
+            <NButton quaternary type="primary" @click="checkReadiness">{{ $t('business.refresh-status') }}</NButton>
           </div>
         </NGi>
       </NGrid>
     </NCard>
 
-    <NCard title="资源概览" :bordered="false" class="card-wrapper">
+    <NCard :title="$t('business.resource-overview')" :bordered="false" class="card-wrapper">
       <template #header-extra>
-        <NButton quaternary type="primary" :loading="loading" @click="loadDashboard">刷新</NButton>
+        <NButton quaternary type="primary" :loading="loading" @click="loadDashboard">
+          {{ $t('business.refresh') }}
+        </NButton>
       </template>
       <NGrid responsive="screen" item-responsive :x-gap="16" :y-gap="16">
         <NGi v-for="card in statCards()" :key="card.label" span="24 s:12 m:6">
@@ -131,7 +187,7 @@ onMounted(() => {
       </NGrid>
     </NCard>
 
-    <NCard title="近 7 天运营" :bordered="false" class="card-wrapper">
+    <NCard :title="$t('business.operations-in-last-7-days')" :bordered="false" class="card-wrapper">
       <NGrid responsive="screen" item-responsive :x-gap="16" :y-gap="16">
         <NGi v-for="card in usageCards()" :key="card.label" span="24 s:12 m:6">
           <NCard size="small" :bordered="false" class="cursor-pointer card-wrapper" @click="go(card.route)">
@@ -142,22 +198,26 @@ onMounted(() => {
       </NGrid>
     </NCard>
 
-    <NCard title="快速入口" :bordered="false" class="card-wrapper">
+    <NCard :title="$t('business.quick-links')" :bordered="false" class="card-wrapper">
       <NGrid responsive="screen" item-responsive :x-gap="16" :y-gap="16">
         <NGi v-for="link in quickLinks" :key="link.title" span="24 s:12 m:6">
           <NCard size="small" :bordered="false" class="cursor-pointer card-wrapper" @click="go(link.route)">
             <div class="text-15px font-medium">{{ link.title }}</div>
-            <p class="mt-6px mb-0 text-13px text-#6b7280">{{ link.description }}</p>
+            <p class="mt-6px mb-0 text-13px text-#6b7280">
+              {{ link.description }}
+            </p>
           </NCard>
         </NGi>
       </NGrid>
     </NCard>
 
-    <NCard title="当前会话" :bordered="false" class="card-wrapper">
+    <NCard :title="$t('business.current-session')" :bordered="false" class="card-wrapper">
       <NDescriptions :column="1" label-placement="left" bordered>
-        <NDescriptionsItem label="登录邮箱">{{ authStore.userInfo.userName }}</NDescriptionsItem>
-        <NDescriptionsItem label="权限角色">{{ authStore.userInfo.roles.join(' / ') }}</NDescriptionsItem>
-        <NDescriptionsItem label="会话模式">服务端 Cookie Session</NDescriptionsItem>
+        <NDescriptionsItem :label="$t('business.login-email')">{{ authStore.userInfo.userName }}</NDescriptionsItem>
+        <NDescriptionsItem :label="$t('business.roles')">{{ authStore.userInfo.roles.join(' / ') }}</NDescriptionsItem>
+        <NDescriptionsItem :label="$t('business.session-mode')">
+          {{ $t('business.server-side-cookie-session') }}
+        </NDescriptionsItem>
       </NDescriptions>
     </NCard>
   </NSpace>

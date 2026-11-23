@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import MarkdownIt from 'markdown-it';
 import DOMPurify from 'dompurify';
+import MarkdownIt from 'markdown-it';
 import 'github-markdown-css/github-markdown.css';
+import { $t } from '@/locales';
 
 const props = defineProps<{
   source: string;
@@ -21,10 +22,12 @@ parser.renderer.rules.link_open = (tokens, index, options, env, self) => {
   return self.renderToken(tokens, index, options);
 };
 
-const content = computed(() => DOMPurify.sanitize(parser.render(props.source), {
-  USE_PROFILES: { html: true },
-  ADD_ATTR: ['target', 'rel']
-}));
+const content = computed(() =>
+  DOMPurify.sanitize(parser.render(props.source), {
+    USE_PROFILES: { html: true },
+    ADD_ATTR: ['target', 'rel']
+  })
+);
 </script>
 
 <template>
@@ -34,7 +37,7 @@ const content = computed(() => DOMPurify.sanitize(parser.render(props.source), {
     :style="props.compact ? { minHeight: '0', maxHeight: 'none', padding: '0' } : undefined"
     v-html="content"
   />
-  <NEmpty v-else description="暂无内容" />
+  <NEmpty v-else :description="$t('business.no-content')" />
 </template>
 
 <style scoped>

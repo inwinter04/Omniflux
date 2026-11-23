@@ -1,24 +1,26 @@
-/** 管理台业务状态与动作的中文展示,集中维护避免各页面散落映射。 */
+import { $t, getLocale } from '@/locales';
+
+/** 管理台业务状态、动作与资源的展示映射，文案统一走语言包。 */
 
 export type StatusResource = 'account' | 'service' | 'candidate' | 'policy' | 'api_key';
 
 export function statusText(status: string, resource?: StatusResource) {
   switch (status) {
     case 'active': {
-      if (resource === 'service') return '可用';
-      if (resource === 'candidate') return '参与路由';
-      if (resource === 'policy') return '生效中';
-      if (resource === 'api_key') return '有效';
-      return '正常';
+      if (resource === 'service') return $t('business.available');
+      if (resource === 'candidate') return $t('business.routing-enabled');
+      if (resource === 'policy') return $t('business.active-hn8ec');
+      if (resource === 'api_key') return $t('business.valid');
+      return $t('business.normal');
     }
     case 'published':
-      return '已发布';
+      return $t('business.published');
     case 'draft':
-      return '草稿';
+      return $t('business.draft');
     case 'archived':
-      return '已归档';
+      return $t('business.archived');
     case 'disabled':
-      return '已停用';
+      return $t('business.disabled-e5ola');
     default:
       return status;
   }
@@ -43,12 +45,12 @@ export function statusTagType(status: string): 'success' | 'warning' | 'error' |
 
 export function healthStatusText(status: string) {
   const labels: Record<string, string> = {
-    healthy: '健康',
-    degraded: '波动',
-    unhealthy: '异常',
-    no_data: '未验证',
-    no_candidates: '未配置候选',
-    disabled: '已停用'
+    healthy: $t('business.healthy'),
+    degraded: $t('business.degraded'),
+    unhealthy: $t('business.unhealthy'),
+    no_data: $t('business.not-verified'),
+    no_candidates: $t('business.no-candidates-configured'),
+    disabled: $t('business.disabled-e5ola')
   };
   return labels[status] ?? status;
 }
@@ -67,24 +69,32 @@ export function healthSummary(row: {
   last_used_at: string | null;
   active_candidates: number;
 }) {
-  if (row.active_candidates === 0) return '当前没有可参与路由的候选模型';
-  if (row.requests_24h === 0) return '近 24 小时暂无调用，尚未形成健康评估';
+  if (row.active_candidates === 0) return $t('business.no-candidate-models-are-available');
+  if (row.requests_24h === 0) return $t('business.no-calls-in-the-last');
   const success = Math.round((row.success_rate_24h ?? 0) * 1000) / 10;
-  const latency = row.avg_latency_ms_24h === null ? '暂无数据' : `${Math.round(row.avg_latency_ms_24h)} 毫秒`;
-  const lastUsed = row.last_used_at ? formatTime(row.last_used_at) : '暂无记录';
-  return `近 24 小时：${row.requests_24h} 次调用，成功率 ${success}%，平均延迟 ${latency}；最近调用：${lastUsed}`;
+  const latency =
+    row.avg_latency_ms_24h === null
+      ? $t('business.no-data')
+      : $t('business.latencyMs', { value: Math.round(row.avg_latency_ms_24h) });
+  const lastUsed = row.last_used_at ? formatTime(row.last_used_at) : $t('business.no-records');
+  return $t('business.healthSummary', {
+    requests: row.requests_24h,
+    success,
+    latency,
+    lastUsed
+  });
 }
 
 export function usageStateText(state: string) {
   switch (state) {
     case 'pending':
-      return '进行中';
+      return $t('business.active');
     case 'success':
-      return '成功';
+      return $t('business.success');
     case 'failed':
-      return '失败';
+      return $t('business.failed');
     case 'interrupted':
-      return '已中断';
+      return $t('business.interrupted');
     default:
       return state;
   }
@@ -105,62 +115,64 @@ export function usageStateTagType(state: string): 'success' | 'warning' | 'error
   }
 }
 
-const actionTextMap: Record<string, string> = {
-  'bootstrap.created': '初始化系统',
-  'auth.login': '登录',
-  'auth.login_failed': '登录失败',
-  'project.created': '创建项目',
-  'project.updated': '更新项目',
-  'project.deleted': '删除项目',
-  'application.created': '创建应用',
-  'application.updated': '更新应用',
-  'application.deleted': '删除应用',
-  'provider_account.created': '创建 Provider 账号',
-  'provider_account.updated': '更新 Provider 账号',
-  'provider_account.deleted': '删除 Provider 账号',
-  'route_policy.created': '创建路由策略',
-  'route_policy.updated': '更新路由策略',
-  'route_policy.deleted': '删除路由策略',
-  'model_service.created': '创建模型服务',
-  'model_service.updated': '更新模型服务',
-  'model_service.deleted': '删除模型服务',
-  'api_key.created': '创建 API Key',
-  'api_key.status_changed': '切换 API Key 状态',
-  'api_key.deleted': '删除 API Key',
-  'asset.created': '创建资产',
-  'asset.draft_created': '保存资产草稿',
-  'asset.published': '发布资产',
-  'asset.rolled_back': '回滚资产',
-  'asset.status_changed': '变更资产状态',
-  'asset_grant.upserted': '保存资产授权',
-  'asset_grant.revoked': '撤销资产授权',
-  'prompt_template.previewed': '预览 PromptTemplate',
-  'prompt_template.invoked': '调用 PromptTemplate'
+const actionTextKeyMap: Record<string, App.I18n.I18nKey> = {
+  'bootstrap.created': 'business.initialize-system',
+  'auth.login': 'business.log-in',
+  'auth.login_failed': 'business.login-failed',
+  'project.created': 'business.create-project-argjkk',
+  'project.updated': 'business.update-project',
+  'project.deleted': 'business.delete-project',
+  'application.created': 'business.create-application-ar6opf',
+  'application.updated': 'business.update-application',
+  'application.deleted': 'business.delete-application',
+  'provider_account.created': 'business.create-provider-account-1fmjpgf',
+  'provider_account.updated': 'business.update-provider-account',
+  'provider_account.deleted': 'business.delete-provider-account',
+  'route_policy.created': 'business.create-route-policy-167s75c',
+  'route_policy.updated': 'business.update-route-policy',
+  'route_policy.deleted': 'business.delete-route-policy',
+  'model_service.created': 'business.create-model-service-11kri7x',
+  'model_service.updated': 'business.update-model-service',
+  'model_service.deleted': 'business.delete-model-service',
+  'api_key.created': 'business.create-api-key',
+  'api_key.status_changed': 'business.change-api-key-status',
+  'api_key.deleted': 'business.delete-api-key',
+  'asset.created': 'business.create-asset',
+  'asset.draft_created': 'business.save-asset-draft',
+  'asset.published': 'business.publish-asset',
+  'asset.rolled_back': 'business.roll-back-asset',
+  'asset.status_changed': 'business.change-asset-status',
+  'asset_grant.upserted': 'business.save-asset-grant',
+  'asset_grant.revoked': 'business.revoke-asset-grant',
+  'prompt_template.previewed': 'business.preview-prompttemplate',
+  'prompt_template.invoked': 'business.invoke-prompttemplate'
 };
 
 export function auditActionText(action: string) {
-  return actionTextMap[action] ?? action;
+  const key = actionTextKeyMap[action];
+  return key ? $t(key) : action;
 }
 
-const resourceTextMap: Record<string, string> = {
-  project: '项目',
-  application: '应用',
-  provider_account: 'Provider 账号',
-  route_policy: '路由策略',
-  model_service: '模型服务',
-  api_key: 'API Key',
-  user: '用户',
-  session: '会话',
-  asset: '企业资产',
-  asset_grant: '资产授权'
+const resourceTextKeyMap: Record<string, App.I18n.I18nKey> = {
+  project: 'business.project',
+  application: 'business.application',
+  provider_account: 'business.provider-account',
+  route_policy: 'business.route-policy',
+  model_service: 'business.model-service',
+  api_key: 'business.api-key',
+  user: 'business.user',
+  session: 'business.session',
+  asset: 'business.enterprise-asset',
+  asset_grant: 'business.asset-grant'
 };
 
 export function auditResourceText(resourceType: string) {
-  return resourceTextMap[resourceType] ?? resourceType;
+  const key = resourceTextKeyMap[resourceType];
+  return key ? $t(key) : resourceType;
 }
 
 export function auditResultText(result: string) {
-  return result === 'success' ? '成功' : '失败';
+  return result === 'success' ? $t('business.success') : $t('business.failed');
 }
 
 export function auditResultTagType(result: string): 'success' | 'error' | 'default' {
@@ -170,16 +182,16 @@ export function auditResultTagType(result: string): 'success' | 'error' | 'defau
 export function actorTypeText(actorType: string) {
   switch (actorType) {
     case 'user':
-      return '用户';
+      return $t('business.user');
     case 'api_key':
       return 'API Key';
     case 'system':
-      return '系统';
+      return $t('business.system');
     default:
       return actorType;
   }
 }
 
 export function formatTime(value: string | null) {
-  return value ? new Date(value).toLocaleString() : '-';
+  return value ? new Date(value).toLocaleString(getLocale()) : '-';
 }

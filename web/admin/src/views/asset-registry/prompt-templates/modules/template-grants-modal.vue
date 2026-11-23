@@ -10,6 +10,7 @@ import {
   fetchRevokeAssetGrant,
   fetchUpsertAssetGrant
 } from '@/service/api';
+import { $t } from '@/locales';
 
 const props = defineProps<{
   show: boolean;
@@ -29,7 +30,7 @@ const departments = ref<Api.Management.Department[]>([]);
 const projects = ref<Api.Management.Project[]>([]);
 const isArchived = computed(() => props.asset?.status === 'archived');
 const isAgent = computed(() => props.asset?.asset_type === 'agent');
-const assetNoun = computed(() => isAgent.value ? '智能体' : '模板');
+const assetNoun = computed(() => (isAgent.value ? $t('business.agent') : $t('business.template-imbi')));
 
 const form = reactive({
   subject_type: 'project' as 'organization' | 'department' | 'project',
@@ -37,42 +38,85 @@ const form = reactive({
   actions: ['read', 'invoke'] as ('read' | 'invoke')[]
 });
 
-const subjectTypeOptions = [
-  { label: '整个组织', value: 'organization' },
-  { label: '指定部门', value: 'department' },
-  { label: '指定项目', value: 'project' }
-];
+const subjectTypeOptions = computed(() => [
+  { label: $t('business.entire-organization'), value: 'organization' },
+  { label: $t('business.selected-departments'), value: 'department' },
+  { label: $t('business.selected-projects'), value: 'project' }
+]);
 
 const subjectOptions = computed(() => {
-  if (form.subject_type === 'organization') return organizations.value.map(item => ({ label: item.name, value: item.id }));
-  if (form.subject_type === 'department') return departments.value.map(item => ({ label: item.name, value: item.id }));
+  if (form.subject_type === 'organization')
+    return organizations.value.map(item => ({
+      label: item.name,
+      value: item.id
+    }));
+  if (form.subject_type === 'department')
+    return departments.value.map(item => ({
+      label: item.name,
+      value: item.id
+    }));
   return projects.value.map(item => ({ label: item.name, value: item.id }));
 });
 
-const columns: DataTableColumns<Api.Management.AssetGrant> = [
-  { title: '访问范围', key: 'subject_name', minWidth: 160 },
+const columns = computed<DataTableColumns<Api.Management.AssetGrant>>(() => [
+  { title: $t('business.access-scope'), key: 'subject_name', minWidth: 160 },
   {
-    title: '允许的操作',
+    title: $t('business.allowed-actions'),
     key: 'actions',
     width: 200,
-    render: row => h(NSpace, { size: 4 }, {
-      default: () => row.actions.map(action => h(NTag, { size: 'small', bordered: false, type: 'info' }, { default: () => action === 'invoke' ? `使用${assetNoun.value}` : '查看内容' }))
-    })
+    render: row =>
+      h(
+        NSpace,
+        { size: 4 },
+        {
+          default: () =>
+            row.actions.map(action =>
+              h(
+                NTag,
+                { size: 'small', bordered: false, type: 'info' },
+                {
+                  default: () =>
+                    action === 'invoke'
+                      ? $t('business.useAsset', { asset: assetNoun.value })
+                      : $t('business.view-content')
+                }
+              )
+            )
+        }
+      )
   },
   {
-    title: '操作',
+    title: $t('business.actions'),
     key: 'actions',
     width: 80,
-    render: row => h(NPopconfirm, { onPositiveClick: () => revoke(row.id) }, {
-      trigger: () => h(NButton, { size: 'small', quaternary: true, type: 'error', disabled: isArchived.value }, { default: () => '移除' }),
-      default: () => '移除后，该范围将立即失去访问权限。'
-    })
+    render: row =>
+      h(
+        NPopconfirm,
+        { onPositiveClick: () => revoke(row.id) },
+        {
+          trigger: () =>
+            h(
+              NButton,
+              {
+                size: 'small',
+                quaternary: true,
+                type: 'error',
+                disabled: isArchived.value
+              },
+              { default: () => $t('business.remove') }
+            ),
+          default: () => $t('business.after-removal-this-scope-immediately')
+        }
+      )
   }
-];
+]);
 
-watch(() => props.show, visible => {
-  if (visible) void initialize();
-});
+watch(
+  () => props.show,
+  visible => {
+    if (visible) void initialize();
+  }
+);
 
 async function initialize() {
   if (!props.asset) return;
@@ -82,7 +126,10 @@ async function initialize() {
   loading.value = true;
   try {
     const [grantRes, orgRes, departmentRes, projectRes] = await Promise.all([
-      fetchAssetGrants(props.asset.id), fetchOrganizations(), fetchDepartments(), fetchProjects()
+      fetchAssetGrants(props.asset.id),
+      fetchOrganizations(),
+      fetchDepartments(),
+      fetchProjects()
     ]);
     if (!grantRes.error && grantRes.data) grants.value = grantRes.data;
     if (!orgRes.error && orgRes.data) organizations.value = orgRes.data;
@@ -101,11 +148,11 @@ async function reloadGrants() {
 
 async function save() {
   if (!props.asset || !form.subject_id) {
-    window.$message?.warning('请选择访问范围');
+    window.$message?.warning($t('business.select-an-access-scope'));
     return;
   }
   if (form.actions.length === 0) {
-    window.$message?.warning('请至少选择一项允许的操作');
+    window.$message?.warning($t('business.select-at-least-one-allowed'));
     return;
   }
   saving.value = true;
@@ -116,7 +163,7 @@ async function save() {
       actions: [...form.actions]
     });
     if (!error) {
-      window.$message?.success('访问权限已保存');
+      window.$message?.success($t('business.access-permissions-saved'));
       form.subject_id = null;
       await reloadGrants();
     }
@@ -129,7 +176,7 @@ async function revoke(grantID: string) {
   if (!props.asset) return;
   const { error } = await fetchRevokeAssetGrant(props.asset.id, grantID);
   if (!error) {
-    window.$message?.success('访问权限已移除');
+    window.$message?.success($t('business.access-permissions-removed'));
     await reloadGrants();
   }
 }
@@ -139,37 +186,60 @@ async function revoke(grantID: string) {
   <NModal
     :show="props.show"
     preset="card"
-    title="访问授权"
+    :title="$t('business.access-grants')"
     class="w-800px"
     @update:show="value => emit('update:show', value)"
   >
     <NSpin :show="loading">
       <NAlert type="info" :bordered="false" class="mb-16px">
-        选择哪些组织、部门或项目可以查看和使用这个{{ assetNoun }}。业务系统会按照 API Key 所属项目检查访问范围。
+        {{ $t('business.grantIntroduction', { asset: assetNoun }) }}
       </NAlert>
       <NForm label-placement="left" label-width="90">
         <NGrid cols="1 640:2" :x-gap="16">
-          <NFormItemGi label="范围类型">
-            <NSelect v-model:value="form.subject_type" :options="subjectTypeOptions" :disabled="isArchived" @update:value="form.subject_id = null" />
+          <NFormItemGi :label="$t('business.scope-type')">
+            <NSelect
+              v-model:value="form.subject_type"
+              :options="subjectTypeOptions"
+              :disabled="isArchived"
+              @update:value="form.subject_id = null"
+            />
           </NFormItemGi>
-          <NFormItemGi label="访问范围">
-            <NSelect v-model:value="form.subject_id" filterable :options="subjectOptions" :disabled="isArchived" placeholder="请选择" />
+          <NFormItemGi :label="$t('business.access-scope')">
+            <NSelect
+              v-model:value="form.subject_id"
+              filterable
+              :options="subjectOptions"
+              :disabled="isArchived"
+              :placeholder="$t('business.please-select')"
+            />
           </NFormItemGi>
         </NGrid>
-        <NFormItem label="允许的操作">
+        <NFormItem :label="$t('business.allowed-actions')">
           <NCheckboxGroup v-model:value="form.actions" :disabled="isArchived">
-            <NSpace><NCheckbox value="read">查看{{ assetNoun }}内容</NCheckbox><NCheckbox value="invoke">使用{{ assetNoun }}{{ isAgent ? '进行对话' : '生成内容' }}</NCheckbox></NSpace>
+            <NSpace>
+              <NCheckbox value="read">{{ $t('business.grantViewAction', { asset: assetNoun }) }}</NCheckbox>
+              <NCheckbox value="invoke">
+                {{
+                  isAgent
+                    ? $t('business.chatWithAsset', { asset: assetNoun })
+                    : $t('business.generateAssetContent', { asset: assetNoun })
+                }}
+              </NCheckbox>
+            </NSpace>
           </NCheckboxGroup>
         </NFormItem>
-        <NButton type="primary" secondary :loading="saving" :disabled="isArchived" @click="save">保存授权</NButton>
+        <NButton type="primary" secondary :loading="saving" :disabled="isArchived" @click="save">
+          {{ $t('business.save-grant') }}
+        </NButton>
       </NForm>
 
-      <NDivider title-placement="left">已授权范围</NDivider>
+      <NDivider title-placement="left">{{ $t('business.granted-scopes') }}</NDivider>
       <NDataTable :columns="columns" :data="grants" :bordered="false" size="small" :max-height="280" />
-
     </NSpin>
     <template #footer>
-      <NSpace justify="end"><NButton @click="emit('update:show', false)">关闭</NButton></NSpace>
+      <NSpace justify="end">
+        <NButton @click="emit('update:show', false)">{{ $t('business.close') }}</NButton>
+      </NSpace>
     </template>
   </NModal>
 </template>

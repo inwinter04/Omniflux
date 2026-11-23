@@ -31,14 +31,14 @@ const rules = computed<Record<keyof FormModel, App.Global.FormRule[]>>(() => {
       { required: true, message: $t('page.login.common.userNamePlaceholder') },
       {
         validator: (_rule: unknown, value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value || ''),
-        message: '请输入有效的邮箱地址'
+        message: $t('business.enter-a-valid-email-address')
       }
     ],
     password: [
-      { required: true, message: '请输入密码' },
+      { required: true, message: $t('business.please-enter-a-password') },
       {
         validator: (_rule: unknown, value: string) => (value || '').length >= 16,
-        message: '密码至少 16 位'
+        message: $t('business.password-must-be-at-least')
       }
     ]
   };
@@ -57,7 +57,7 @@ async function handleSubmit() {
 <template>
   <NForm ref="formRef" :model="model" :rules="rules" size="large" :show-label="false" @keyup.enter="handleSubmit">
     <NFormItem path="email">
-      <NInput v-model:value="model.email" autocomplete="username" placeholder="邮箱" />
+      <NInput v-model:value="model.email" autocomplete="username" :placeholder="$t('business.email')" />
     </NFormItem>
     <NFormItem path="password">
       <NInput
@@ -65,16 +65,15 @@ async function handleSubmit() {
         type="password"
         show-password-on="click"
         autocomplete="current-password"
-        placeholder="密码"
+        :placeholder="$t('business.password')"
       />
     </NFormItem>
     <NSpace vertical :size="24">
       <NButton type="primary" size="large" round block :loading="authStore.loginLoading" @click="handleSubmit">
-        登录
+        {{ $t('business.log-in') }}
       </NButton>
     </NSpace>
   </NForm>
 </template>
 
 <style scoped></style>
-

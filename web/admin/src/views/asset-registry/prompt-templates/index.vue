@@ -1,15 +1,16 @@
 <script setup lang="ts">
-import { h, onMounted, ref } from 'vue';
-import { NButton, NDropdown, NSpace, NTag } from 'naive-ui';
+import { h, onMounted, ref, computed } from 'vue';
 import { useRouter } from 'vue-router';
+import { NButton, NDropdown, NSpace, NTag } from 'naive-ui';
 import type { DataTableColumns } from 'naive-ui';
-import { fetchAssets, fetchUpdateAssetStatus } from '@/service/api';
 import { formatTime, statusTagType, statusText } from '@/utils/admin-status';
-import TemplateFormModal from './modules/template-form-modal.vue';
+import { fetchAssets, fetchUpdateAssetStatus } from '@/service/api';
+import { $t } from '@/locales';
 import TemplateEditModal from './modules/template-edit-modal.vue';
+import TemplateFormModal from './modules/template-form-modal.vue';
+import TemplateGrantsModal from './modules/template-grants-modal.vue';
 import TemplateTestModal from './modules/template-test-modal.vue';
 import TemplateVersionsModal from './modules/template-versions-modal.vue';
-import TemplateGrantsModal from './modules/template-grants-modal.vue';
 
 defineOptions({ name: 'AssetRegistryPromptTemplates' });
 
@@ -26,45 +27,137 @@ const activeAsset = ref<Api.Management.Asset | null>(null);
 const archiveTarget = ref<Api.Management.Asset | null>(null);
 const router = useRouter();
 
-const columns: DataTableColumns<Api.Management.Asset> = [
-  { title: '模板名称', key: 'name', minWidth: 160 },
-  { title: '用途说明', key: 'description', minWidth: 220, ellipsis: { tooltip: true } },
+const columns = computed<DataTableColumns<Api.Management.Asset>>(() => [
+  { title: $t('business.template-name'), key: 'name', minWidth: 160 },
   {
-    title: '当前版本',
+    title: $t('business.usage-description'),
+    key: 'description',
+    minWidth: 220,
+    ellipsis: { tooltip: true }
+  },
+  {
+    title: $t('business.current-version'),
     key: 'current_version',
     width: 150,
-    render: row => h(NSpace, { size: 6 }, {
-      default: () => [
-        h('span', row.current_version ? `版本 ${row.current_version}` : '尚未启用'),
-        row.has_draft ? h(NTag, { size: 'small', type: 'info', bordered: false }, { default: () => '有新修改' }) : null
-      ]
-    })
+    render: row =>
+      h(
+        NSpace,
+        { size: 6 },
+        {
+          default: () => [
+            h(
+              'span',
+              row.current_version
+                ? $t('business.versionValue', { version: row.current_version })
+                : $t('business.not-enabled')
+            ),
+            row.has_draft
+              ? h(
+                  NTag,
+                  { size: 'small', type: 'info', bordered: false },
+                  { default: () => $t('business.has-unsaved-changes') }
+                )
+              : null
+          ]
+        }
+      )
   },
   {
-    title: '状态',
+    title: $t('business.status'),
     key: 'status',
     width: 90,
-    render: row => h(NTag, { type: statusTagType(row.status), size: 'small', round: true }, { default: () => statusText(row.status) })
+    render: row =>
+      h(
+        NTag,
+        { type: statusTagType(row.status), size: 'small', round: true },
+        { default: () => statusText(row.status) }
+      )
   },
-  { title: '更新时间', key: 'updated_at', width: 180, render: row => formatTime(row.updated_at) },
   {
-    title: '操作',
+    title: $t('business.updated-at'),
+    key: 'updated_at',
+    width: 180,
+    render: row => formatTime(row.updated_at)
+  },
+  {
+    title: $t('business.actions'),
     key: 'actions',
     width: 370,
-    render: row => h(NSpace, { size: 4 }, {
-      default: () => [
-        h(NButton, { size: 'small', quaternary: true, type: 'primary', onClick: () => openForm(row.id) }, { default: () => '编辑' }),
-        h(NButton, { size: 'small', quaternary: true, type: 'primary', onClick: () => openAction('test', row) }, { default: () => '测试' }),
-        h(NButton, { size: 'small', quaternary: true, type: 'primary', onClick: () => openAction('versions', row) }, { default: () => '版本' }),
-        h(NButton, { size: 'small', quaternary: true, type: 'primary', onClick: () => openAction('grants', row) }, { default: () => '授权' }),
-        h(NButton, { size: 'small', quaternary: true, type: 'primary', onClick: () => router.push({ name: 'asset-registry_evaluations', query: { asset: row.id } }) }, { default: () => '评估' }),
-        h(NDropdown, { options: lifecycleOptions(row), onSelect: key => handleLifecycle(key, row) }, {
-          default: () => h(NButton, { size: 'small', quaternary: true }, { default: () => '更多' })
-        })
-      ]
-    })
+    render: row =>
+      h(
+        NSpace,
+        { size: 4 },
+        {
+          default: () => [
+            h(
+              NButton,
+              {
+                size: 'small',
+                quaternary: true,
+                type: 'primary',
+                onClick: () => openForm(row.id)
+              },
+              { default: () => $t('business.edit') }
+            ),
+            h(
+              NButton,
+              {
+                size: 'small',
+                quaternary: true,
+                type: 'primary',
+                onClick: () => openAction('test', row)
+              },
+              { default: () => $t('business.test') }
+            ),
+            h(
+              NButton,
+              {
+                size: 'small',
+                quaternary: true,
+                type: 'primary',
+                onClick: () => openAction('versions', row)
+              },
+              { default: () => $t('business.version') }
+            ),
+            h(
+              NButton,
+              {
+                size: 'small',
+                quaternary: true,
+                type: 'primary',
+                onClick: () => openAction('grants', row)
+              },
+              { default: () => $t('business.grants') }
+            ),
+            h(
+              NButton,
+              {
+                size: 'small',
+                quaternary: true,
+                type: 'primary',
+                onClick: () =>
+                  router.push({
+                    name: 'asset-registry_evaluations',
+                    query: { asset: row.id }
+                  })
+              },
+              { default: () => $t('business.evaluate') }
+            ),
+            h(
+              NDropdown,
+              {
+                options: lifecycleOptions(row),
+                onSelect: key => handleLifecycle(key, row)
+              },
+              {
+                default: () => h(NButton, { size: 'small', quaternary: true }, { default: () => $t('business.more') })
+              }
+            )
+          ]
+        }
+      )
   }
-];
+]);
 
 async function loadData() {
   loading.value = true;
@@ -78,9 +171,9 @@ async function loadData() {
 
 function lifecycleOptions(asset: Api.Management.Asset) {
   const options: { label: string; key: string }[] = [];
-  if (asset.status === 'published') options.push({ label: '暂停使用', key: 'disabled' });
-  if (asset.status === 'disabled') options.push({ label: '恢复使用', key: 'published' });
-  if (asset.status !== 'archived') options.push({ label: '归档模板', key: 'archived' });
+  if (asset.status === 'published') options.push({ label: $t('business.pause'), key: 'disabled' });
+  if (asset.status === 'disabled') options.push({ label: $t('business.resume'), key: 'published' });
+  if (asset.status !== 'archived') options.push({ label: $t('business.archive-template'), key: 'archived' });
   return options;
 }
 
@@ -91,7 +184,7 @@ async function handleLifecycle(key: string, asset: Api.Management.Asset) {
   }
   const { error } = await fetchUpdateAssetStatus(asset.id, key as Api.Management.AssetStatus);
   if (!error) {
-    window.$message?.success(key === 'disabled' ? '模板已暂停使用' : '模板已恢复使用');
+    window.$message?.success(key === 'disabled' ? $t('business.template-paused') : $t('business.template-resumed'));
     await loadData();
   }
 }
@@ -101,7 +194,7 @@ async function archiveAsset() {
   const { error } = await fetchUpdateAssetStatus(archiveTarget.value.id, 'archived');
   if (!error) {
     archiveTarget.value = null;
-    window.$message?.success('模板已归档');
+    window.$message?.success($t('business.template-archived'));
     await loadData();
   }
 }
@@ -129,10 +222,11 @@ function openTestFor(id: string) {
   editVisible.value = false;
   const asset = list.value.find(item => item.id === id);
   if (asset) openAction('test', asset, true);
-  else void loadData().then(() => {
-    const created = list.value.find(item => item.id === id);
-    if (created) openAction('test', created, true);
-  });
+  else
+    void loadData().then(() => {
+      const created = list.value.find(item => item.id === id);
+      if (created) openAction('test', created, true);
+    });
 }
 
 onMounted(loadData);
@@ -140,14 +234,21 @@ onMounted(loadData);
 
 <template>
   <div class="min-h-full bg-#f6f7f9 p-4px dark:bg-#101014">
-    <NCard title="提示词模板" :bordered="false" class="card-wrapper">
+    <NCard :title="$t('business.prompt-template')" :bordered="false" class="card-wrapper">
       <template #header-extra>
         <NSpace>
-          <NButton quaternary type="primary" :loading="loading" @click="loadData">刷新</NButton>
-          <NButton type="primary" @click="openForm(null)">新建模板</NButton>
+          <NButton quaternary type="primary" :loading="loading" @click="loadData">{{ $t('business.refresh') }}</NButton>
+          <NButton type="primary" @click="openForm(null)">{{ $t('business.create-template') }}</NButton>
         </NSpace>
       </template>
-      <NDataTable :columns="columns" :data="list" :loading="loading" :bordered="false" :scroll-x="1050" :pagination="{ pageSize: 15 }" />
+      <NDataTable
+        :columns="columns"
+        :data="list"
+        :loading="loading"
+        :bordered="false"
+        :scroll-x="1050"
+        :pagination="{ pageSize: 15 }"
+      />
     </NCard>
 
     <TemplateFormModal v-model:show="createVisible" :asset-id="null" @saved="loadData" @test="openTestFor" />
@@ -155,8 +256,21 @@ onMounted(loadData);
     <TemplateTestModal v-model:show="testVisible" :asset="activeAsset" :prefer-latest="testPreferLatest" />
     <TemplateVersionsModal v-model:show="versionsVisible" :asset="activeAsset" @saved="loadData" />
     <TemplateGrantsModal v-model:show="grantsVisible" :asset="activeAsset" @saved="loadData" />
-    <NModal :show="Boolean(archiveTarget)" preset="dialog" type="info" title="归档模板？" positive-text="确认归档" negative-text="取消" @positive-click="archiveAsset" @update:show="value => { if (!value) archiveTarget = null; }">
-      归档后不能继续编辑或恢复使用，请确认。
+    <NModal
+      :show="Boolean(archiveTarget)"
+      preset="dialog"
+      type="info"
+      :title="$t('business.archive-this-template')"
+      :positive-text="$t('business.confirm-archive')"
+      :negative-text="$t('business.cancel')"
+      @positive-click="archiveAsset"
+      @update:show="
+        value => {
+          if (!value) archiveTarget = null;
+        }
+      "
+    >
+      {{ $t('business.after-archiving-the-item-cannot') }}
     </NModal>
   </div>
 </template>

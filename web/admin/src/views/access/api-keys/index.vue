@@ -2,8 +2,16 @@
 import { computed, h, onMounted, reactive, ref } from 'vue';
 import { NButton, NPopconfirm, NSpace, NTag } from 'naive-ui';
 import type { DataTableColumns, FormInst, FormRules } from 'naive-ui';
-import { fetchApiKeys, fetchApplications, fetchCreateApiKey, fetchDeleteApiKey, fetchProjects, fetchUpdateApiKey } from '@/service/api';
 import { formatTime, statusTagType, statusText } from '@/utils/admin-status';
+import {
+  fetchApiKeys,
+  fetchApplications,
+  fetchCreateApiKey,
+  fetchDeleteApiKey,
+  fetchProjects,
+  fetchUpdateApiKey
+} from '@/service/api';
+import { $t } from '@/locales';
 
 defineOptions({
   name: 'AccessApiKeys'
@@ -34,11 +42,23 @@ const rateLimitModel = reactive({
   rate_limit_per_min: null as number | null
 });
 
-const formRules: FormRules = {
-  name: { required: true, message: '请填写 API Key 名称', trigger: 'blur' },
-  project_id: { required: true, message: '请选择项目', trigger: 'change' },
-  application_id: { required: true, message: '请选择应用', trigger: 'change' }
-};
+const formRules = computed<FormRules>(() => ({
+  name: {
+    required: true,
+    message: $t('business.enter-an-api-key-name'),
+    trigger: 'blur'
+  },
+  project_id: {
+    required: true,
+    message: $t('business.select-a-project'),
+    trigger: 'change'
+  },
+  application_id: {
+    required: true,
+    message: $t('business.select-an-application'),
+    trigger: 'change'
+  }
+}));
 
 const createdKey = ref('');
 
@@ -57,29 +77,62 @@ function applicationName(id: string) {
   return applications.value.find(item => item.id === id)?.name ?? '-';
 }
 
-const columns: DataTableColumns<Api.Management.ApiKey> = [
-  { title: '名称', key: 'name', width: 160 },
-  { title: '前缀', key: 'key_prefix', width: 120 },
-  { title: '项目', key: 'project_id', width: 140, render: row => projectName(row.project_id) },
-  { title: '应用', key: 'application_id', width: 140, render: row => applicationName(row.application_id) },
+const columns = computed<DataTableColumns<Api.Management.ApiKey>>(() => [
+  { title: $t('business.name'), key: 'name', width: 160 },
+  { title: $t('business.prefix'), key: 'key_prefix', width: 120 },
   {
-    title: '状态',
+    title: $t('business.project'),
+    key: 'project_id',
+    width: 140,
+    render: row => projectName(row.project_id)
+  },
+  {
+    title: $t('business.application'),
+    key: 'application_id',
+    width: 140,
+    render: row => applicationName(row.application_id)
+  },
+  {
+    title: $t('business.status'),
     key: 'status',
     width: 100,
     render(row) {
-      return h(NTag, { type: statusTagType(row.status), size: 'small', round: true }, { default: () => statusText(row.status, 'api_key') });
+      return h(
+        NTag,
+        { type: statusTagType(row.status), size: 'small', round: true },
+        { default: () => statusText(row.status, 'api_key') }
+      );
     }
   },
-  { title: '最近使用', key: 'last_used_at', width: 180, render: row => formatTime(row.last_used_at) },
-  { title: '创建时间', key: 'created_at', width: 180, render: row => formatTime(row.created_at) },
   {
-    title: '操作',
+    title: $t('business.last-used'),
+    key: 'last_used_at',
+    width: 180,
+    render: row => formatTime(row.last_used_at)
+  },
+  {
+    title: $t('business.created-at'),
+    key: 'created_at',
+    width: 180,
+    render: row => formatTime(row.created_at)
+  },
+  {
+    title: $t('business.actions'),
     key: 'actions',
     width: 150,
     render(row) {
       const buttons: ReturnType<typeof h>[] = [];
       buttons.push(
-        h(NButton, { size: 'small', quaternary: true, type: 'primary', onClick: () => openRateLimit(row) }, { default: () => '限流' })
+        h(
+          NButton,
+          {
+            size: 'small',
+            quaternary: true,
+            type: 'primary',
+            onClick: () => openRateLimit(row)
+          },
+          { default: () => $t('business.rate-limit') }
+        )
       );
       if (row.status === 'active') {
         buttons.push(
@@ -87,14 +140,28 @@ const columns: DataTableColumns<Api.Management.ApiKey> = [
             NPopconfirm,
             { onPositiveClick: () => handleToggleStatus(row, 'disabled') },
             {
-              trigger: () => h(NButton, { size: 'small', type: 'warning', quaternary: true }, { default: () => '禁用' }),
-              default: () => '禁用后立即停止认证,之后可重新启用,确认禁用?'
+              trigger: () =>
+                h(
+                  NButton,
+                  { size: 'small', type: 'warning', quaternary: true },
+                  { default: () => $t('business.disable') }
+                ),
+              default: () => $t('business.authentication-stops-immediately-after-disabling')
             }
           )
         );
       } else {
         buttons.push(
-          h(NButton, { size: 'small', type: 'primary', quaternary: true, onClick: () => handleToggleStatus(row, 'active') }, { default: () => '启用' })
+          h(
+            NButton,
+            {
+              size: 'small',
+              type: 'primary',
+              quaternary: true,
+              onClick: () => handleToggleStatus(row, 'active')
+            },
+            { default: () => $t('business.enable') }
+          )
         );
       }
       buttons.push(
@@ -102,20 +169,25 @@ const columns: DataTableColumns<Api.Management.ApiKey> = [
           NPopconfirm,
           { onPositiveClick: () => handleDelete(row.id) },
           {
-            trigger: () => h(NButton, { size: 'small', type: 'error', quaternary: true }, { default: () => '删除' }),
-            default: () => '删除后该 Key 彻底失效且不再显示,不可恢复,确认删除?'
+            trigger: () =>
+              h(NButton, { size: 'small', type: 'error', quaternary: true }, { default: () => $t('business.delete') }),
+            default: () => $t('business.after-deletion-this-key-becomes')
           }
         )
       );
       return h(NSpace, { size: 4 }, { default: () => buttons });
     }
   }
-];
+]);
 
 async function loadData() {
   loading.value = true;
   try {
-    const [keysRes, projectsRes, applicationsRes] = await Promise.all([fetchApiKeys(), fetchProjects(), fetchApplications()]);
+    const [keysRes, projectsRes, applicationsRes] = await Promise.all([
+      fetchApiKeys(),
+      fetchProjects(),
+      fetchApplications()
+    ]);
     if (!keysRes.error && keysRes.data) {
       list.value = keysRes.data;
     }
@@ -149,9 +221,11 @@ async function handleSaveRateLimit() {
   await rateLimitFormRef.value?.validate();
   submittingRateLimit.value = true;
   try {
-    const { error } = await fetchUpdateApiKey(rateLimitModel.id, { rate_limit_per_min: rateLimitModel.rate_limit_per_min ?? undefined });
+    const { error } = await fetchUpdateApiKey(rateLimitModel.id, {
+      rate_limit_per_min: rateLimitModel.rate_limit_per_min ?? undefined
+    });
     if (!error) {
-      window.$message?.success('限流阈值已更新');
+      window.$message?.success($t('business.rate-limit-threshold-updated'));
       showRateLimit.value = false;
       await loadData();
     }
@@ -190,13 +264,13 @@ async function handleCreate() {
 
 async function handleCopyKey() {
   await navigator.clipboard.writeText(createdKey.value);
-  window.$message?.success('已复制到剪贴板');
+  window.$message?.success($t('business.copied-to-clipboard'));
 }
 
 async function handleToggleStatus(row: Api.Management.ApiKey, status: 'active' | 'disabled') {
   const { error } = await fetchUpdateApiKey(row.id, { status });
   if (!error) {
-    window.$message?.success(status === 'active' ? 'API Key 已启用' : 'API Key 已禁用');
+    window.$message?.success(status === 'active' ? $t('business.api-key-enabled') : $t('business.api-key-disabled'));
     await loadData();
   }
 }
@@ -204,7 +278,7 @@ async function handleToggleStatus(row: Api.Management.ApiKey, status: 'active' |
 async function handleDelete(id: string) {
   const { error } = await fetchDeleteApiKey(id);
   if (!error) {
-    window.$message?.success('API Key 已删除');
+    window.$message?.success($t('business.api-key-deleted'));
     await loadData();
   }
 }
@@ -219,74 +293,109 @@ onMounted(() => {
     <NCard title="API Key" :bordered="false" class="card-wrapper">
       <template #header-extra>
         <NSpace>
-          <NButton quaternary type="primary" :loading="loading" @click="loadData">刷新</NButton>
+          <NButton quaternary type="primary" :loading="loading" @click="loadData">{{ $t('business.refresh') }}</NButton>
           <NButton
             type="primary"
             :disabled="projectOptions.length === 0 || applications.length === 0"
             @click="openCreate"
           >
-            {{ projectOptions.length === 0 || applications.length === 0 ? '需要先存在项目与应用' : '新建 API Key' }}
+            {{
+              projectOptions.length === 0 || applications.length === 0
+                ? $t('business.projectsAndApplicationsRequired')
+                : $t('business.create-api-key')
+            }}
           </NButton>
         </NSpace>
       </template>
       <NDataTable :columns="columns" :data="list" :loading="loading" :bordered="false" :scroll-x="1100" />
     </NCard>
 
-    <NModal v-model:show="showCreate" preset="card" title="新建 API Key" class="w-520px">
+    <NModal v-model:show="showCreate" preset="card" :title="$t('business.create-api-key')" class="w-520px">
       <NForm ref="formRef" :model="formModel" :rules="formRules" label-placement="left" label-width="100">
-        <NFormItem label="名称" path="name">
-          <NInput v-model:value="formModel.name" placeholder="例如:订单服务" />
+        <NFormItem :label="$t('business.name')" path="name">
+          <NInput v-model:value="formModel.name" :placeholder="$t('business.for-example-order-service')" />
         </NFormItem>
-        <NFormItem label="项目" path="project_id">
-          <NSelect v-model:value="formModel.project_id" :options="projectOptions" placeholder="选择项目" @update:value="handleProjectChange" />
+        <NFormItem :label="$t('business.project')" path="project_id">
+          <NSelect
+            v-model:value="formModel.project_id"
+            :options="projectOptions"
+            :placeholder="$t('business.select-project')"
+            @update:value="handleProjectChange"
+          />
         </NFormItem>
-        <NFormItem label="应用" path="application_id">
+        <NFormItem :label="$t('business.application')" path="application_id">
           <NSelect
             v-model:value="formModel.application_id"
             :options="applicationOptions"
             :disabled="!formModel.project_id"
-            placeholder="先选择项目"
+            :placeholder="$t('business.select-a-project-first')"
           />
         </NFormItem>
-        <NFormItem label="过期时间" path="expires_at">
-          <NDatePicker v-model:value="formModel.expires_at" type="datetime" clearable placeholder="可选,留空表示永不过期" class="w-full" />
+        <NFormItem :label="$t('business.expires-at')" path="expires_at">
+          <NDatePicker
+            v-model:value="formModel.expires_at"
+            type="datetime"
+            clearable
+            :placeholder="$t('business.optional-leave-blank-for-no')"
+            class="w-full"
+          />
         </NFormItem>
-        <NFormItem label="限流/分钟" path="rate_limit_per_min">
-          <NInputNumber v-model:value="formModel.rate_limit_per_min" :min="1" clearable class="w-full" placeholder="可选,留空沿用全局默认" />
+        <NFormItem :label="$t('business.rate-limit-minute')" path="rate_limit_per_min">
+          <NInputNumber
+            v-model:value="formModel.rate_limit_per_min"
+            :min="1"
+            clearable
+            class="w-full"
+            :placeholder="$t('business.optional-leave-blank-to-use')"
+          />
         </NFormItem>
       </NForm>
       <template #footer>
         <NSpace justify="end">
-          <NButton @click="showCreate = false">取消</NButton>
-          <NButton type="primary" :loading="creating" @click="handleCreate">创建</NButton>
+          <NButton @click="showCreate = false">{{ $t('business.cancel') }}</NButton>
+          <NButton type="primary" :loading="creating" @click="handleCreate">{{ $t('business.create') }}</NButton>
         </NSpace>
       </template>
     </NModal>
 
-    <NModal :show="createdKey !== ''" preset="card" title="API Key 已创建" class="w-560px" :mask-closable="false">
-      <NAlert type="warning" :bordered="false" class="mb-12px">请立即保存,该明文仅出现这一次。</NAlert>
+    <NModal
+      :show="createdKey !== ''"
+      preset="card"
+      :title="$t('business.api-key-created')"
+      class="w-560px"
+      :mask-closable="false"
+    >
+      <NAlert type="warning" :bordered="false" class="mb-12px">{{ $t('business.save-it-now-this-plaintext') }}</NAlert>
       <NInput :value="createdKey" readonly type="textarea" :autosize="{ minRows: 3 }" />
       <template #footer>
         <NSpace justify="end">
-          <NButton @click="handleCopyKey">复制</NButton>
-          <NButton type="primary" @click="createdKey = ''">我已保存</NButton>
+          <NButton @click="handleCopyKey">{{ $t('business.copy') }}</NButton>
+          <NButton type="primary" @click="createdKey = ''">{{ $t('business.i-have-saved-it') }}</NButton>
         </NSpace>
       </template>
     </NModal>
-    <NModal v-model:show="showRateLimit" preset="card" title="调整限流" class="w-440px">
+    <NModal v-model:show="showRateLimit" preset="card" :title="$t('business.adjust-rate-limit')" class="w-440px">
       <NForm ref="rateLimitFormRef" :model="rateLimitModel" label-placement="left" label-width="100">
-        <NFormItem label="名称">
+        <NFormItem :label="$t('business.name')">
           <NInput :value="rateLimitModel.name" disabled />
         </NFormItem>
-        <NFormItem label="限流/分钟" path="rate_limit_per_min">
-          <NInputNumber v-model:value="rateLimitModel.rate_limit_per_min" :min="1" clearable class="w-full" placeholder="留空表示沿用全局默认" />
+        <NFormItem :label="$t('business.rate-limit-minute')" path="rate_limit_per_min">
+          <NInputNumber
+            v-model:value="rateLimitModel.rate_limit_per_min"
+            :min="1"
+            clearable
+            class="w-full"
+            :placeholder="$t('business.leave-blank-to-use-the')"
+          />
         </NFormItem>
-        <NAlert type="info" :bordered="false">阈值立即生效;清空表示移除 Key 级限流,改用全局默认。</NAlert>
+        <NAlert type="info" :bordered="false">{{ $t('business.the-threshold-takes-effect-immediately') }}</NAlert>
       </NForm>
       <template #footer>
         <NSpace justify="end">
-          <NButton @click="showRateLimit = false">取消</NButton>
-          <NButton type="primary" :loading="submittingRateLimit" @click="handleSaveRateLimit">保存</NButton>
+          <NButton @click="showRateLimit = false">{{ $t('business.cancel') }}</NButton>
+          <NButton type="primary" :loading="submittingRateLimit" @click="handleSaveRateLimit">
+            {{ $t('business.save') }}
+          </NButton>
         </NSpace>
       </template>
     </NModal>
@@ -294,5 +403,3 @@ onMounted(() => {
 </template>
 
 <style scoped></style>
-
-

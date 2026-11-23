@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
 import { fetchAssetDetail, fetchModelServices, fetchUpdateAsset } from '@/service/api';
-import TemplateCodeEditor from './template-code-editor.vue';
-import TemplateVariablesTable from './template-variables-table.vue';
+import { $t } from '@/locales';
 import JsonEditor from './json-editor.vue';
 import { schemaFromExample } from './json-schema';
+import TemplateCodeEditor from './template-code-editor.vue';
 import type { VariableDraft } from './template-form-types';
+import TemplateVariablesTable from './template-variables-table.vue';
 
 const props = defineProps<{
   show: boolean;
@@ -23,7 +24,7 @@ const saving = ref(false);
 const dirty = ref(false);
 const closeConfirm = ref(false);
 const showExample = ref(false);
-const exampleText = ref('{\n  "name": "张三",\n  "age": 30,\n  "tags": ["重要客户"]\n}');
+const exampleText = computed(() => $t('business.name-john-doe-age-30'));
 const activeTab = ref('content');
 const detail = ref<Api.Management.AssetDetail | null>(null);
 const models = ref<Api.Management.ModelService[]>([]);
@@ -37,21 +38,30 @@ const form = reactive({
 });
 
 const modelOptions = computed(() => models.value.map(item => ({ label: item.name, value: item.id })));
-const templateVariables = computed<Api.Management.PromptVariable[]>(() => form.variables.map(variable => ({
-  name: variable.name.trim(),
-  type: variable.type,
-  description: variable.description.trim() || undefined,
-  required: variable.required,
-  ...(variable.default !== null ? { default: variable.default } : {})
-})));
+const templateVariables = computed<Api.Management.PromptVariable[]>(() =>
+  form.variables.map(variable => ({
+    name: variable.name.trim(),
+    type: variable.type,
+    description: variable.description.trim() || undefined,
+    required: variable.required,
+    ...(variable.default !== null ? { default: variable.default } : {})
+  }))
+);
 
-watch(() => props.show, visible => {
-  if (visible) void initialize();
-});
+watch(
+  () => props.show,
+  visible => {
+    if (visible) void initialize();
+  }
+);
 
-watch(form, () => {
-  dirty.value = true;
-}, { deep: true, flush: 'sync' });
+watch(
+  form,
+  () => {
+    dirty.value = true;
+  },
+  { deep: true, flush: 'sync' }
+);
 
 async function initialize() {
   if (!props.assetId) return;
@@ -67,7 +77,9 @@ async function initialize() {
     form.description = detailRes.data.description;
     form.model_service_id = detailRes.data.spec.model_service_id || null;
     form.template = detailRes.data.spec.template;
-    form.output_schema_text = detailRes.data.spec.output_schema ? JSON.stringify(detailRes.data.spec.output_schema, null, 2) : '';
+    form.output_schema_text = detailRes.data.spec.output_schema
+      ? JSON.stringify(detailRes.data.spec.output_schema, null, 2)
+      : '';
     form.variables = detailRes.data.spec.variables.map(variable => ({
       name: variable.name,
       type: variable.type,
@@ -82,13 +94,13 @@ async function initialize() {
 }
 
 function validate() {
-  if (!form.name.trim()) return '请填写模板名称';
-  if (!form.template.trim()) return '请填写模板内容';
+  if (!form.name.trim()) return $t('business.enter-a-template-name');
+  if (!form.template.trim()) return $t('business.enter-template-content');
   const names = new Set<string>();
   for (const variable of form.variables) {
     const name = variable.name.trim();
-    if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(name)) return '变量名只能使用字母、数字和下划线，且不能以数字开头';
-    if (names.has(name)) return `变量 ${name} 重复`;
+    if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(name)) return $t('business.variable-names-can-contain-only');
+    if (names.has(name)) return $t('business.duplicateVariable', { name });
     names.add(name);
   }
   return null;
@@ -108,7 +120,7 @@ async function save(openTest: boolean) {
       outputSchema = JSON.parse(form.output_schema_text);
     } catch {
       saving.value = false;
-      window.$message?.warning('结构化输出定义必须是合法 JSON 对象');
+      window.$message?.warning($t('business.the-structured-output-definition-must'));
       return;
     }
   }
@@ -128,7 +140,7 @@ async function save(openTest: boolean) {
     dirty.value = false;
     emit('saved');
     emit('update:show', false);
-    window.$message?.success(`修改已保存为版本 ${data.version}`);
+    window.$message?.success($t('business.savedAsVersion', { version: data.version }));
     if (openTest) emit('test', props.assetId);
   } finally {
     saving.value = false;
@@ -141,7 +153,7 @@ function generateSchema() {
     form.output_schema_text = JSON.stringify(schemaFromExample(example), null, 2);
     showExample.value = false;
   } catch {
-    window.$message?.warning('示例内容必须是合法 JSON');
+    window.$message?.warning($t('business.sample-content-must-be-valid'));
   }
 }
 
@@ -161,35 +173,66 @@ function discardAndClose() {
   <NModal
     :show="props.show"
     preset="card"
-    title="编辑模板"
+    :title="$t('business.edit-template')"
     class="w-1000px"
     :mask-closable="false"
-    @update:show="value => { if (value) emit('update:show', true); else requestClose(); }"
+    @update:show="
+      value => {
+        if (value) emit('update:show', true);
+        else requestClose();
+      }
+    "
   >
     <NSpin :show="loading">
-      <NAlert v-if="detail?.status === 'archived'" type="info" :bordered="false" class="mb-16px">已归档模板只能查看，不能继续编辑。</NAlert>
+      <NAlert v-if="detail?.status === 'archived'" type="info" :bordered="false" class="mb-16px">
+        {{ $t('business.archived-templates-are-read-only') }}
+      </NAlert>
       <NTabs v-model:value="activeTab" type="line">
-        <NTabPane name="content" tab="模板内容">
+        <NTabPane name="content" :tab="$t('business.template-content')">
           <TemplateCodeEditor
             v-if="detail"
             :value="form.template"
             :variables="templateVariables"
             :disabled="detail.status === 'archived'"
-            @update:value="value => form.template = value"
+            @update:value="value => (form.template = value)"
           />
         </NTabPane>
-        <NTabPane name="variables" tab="变量设置">
+        <NTabPane name="variables" :tab="$t('business.variable-settings')">
           <TemplateVariablesTable v-model:variables="form.variables" :disabled="detail?.status === 'archived'" />
         </NTabPane>
-        <NTabPane name="settings" tab="基本设置">
+        <NTabPane name="settings" :tab="$t('business.basic-settings')">
           <NForm label-placement="left" label-width="100" :disabled="detail?.status === 'archived'">
-            <NFormItem label="模板名称" required><NInput v-model:value="form.name" maxlength="120" /></NFormItem>
-            <NFormItem label="用途说明"><NInput v-model:value="form.description" type="textarea" :rows="3" maxlength="2000" /></NFormItem>
-            <NFormItem label="模型服务"><NSelect v-model:value="form.model_service_id" clearable filterable :options="modelOptions" placeholder="选择默认模型服务" /></NFormItem>
-            <NFormItem label="结构化输出">
+            <NFormItem :label="$t('business.template-name')" required>
+              <NInput v-model:value="form.name" maxlength="120" />
+            </NFormItem>
+            <NFormItem :label="$t('business.usage-description')">
+              <NInput v-model:value="form.description" type="textarea" :rows="3" maxlength="2000" />
+            </NFormItem>
+            <NFormItem :label="$t('business.model-service')">
+              <NSelect
+                v-model:value="form.model_service_id"
+                clearable
+                filterable
+                :options="modelOptions"
+                :placeholder="$t('business.select-a-default-model-service')"
+              />
+            </NFormItem>
+            <NFormItem :label="$t('business.structured-output')">
               <div class="w-full">
-                <JsonEditor v-model:value="form.output_schema_text" :height="260" :disabled="detail?.status === 'archived'" />
-                <NButton size="small" secondary class="mt-8px" :disabled="detail?.status === 'archived'" @click="showExample = true">从示例生成</NButton>
+                <JsonEditor
+                  v-model:value="form.output_schema_text"
+                  :height="260"
+                  :disabled="detail?.status === 'archived'"
+                />
+                <NButton
+                  size="small"
+                  secondary
+                  class="mt-8px"
+                  :disabled="detail?.status === 'archived'"
+                  @click="showExample = true"
+                >
+                  {{ $t('business.generate-from-sample') }}
+                </NButton>
               </div>
             </NFormItem>
           </NForm>
@@ -198,23 +241,55 @@ function discardAndClose() {
     </NSpin>
     <template #footer>
       <div class="flex items-center justify-between">
-        <NText depth="3">{{ dirty ? '当前修改尚未保存' : detail ? `正在编辑最新版本 ${detail.latest_version}` : '' }}</NText>
+        <NText depth="3">
+          {{
+            dirty
+              ? $t('business.unsavedChanges')
+              : detail
+                ? $t('business.editingLatestVersion', {
+                    version: detail.latest_version
+                  })
+                : ''
+          }}
+        </NText>
         <NSpace>
-          <NButton @click="requestClose">关闭</NButton>
-          <NButton :loading="saving" :disabled="detail?.status === 'archived'" @click="save(true)">保存并测试</NButton>
-          <NButton type="primary" :loading="saving" :disabled="detail?.status === 'archived'" @click="save(false)">保存为新版本</NButton>
+          <NButton @click="requestClose">{{ $t('business.close') }}</NButton>
+          <NButton :loading="saving" :disabled="detail?.status === 'archived'" @click="save(true)">
+            {{ $t('business.save-and-test') }}
+          </NButton>
+          <NButton type="primary" :loading="saving" :disabled="detail?.status === 'archived'" @click="save(false)">
+            {{ $t('business.save-as-new-version') }}
+          </NButton>
         </NSpace>
       </div>
     </template>
   </NModal>
 
-  <NModal v-model:show="closeConfirm" preset="dialog" type="info" title="关闭编辑？" positive-text="放弃修改" negative-text="继续编辑" @positive-click="discardAndClose">
-    当前修改尚未保存，关闭后将丢失。
+  <NModal
+    v-model:show="closeConfirm"
+    preset="dialog"
+    type="info"
+    :title="$t('business.close-editing')"
+    :positive-text="$t('business.discard-changes')"
+    :negative-text="$t('business.continue-editing')"
+    @positive-click="discardAndClose"
+  >
+    {{ $t('business.the-current-changes-are-unsaved') }}
   </NModal>
 
-  <NModal v-model:show="showExample" preset="card" title="从示例生成结构" class="w-720px">
-    <NAlert type="info" :bordered="false" class="mb-12px">粘贴一份期望的 JSON 示例，系统会生成字段类型、必填项和嵌套结构。</NAlert>
+  <NModal
+    v-model:show="showExample"
+    preset="card"
+    :title="$t('business.generate-structure-from-sample')"
+    class="w-720px"
+  >
+    <NAlert type="info" :bordered="false" class="mb-12px">{{ $t('business.paste-an-expected-json-sample') }}</NAlert>
     <JsonEditor v-model:value="exampleText" :height="260" required />
-    <template #footer><NSpace justify="end"><NButton @click="showExample = false">取消</NButton><NButton type="primary" @click="generateSchema">生成结构</NButton></NSpace></template>
+    <template #footer>
+      <NSpace justify="end">
+        <NButton @click="showExample = false">{{ $t('business.cancel') }}</NButton>
+        <NButton type="primary" @click="generateSchema">{{ $t('business.generate-structure') }}</NButton>
+      </NSpace>
+    </template>
   </NModal>
 </template>

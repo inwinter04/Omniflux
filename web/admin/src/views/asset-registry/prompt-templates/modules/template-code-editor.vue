@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { minimalSetup } from 'codemirror';
+import { markdown } from '@codemirror/lang-markdown';
+import { syntaxTree } from '@codemirror/language';
 import { Compartment, EditorState, StateEffect } from '@codemirror/state';
 import type { Range } from '@codemirror/state';
 import { Decoration, EditorView, MatchDecorator, ViewPlugin, WidgetType } from '@codemirror/view';
 import type { DecorationSet, ViewUpdate } from '@codemirror/view';
-import { markdown } from '@codemirror/lang-markdown';
-import { syntaxTree } from '@codemirror/language';
+import { minimalSetup } from 'codemirror';
+import { $t } from '@/locales';
 
 const props = defineProps<{
   value: string;
@@ -44,7 +45,9 @@ class VariableWidget extends WidgetType {
     const element = document.createElement('span');
     element.className = `cm-prompt-variable${this.known ? '' : ' cm-prompt-variable-unknown'}`;
     element.textContent = this.name;
-    element.title = this.known ? `变量 ${this.name} · ${this.label}` : `变量 ${this.name} 尚未定义`;
+    element.title = this.known
+      ? $t('business.variableSummary', { name: this.name, label: this.label })
+      : $t('business.variableUndefined', { name: this.name });
     element.setAttribute('aria-label', element.title);
     return element;
   }
@@ -73,25 +76,35 @@ function variableDecorations(getVariables: () => Api.Management.PromptVariable[]
     decoration: match => {
       const variable = getVariables().find(item => item.name === match[1]);
       return Decoration.replace({
-        widget: new VariableWidget(match[1], variable ? typeLabel(variable.type) : '未定义', Boolean(variable))
+        widget: new VariableWidget(
+          match[1],
+          variable ? typeLabel(variable.type) : $t('business.undefined'),
+          Boolean(variable)
+        )
       });
     }
   });
-  return ViewPlugin.fromClass(class {
-    decorations: DecorationSet;
+  return ViewPlugin.fromClass(
+    class {
+      decorations: DecorationSet;
 
-    constructor(view: EditorView) {
-      this.decorations = matcher.createDeco(view);
-    }
+      constructor(view: EditorView) {
+        this.decorations = matcher.createDeco(view);
+      }
 
-    update(update: ViewUpdate) {
-      const refreshed = update.transactions.some(transaction => transaction.effects.some(effect => effect.is(refreshVariableDecorations)));
-      if (update.docChanged || update.viewportChanged || refreshed) this.decorations = matcher.createDeco(update.view);
+      update(update: ViewUpdate) {
+        const refreshed = update.transactions.some(transaction =>
+          transaction.effects.some(effect => effect.is(refreshVariableDecorations))
+        );
+        if (update.docChanged || update.viewportChanged || refreshed)
+          this.decorations = matcher.createDeco(update.view);
+      }
+    },
+    {
+      decorations: value => value.decorations,
+      provide: plugin => EditorView.atomicRanges.of(view => view.plugin(plugin)?.decorations ?? Decoration.none)
     }
-  }, {
-    decorations: value => value.decorations,
-    provide: plugin => EditorView.atomicRanges.of(view => view.plugin(plugin)?.decorations ?? Decoration.none)
-  });
+  );
 }
 
 function markdownDecorations() {
@@ -106,69 +119,92 @@ function markdownDecorations() {
       enter(node) {
         const heading = /^ATXHeading([1-6])$/.exec(node.name);
         if (heading) {
-          decorations.push(Decoration.line({ class: `cm-md-heading cm-md-heading-${heading[1]}` }).range(view.state.doc.lineAt(node.from).from));
+          decorations.push(
+            Decoration.line({
+              class: `cm-md-heading cm-md-heading-${heading[1]}`
+            }).range(view.state.doc.lineAt(node.from).from)
+          );
         }
-        if (node.name === 'HeaderMark') hide(node.from, node.to, view.state.doc.lineAt(node.from).from, view.state.doc.lineAt(node.from).to);
-        if (node.name === 'StrongEmphasis') decorations.push(Decoration.mark({ class: 'cm-md-strong' }).range(node.from, node.to));
-        if (node.name === 'Emphasis') decorations.push(Decoration.mark({ class: 'cm-md-emphasis' }).range(node.from, node.to));
-        if (node.name === 'EmphasisMark') hide(node.from, node.to, node.node.parent?.from ?? node.from, node.node.parent?.to ?? node.to);
-        if (node.name === 'InlineCode') decorations.push(Decoration.mark({ class: 'cm-md-inline-code' }).range(node.from, node.to));
-        if (node.name === 'CodeMark') hide(node.from, node.to, node.node.parent?.from ?? node.from, node.node.parent?.to ?? node.to);
+        if (node.name === 'HeaderMark')
+          hide(node.from, node.to, view.state.doc.lineAt(node.from).from, view.state.doc.lineAt(node.from).to);
+        if (node.name === 'StrongEmphasis')
+          decorations.push(Decoration.mark({ class: 'cm-md-strong' }).range(node.from, node.to));
+        if (node.name === 'Emphasis')
+          decorations.push(Decoration.mark({ class: 'cm-md-emphasis' }).range(node.from, node.to));
+        if (node.name === 'EmphasisMark')
+          hide(node.from, node.to, node.node.parent?.from ?? node.from, node.node.parent?.to ?? node.to);
+        if (node.name === 'InlineCode')
+          decorations.push(Decoration.mark({ class: 'cm-md-inline-code' }).range(node.from, node.to));
+        if (node.name === 'CodeMark')
+          hide(node.from, node.to, node.node.parent?.from ?? node.from, node.node.parent?.to ?? node.to);
         if (node.name === 'Link') decorations.push(Decoration.mark({ class: 'cm-md-link' }).range(node.from, node.to));
-        if (node.name === 'LinkMark' || node.name === 'URL') hide(node.from, node.to, node.node.parent?.from ?? node.from, node.node.parent?.to ?? node.to);
+        if (node.name === 'LinkMark' || node.name === 'URL')
+          hide(node.from, node.to, node.node.parent?.from ?? node.from, node.node.parent?.to ?? node.to);
         if (node.name === 'ListMark') {
           const marker = view.state.doc.sliceString(node.from, node.to).trim();
           if (marker === '-' || marker === '*' || marker === '+') {
             decorations.push(Decoration.replace({ widget: new MarkdownMarkWidget('•') }).range(node.from, node.to));
           }
         }
-        if (node.name === 'QuoteMark') hide(node.from, node.to, view.state.doc.lineAt(node.from).from, view.state.doc.lineAt(node.from).to);
+        if (node.name === 'QuoteMark')
+          hide(node.from, node.to, view.state.doc.lineAt(node.from).from, view.state.doc.lineAt(node.from).to);
         if (node.name === 'FencedCode' || node.name === 'Blockquote') {
           const start = view.state.doc.lineAt(node.from);
           const end = view.state.doc.lineAt(node.to);
           for (let lineNumber = start.number; lineNumber <= end.number; lineNumber += 1) {
             const line = view.state.doc.line(lineNumber);
-            decorations.push(Decoration.line({ class: node.name === 'FencedCode' ? 'cm-md-code-block' : 'cm-md-blockquote' }).range(line.from));
+            decorations.push(
+              Decoration.line({
+                class: node.name === 'FencedCode' ? 'cm-md-code-block' : 'cm-md-blockquote'
+              }).range(line.from)
+            );
           }
         }
       }
     });
     return Decoration.set(decorations, true);
   };
-  return ViewPlugin.fromClass(class {
-    decorations: DecorationSet;
+  return ViewPlugin.fromClass(
+    class {
+      decorations: DecorationSet;
 
-    constructor(view: EditorView) {
-      this.decorations = build(view);
-    }
+      constructor(view: EditorView) {
+        this.decorations = build(view);
+      }
 
-    update(update: ViewUpdate) {
-      if (update.docChanged || update.selectionSet || update.viewportChanged) this.decorations = build(update.view);
+      update(update: ViewUpdate) {
+        if (update.docChanged || update.selectionSet || update.viewportChanged) this.decorations = build(update.view);
+      }
+    },
+    {
+      decorations: value => value.decorations
     }
-  }, {
-    decorations: value => value.decorations
-  });
+  );
 }
 
-const variableOptions = computed(() => props.variables.map(variable => ({
-  label: `${variable.name}（${typeLabel(variable.type)}）`,
-  value: variable.name
-})));
+const variableOptions = computed(() =>
+  props.variables.map(variable => ({
+    label: `${variable.name}（${typeLabel(variable.type)}）`,
+    value: variable.name
+  }))
+);
 
 function typeLabel(type: string) {
   switch (type) {
     case 'number':
-      return '数字';
+      return $t('business.number');
     case 'integer':
-      return '整数';
+      return $t('business.integer');
     case 'boolean':
-      return '是或否';
+      return $t('business.boolean');
     default:
-      return '文本';
+      return $t('business.text');
   }
 }
 
-const filteredSuggestions = computed(() => props.variables.filter(variable => variable.name.includes(suggestionQuery.value.trim())));
+const filteredSuggestions = computed(() =>
+  props.variables.filter(variable => variable.name.includes(suggestionQuery.value.trim()))
+);
 
 function updateSuggestion(editor: EditorView) {
   const cursor = editor.state.selection.main.from;
@@ -233,32 +269,38 @@ onMounted(() => {
             return false;
           }
         }),
-        editable.of([
-          EditorView.editable.of(!props.disabled),
-          EditorState.readOnly.of(Boolean(props.disabled))
-        ])
+        editable.of([EditorView.editable.of(!props.disabled), EditorState.readOnly.of(Boolean(props.disabled))])
       ]
     })
   });
 });
 
-watch(() => props.value, value => {
-  if (!view || value === view.state.doc.toString()) return;
-  view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value } });
-});
+watch(
+  () => props.value,
+  value => {
+    if (!view || value === view.state.doc.toString()) return;
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: value }
+    });
+  }
+);
 
-watch(() => props.variables, () => {
-  view?.dispatch({ effects: refreshVariableDecorations.of(null) });
-}, { deep: true });
+watch(
+  () => props.variables,
+  () => {
+    view?.dispatch({ effects: refreshVariableDecorations.of(null) });
+  },
+  { deep: true }
+);
 
-watch(() => props.disabled, disabled => {
-  view?.dispatch({
-    effects: editable.reconfigure([
-      EditorView.editable.of(!disabled),
-      EditorState.readOnly.of(Boolean(disabled))
-    ])
-  });
-});
+watch(
+  () => props.disabled,
+  disabled => {
+    view?.dispatch({
+      effects: editable.reconfigure([EditorView.editable.of(!disabled), EditorState.readOnly.of(Boolean(disabled))])
+    });
+  }
+);
 
 onBeforeUnmount(() => {
   view?.destroy();
@@ -269,7 +311,7 @@ onBeforeUnmount(() => {
 <template>
   <div>
     <NSpace justify="space-between" align="center" class="mb-8px">
-      <NText depth="3">输入两个左花括号可在光标处选择变量，也可从右侧列表搜索插入。</NText>
+      <NText depth="3">{{ $t('business.type-two-opening-curly-braces') }}</NText>
       <NSelect
         v-model:value="selectedVariable"
         size="small"
@@ -277,14 +319,20 @@ onBeforeUnmount(() => {
         filterable
         :options="variableOptions"
         :disabled="disabled || variables.length === 0"
-        placeholder="选择变量插入"
+        :placeholder="$t('business.select-a-variable-to-insert')"
         @update:value="insertVariable"
       />
     </NSpace>
     <div ref="host" class="template-code-editor" />
   </div>
   <Teleport to="body">
-    <NCard v-if="suggestionVisible" size="small" title="选择变量" class="prompt-variable-suggestion" :style="suggestionStyle">
+    <NCard
+      v-if="suggestionVisible"
+      size="small"
+      :title="$t('business.select-variable')"
+      class="prompt-variable-suggestion"
+      :style="suggestionStyle"
+    >
       <NScrollbar style="max-height: 210px">
         <NButton
           v-for="variable in filteredSuggestions"
@@ -296,7 +344,7 @@ onBeforeUnmount(() => {
         >
           {{ variable.name }} · {{ typeLabel(variable.type) }}
         </NButton>
-        <NEmpty v-if="filteredSuggestions.length === 0" description="没有匹配变量" />
+        <NEmpty v-if="filteredSuggestions.length === 0" :description="$t('business.no-matching-variables')" />
       </NScrollbar>
     </NCard>
   </Teleport>
