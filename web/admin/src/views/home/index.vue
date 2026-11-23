@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue';
 import { useRouterPush } from '@/hooks/common/router';
 import { fetchDashboard } from '@/service/api';
 import { useAuthStore } from '@/store/modules/auth';
+import { formatCurrency } from '@/utils/currency';
 
 defineOptions({
   name: 'Home'
@@ -22,7 +23,7 @@ interface QuickLink {
 }
 
 const quickLinks = ref<QuickLink[]>([
-  { title: 'Provider 账号', description: '接入上游模型供应商', route: '/model-management/providers' },
+  { title: '供应商账号', description: '接入上游模型供应商', route: '/model-management/providers' },
   { title: '模型服务', description: '配置业务调用的逻辑模型', route: '/model-management/model-services' },
   { title: 'API Key', description: '为业务签发访问凭证', route: '/access/api-keys' },
   { title: '预算', description: '设置成本控制窗口', route: '/observability/budgets' }
@@ -57,7 +58,7 @@ async function loadDashboard() {
 function statCards() {
   return [
     { label: '启用模型服务', value: dash.value ? String(dash.value.active_services) : '-', route: '/model-management/model-services' },
-    { label: 'Provider 账号', value: dash.value ? String(dash.value.active_providers) : '-', route: '/model-management/providers' },
+    { label: '供应商账号', value: dash.value ? String(dash.value.active_providers) : '-', route: '/model-management/providers' },
     { label: '活跃 API Key', value: dash.value ? String(dash.value.active_api_keys) : '-', route: '/access/api-keys' },
     { label: '组织成员', value: dash.value ? String(dash.value.user_count) : '-', route: '/access/users' }
   ];
@@ -69,7 +70,9 @@ function usageCards() {
     { label: '近 7 天成功率', value: dash.value ? dash.value.success_rate_7d : '-', route: '/observability/usage' },
     {
       label: '近 7 天成本',
-      value: dash.value ? `${dash.value.cost_currency} ${dash.value.cost_7d}` : '-',
+      value: dash.value?.costs.length
+        ? dash.value.costs.map(item => formatCurrency(item.total, item.currency)).join(' · ')
+        : '-',
       route: '/observability/usage'
     },
     {

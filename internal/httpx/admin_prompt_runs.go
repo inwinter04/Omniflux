@@ -46,6 +46,7 @@ type promptRunResponse struct {
 	CachedTokens     int64           `json:"cached_tokens"`
 	ReasoningTokens  int64           `json:"reasoning_tokens"`
 	Cost             float64         `json:"cost"`
+	CostCurrency     string          `json:"cost_currency"`
 	FirstTokenMS     *int            `json:"first_token_ms"`
 	TotalMS          int             `json:"total_ms"`
 	Score            *float64        `json:"score"`
@@ -214,6 +215,7 @@ func (d ServerDeps) executePromptRun(ctx context.Context, principal auth.Princip
 		response.InputTokens, response.OutputTokens = result.InputTokens, result.OutputTokens
 		response.CachedTokens, response.ReasoningTokens = result.CachedTokens, result.ReasoningTokens
 		response.Cost, response.FirstTokenMS, response.TotalMS = result.Cost, result.FirstTokenMS, result.TotalMS
+		response.CostCurrency = result.Currency
 		if len(runContext.spec.OutputSchema) > 0 {
 			structured, validationErr := asset.ValidateStructuredOutput(runContext.spec, result.Response)
 			valid := validationErr == nil
@@ -230,19 +232,32 @@ func (d ServerDeps) executePromptRun(ctx context.Context, principal auth.Princip
 		matched, score := evaluatePromptOutput(evaluation.MatchType, evaluation.Expected, response.Response)
 		response.Matched, response.Score = &matched, &score
 	}
-	d.finalizePromptRun(ctx, runID, response)
+	if err := d.finalizePromptRun(ctx, runID, response); err != nil {
+		response.Status = "failed"
+		response.Error = "运行结果保存失败: " + err.Error()
+	}
 	return response
 }
 
-func (d ServerDeps) finalizePromptRun(ctx context.Context, runID uuid.UUID, response promptRunResponse) {
-	_, _ = d.Pool.Exec(context.WithoutCancel(ctx), `
+func (d ServerDeps) finalizePromptRun(ctx context.Context, runID uuid.UUID, response promptRunResponse) error {
+	if response.CostCurrency == "" {
+		_ = d.Pool.QueryRow(context.WithoutCancel(ctx), `SELECT cost_currency FROM model_candidates WHERE model_service_id = $1 LIMIT 1`, response.ModelServiceID).Scan(&response.CostCurrency)
+	}
+	if response.CostCurrency == "" {
+		response.CostCurrency = "USD"
+	}
+	_, err := d.Pool.Exec(context.WithoutCancel(ctx), `
 		UPDATE prompt_runs SET status=$2, response_text=$3, structured_output=$4, schema_valid=$5, error_message=$6,
 		                       provider=$7, upstream_model=$8, input_tokens=$9, output_tokens=$10, cached_tokens=$11,
-		                       reasoning_tokens=$12, cost=$13, first_token_ms=$14, total_ms=$15, score=$16, matched=$17, finished_at=now()
+		                       reasoning_tokens=$12, cost=$13, first_token_ms=$14, total_ms=$15, score=$16, matched=$17, cost_currency=$18, finished_at=now()
 		WHERE id=$1
 	`, runID, response.Status, response.Response, response.StructuredOutput, response.SchemaValid, nullableRunError(response.Error),
 		response.Provider, response.UpstreamModel, response.InputTokens, response.OutputTokens, response.CachedTokens,
-		response.ReasoningTokens, response.Cost, response.FirstTokenMS, response.TotalMS, response.Score, response.Matched)
+		response.ReasoningTokens, response.Cost, response.FirstTokenMS, response.TotalMS, response.Score, response.Matched, response.CostCurrency)
+	if err != nil {
+		d.Logger.Warn("finalize prompt run failed", "run_id", runID, "error", err)
+	}
+	return err
 }
 
 func (d ServerDeps) streamPromptRun(w http.ResponseWriter, r *http.Request, principal auth.Principal, assetID uuid.UUID, runContext promptRunContext) {
@@ -306,6 +321,7 @@ func (d ServerDeps) streamPromptRun(w http.ResponseWriter, r *http.Request, prin
 			response.InputTokens, response.OutputTokens = result.InputTokens, result.OutputTokens
 			response.CachedTokens, response.ReasoningTokens = result.CachedTokens, result.ReasoningTokens
 			response.Cost, response.FirstTokenMS, response.TotalMS = result.Cost, result.FirstTokenMS, result.TotalMS
+			response.CostCurrency = result.Currency
 			if len(runContext.spec.OutputSchema) > 0 {
 				structured, validationErr := asset.ValidateStructuredOutput(runContext.spec, result.Response)
 				valid := validationErr == nil
@@ -339,7 +355,7 @@ func (d ServerDeps) PromptRunHistory(w http.ResponseWriter, r *http.Request) {
 		SELECT r.id, r.group_id, r.kind, r.status, v.version, r.version_id, r.model_service_id, s.name,
 		       r.rendered_prompt, r.response_text, r.structured_output, r.schema_valid, COALESCE(r.error_message, ''),
 		       COALESCE(r.provider, ''), COALESCE(r.upstream_model, ''), r.input_tokens, r.output_tokens, r.cached_tokens,
-		       r.reasoning_tokens, r.cost, r.first_token_ms, r.total_ms, r.score, r.matched, r.evaluation_set_id, r.evaluation_case_id, r.created_at
+		       r.reasoning_tokens, r.cost, r.cost_currency, r.first_token_ms, r.total_ms, r.score, r.matched, r.evaluation_set_id, r.evaluation_case_id, r.created_at
 		FROM prompt_runs r
 		JOIN model_services s ON s.id = r.model_service_id
 		JOIN asset_versions v ON v.id = r.version_id
@@ -357,7 +373,7 @@ func (d ServerDeps) PromptRunHistory(w http.ResponseWriter, r *http.Request) {
 		var id, groupID, versionID, serviceID uuid.UUID
 		if err := rows.Scan(&id, &groupID, &item.Kind, &item.Status, &item.Version, &versionID, &serviceID, &item.ModelServiceName,
 			&item.RenderedPrompt, &item.Response, &item.StructuredOutput, &item.SchemaValid, &item.Error, &item.Provider, &item.UpstreamModel,
-			&item.InputTokens, &item.OutputTokens, &item.CachedTokens, &item.ReasoningTokens, &item.Cost, &item.FirstTokenMS, &item.TotalMS,
+			&item.InputTokens, &item.OutputTokens, &item.CachedTokens, &item.ReasoningTokens, &item.Cost, &item.CostCurrency, &item.FirstTokenMS, &item.TotalMS,
 			&item.Score, &item.Matched, &item.EvaluationSetID, &item.EvaluationCaseID, &item.CreatedAt); err != nil {
 			adminError(w, http.StatusInternalServerError, "PROMPT_RUN_HISTORY_FAILED", "读取运行记录失败", nil)
 			return

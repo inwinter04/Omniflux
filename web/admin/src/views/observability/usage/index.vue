@@ -6,6 +6,7 @@ import { NButton, NPagination, NTag } from 'naive-ui';
 import type { DataTableColumns } from 'naive-ui';
 import { fetchUsageRecords, fetchUsageSummary } from '@/service/api';
 import { formatTime, usageStateTagType, usageStateText } from '@/utils/admin-status';
+import { formatCurrency } from '@/utils/currency';
 
 defineOptions({
   name: 'ObservabilityUsage'
@@ -24,24 +25,28 @@ function formatNumber(value: number) {
   return value.toLocaleString();
 }
 
-function formatCost(value: string) {
-  return value;
+function formatCost(value: string, currency = 'USD') {
+  return formatCurrency(value, currency);
+}
+
+function sourceText(source: string) {
+  return { api: '业务调用', prompt_debug: '提示词调试', agent_debug: '智能体调试' }[source] ?? source;
 }
 
 const modelColumns: DataTableColumns<Api.Management.UsageModelSummary> = [
-  { title: 'Provider', key: 'provider', width: 140 },
+  { title: '供应商', key: 'provider', width: 140 },
   { title: '上游模型', key: 'upstream_model', minWidth: 160 },
   { title: '请求数', key: 'requests', width: 100, render: row => formatNumber(row.requests) },
-  { title: '输入 Token', key: 'input_tokens', width: 130, render: row => formatNumber(row.input_tokens) },
-  { title: '输出 Token', key: 'output_tokens', width: 130, render: row => formatNumber(row.output_tokens) },
-  { title: '成本', key: 'cost', width: 120, render: row => formatCost(row.cost) }
+  { title: '输入 令牌', key: 'input_tokens', width: 130, render: row => formatNumber(row.input_tokens) },
+  { title: '输出 令牌', key: 'output_tokens', width: 130, render: row => formatNumber(row.output_tokens) },
+  { title: '成本', key: 'cost', width: 140, render: row => formatCost(row.cost, row.cost_currency) }
 ];
 
 const recordColumns: DataTableColumns<Api.Management.UsageRecord> = [
   { title: '时间', key: 'created_at', width: 180, render: row => formatTime(row.created_at) },
-  { title: '项目', key: 'project_name', width: 120 },
-  { title: '应用', key: 'application_name', width: 120 },
-  { title: 'API Key', key: 'key_name', width: 140 },
+  { title: '项目', key: 'project_name', width: 120, render: row => row.project_name ?? '管理台' },
+  { title: '应用', key: 'application_name', width: 120, render: row => row.application_name ?? sourceText(row.source) },
+  { title: 'API Key', key: 'key_name', width: 140, render: row => row.key_name ?? sourceText(row.source) },
   { title: '模型服务', key: 'model_service', width: 140 },
   { title: '上游模型', key: 'upstream_model', width: 140, render: row => row.upstream_model ?? '-' },
   {
@@ -54,7 +59,8 @@ const recordColumns: DataTableColumns<Api.Management.UsageRecord> = [
   },
   { title: '输入', key: 'input_tokens', width: 100, render: row => formatNumber(row.input_tokens) },
   { title: '输出', key: 'output_tokens', width: 100, render: row => formatNumber(row.output_tokens) },
-  { title: '成本', key: 'cost', width: 110, render: row => formatCost(row.cost) },
+  { title: '成本', key: 'cost', width: 140, render: row => formatCost(row.cost, row.cost_currency) },
+  { title: '来源', key: 'source', width: 120, render: row => sourceText(row.source) },
   { title: '耗时(ms)', key: 'total_ms', width: 100, render: row => (row.total_ms != null ? String(row.total_ms) : '-') }
 ];
 
@@ -149,7 +155,7 @@ onMounted(() => {
         </NGi>
         <NGi span="24 s:12 m:6">
           <NCard size="small" :bordered="false" class="card-wrapper">
-            <div class="text-13px text-#6b7280">总 Token</div>
+            <div class="text-13px text-#6b7280">总 令牌</div>
             <div class="mt-8px text-24px font-semibold">
               {{ summary ? formatNumber(summary.total_input_tokens + summary.total_output_tokens) : '-' }}
             </div>
@@ -157,8 +163,11 @@ onMounted(() => {
         </NGi>
         <NGi span="24 s:12 m:6">
           <NCard size="small" :bordered="false" class="card-wrapper">
-            <div class="text-13px text-#6b7280">总成本 ({{ summary?.cost_currency ?? 'USD' }})</div>
-            <div class="mt-8px text-24px font-semibold">{{ summary ? formatCost(summary.total_cost) : '-' }}</div>
+            <div class="text-13px text-#6b7280">成本（按币种）</div>
+            <div v-if="summary?.costs.length" class="mt-8px">
+              <div v-for="item in summary.costs" :key="item.currency" class="text-20px font-semibold">{{ formatCost(item.total, item.currency) }}</div>
+            </div>
+            <div v-else class="mt-8px text-24px font-semibold">-</div>
           </NCard>
         </NGi>
       </NGrid>

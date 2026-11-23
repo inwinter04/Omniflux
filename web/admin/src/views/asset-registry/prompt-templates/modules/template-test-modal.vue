@@ -12,6 +12,7 @@ import {
   streamPromptRun
 } from '@/service/api';
 import { formatTime } from '@/utils/admin-status';
+import { formatCurrency } from '@/utils/currency';
 import MarkdownPreview from './markdown-preview.vue';
 import TemplateRunResult from './template-run-result.vue';
 
@@ -54,8 +55,8 @@ const historyColumns: DataTableColumns<Api.Management.PromptRun> = [
   { title: '版本', key: 'version', width: 75, render: row => `版本 ${row.version}` },
   { title: '模型服务', key: 'model_service_name', minWidth: 140 },
   { title: '状态', key: 'status', width: 85, render: row => h(NTag, { size: 'small', type: row.status === 'success' ? 'success' : 'error' }, { default: () => row.status === 'success' ? '成功' : '失败' }) },
-  { title: 'Token', key: 'tokens', width: 105, render: row => `${row.input_tokens} / ${row.output_tokens}` },
-  { title: '成本', key: 'cost', width: 105, render: row => `$${row.cost.toFixed(6)}` },
+  { title: '令牌', key: 'tokens', width: 105, render: row => `${row.input_tokens} / ${row.output_tokens}` },
+  { title: '成本', key: 'cost', width: 105, render: row => formatCurrency(row.cost, row.cost_currency) },
   { title: '耗时', key: 'total_ms', width: 90, render: row => `${row.total_ms} ms` }
 ];
 

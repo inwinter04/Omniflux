@@ -126,6 +126,7 @@ func New(deps ServerDeps) http.Handler {
 			r.Post("/provider-accounts", deps.CreateProviderAccount)
 			r.Patch("/provider-accounts/{id}", deps.UpdateProviderAccount)
 			r.Post("/provider-accounts/{id}/test", deps.TestProviderAccount)
+			r.Get("/provider-accounts/{id}/models", deps.ProviderModels)
 			r.Patch("/provider-accounts/{id}/status", deps.UpdateProviderAccountStatus)
 			r.Get("/provider-accounts/{id}/balance", deps.ProviderAccountBalance)
 			r.Delete("/provider-accounts/{id}", deps.DeleteProviderAccount)

@@ -10,13 +10,13 @@ import (
 // 前端不需要维护厂商清单,新增厂商只改服务端目录。
 func (d ServerDeps) ProviderCatalog(w http.ResponseWriter, _ *http.Request) {
 	type catalogGroup struct {
-		Group   string                       `json:"group"`
-		Label   string                       `json:"label"`
+		Group   string                        `json:"group"`
+		Label   string                        `json:"label"`
 		Entries []bifrostx.VendorCatalogEntry `json:"entries"`
 	}
 	labels := map[string]string{
-		string(bifrostx.GroupCN):         "国内官方",
-		string(bifrostx.GroupGlobal):     "海外与云",
+		string(bifrostx.GroupCN):         "模型厂商",
+		string(bifrostx.GroupGlobal):     "云服务商",
 		string(bifrostx.GroupAggregator): "聚合平台",
 		string(bifrostx.GroupThirdParty): "第三方服务",
 		string(bifrostx.GroupLocal):      "本地与自部署",

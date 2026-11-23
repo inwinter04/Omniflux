@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { formatCurrency } from '@/utils/currency';
 import MarkdownPreview from './markdown-preview.vue';
 
 const props = defineProps<{
@@ -33,10 +34,10 @@ function statusType(status: string): 'success' | 'error' | 'warning' | 'info' {
       </NSpace>
     </template>
     <NSpace size="large" class="mb-12px">
-      <NText depth="2">输入 {{ props.run.input_tokens }} Token</NText>
-      <NText depth="2">输出 {{ props.run.output_tokens }} Token</NText>
-      <NText depth="2">成本 ${{ props.run.cost.toFixed(6) }}</NText>
-      <NText v-if="props.run.first_token_ms !== null" depth="2">首 Token {{ props.run.first_token_ms }} ms</NText>
+      <NText depth="2">输入 {{ props.run.input_tokens }} 令牌</NText>
+      <NText depth="2">输出 {{ props.run.output_tokens }} 令牌</NText>
+      <NText depth="2">成本 {{ formatCurrency(props.run.cost, props.run.cost_currency) }}</NText>
+      <NText v-if="props.run.first_token_ms !== null" depth="2">首 令牌 {{ props.run.first_token_ms }} ms</NText>
       <NText depth="2">总耗时 {{ props.run.total_ms }} ms</NText>
     </NSpace>
     <NAlert v-if="props.run.error" type="error" :bordered="false" class="mb-12px">{{ props.run.error }}</NAlert>

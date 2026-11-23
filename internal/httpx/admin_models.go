@@ -25,17 +25,24 @@ type candidateResponse struct {
 	InputCostPerMillion  float64 `json:"input_cost_per_million"`
 	OutputCostPerMillion float64 `json:"output_cost_per_million"`
 	QualityScore         float64 `json:"quality_score"`
+	CostCurrency         string  `json:"cost_currency"`
 	Status               string  `json:"status"`
 }
 
 type modelServiceResponse struct {
-	ID            string              `json:"id"`
-	Name          string              `json:"name"`
-	RoutePolicyID *string             `json:"route_policy_id"`
-	Status        string              `json:"status"`
-	CreatedAt     time.Time           `json:"created_at"`
-	UpdatedAt     time.Time           `json:"updated_at"`
-	Candidates    []candidateResponse `json:"candidates"`
+	ID               string              `json:"id"`
+	Name             string              `json:"name"`
+	RoutePolicyID    *string             `json:"route_policy_id"`
+	Status           string              `json:"status"`
+	CreatedAt        time.Time           `json:"created_at"`
+	UpdatedAt        time.Time           `json:"updated_at"`
+	SuccessRate24h   *float64            `json:"success_rate_24h"`
+	Requests24h      int64               `json:"requests_24h"`
+	AvgLatencyMS24h  *float64            `json:"avg_latency_ms_24h"`
+	LastUsedAt       *time.Time          `json:"last_used_at"`
+	ActiveCandidates int                 `json:"active_candidates"`
+	HealthStatus     string              `json:"health_status"`
+	Candidates       []candidateResponse `json:"candidates"`
 }
 
 type createCandidateRequest struct {
@@ -46,6 +53,8 @@ type createCandidateRequest struct {
 	InputCostPerMillion  float64  `json:"input_cost_per_million"`
 	OutputCostPerMillion float64  `json:"output_cost_per_million"`
 	QualityScore         *float64 `json:"quality_score"`
+	CostCurrency         string   `json:"cost_currency"`
+	Status               string   `json:"status"`
 }
 
 type createModelServiceRequest struct {
@@ -70,7 +79,7 @@ func (d ServerDeps) ModelServices(w http.ResponseWriter, r *http.Request) {
 	}
 	defer svcRows.Close()
 	list := []modelServiceResponse{}
-	serviceIDs := map[uuid.UUID]*modelServiceResponse{}
+	serviceIDs := map[uuid.UUID]int{}
 	for svcRows.Next() {
 		var item modelServiceResponse
 		var id uuid.UUID
@@ -86,7 +95,7 @@ func (d ServerDeps) ModelServices(w http.ResponseWriter, r *http.Request) {
 		}
 		item.Candidates = []candidateResponse{}
 		list = append(list, item)
-		serviceIDs[id] = &list[len(list)-1]
+		serviceIDs[id] = len(list) - 1
 	}
 	if err := svcRows.Err(); err != nil {
 		adminError(w, http.StatusInternalServerError, "SERVICE_LIST_FAILED", "无法查询模型服务", nil)
@@ -98,7 +107,7 @@ func (d ServerDeps) ModelServices(w http.ResponseWriter, r *http.Request) {
 	}
 	candRows, err := d.Pool.Query(r.Context(), `
 		SELECT c.id, c.model_service_id, c.provider_account_id, a.provider, c.upstream_model, c.priority, c.weight,
-		       c.input_cost_per_million, c.output_cost_per_million, c.quality_score, c.status
+		       c.input_cost_per_million, c.output_cost_per_million, c.quality_score, c.cost_currency, c.status
 		FROM model_candidates c
 		JOIN provider_accounts a ON a.id = c.provider_account_id
 		WHERE a.organization_id = $1
@@ -113,15 +122,61 @@ func (d ServerDeps) ModelServices(w http.ResponseWriter, r *http.Request) {
 		var candID, svcID, accountID uuid.UUID
 		var c candidateResponse
 		if err := candRows.Scan(&candID, &svcID, &accountID, &c.Provider, &c.UpstreamModel, &c.Priority, &c.Weight,
-			&c.InputCostPerMillion, &c.OutputCostPerMillion, &c.QualityScore, &c.Status); err != nil {
+			&c.InputCostPerMillion, &c.OutputCostPerMillion, &c.QualityScore, &c.CostCurrency, &c.Status); err != nil {
 			adminError(w, http.StatusInternalServerError, "SERVICE_LIST_FAILED", "无法查询模型候选", nil)
 			return
 		}
 		c.ID = candID.String()
 		c.ProviderAccountID = accountID.String()
-		if svc, ok := serviceIDs[svcID]; ok {
-			svc.Candidates = append(svc.Candidates, c)
+		if index, ok := serviceIDs[svcID]; ok {
+			list[index].Candidates = append(list[index].Candidates, c)
 		}
+	}
+	healthRows, err := d.Pool.Query(r.Context(), `
+		SELECT c.model_service_id, count(u.id),
+		       avg(CASE WHEN u.state = 'success' THEN 1.0 ELSE 0.0 END),
+		       avg(u.total_ms) FILTER (WHERE u.state = 'success'), max(u.created_at)
+		FROM model_candidates c
+		LEFT JOIN usage_records u ON u.model_candidate_id = c.id
+		     AND u.created_at >= now() - interval '24 hours' AND u.state <> 'pending'
+		WHERE c.model_service_id IN (SELECT id FROM model_services WHERE organization_id = $1)
+		GROUP BY c.model_service_id
+	`, principal.OrganizationID)
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "SERVICE_LIST_FAILED", "无法查询模型服务健康统计", nil)
+		return
+	}
+	defer healthRows.Close()
+	type serviceHealth struct {
+		requests int64
+		rate     *float64
+		latency  *float64
+		lastUsed *time.Time
+	}
+	health := map[uuid.UUID]serviceHealth{}
+	for healthRows.Next() {
+		var id uuid.UUID
+		var item serviceHealth
+		if err := healthRows.Scan(&id, &item.requests, &item.rate, &item.latency, &item.lastUsed); err != nil {
+			adminError(w, http.StatusInternalServerError, "SERVICE_LIST_FAILED", "无法读取模型服务健康统计", nil)
+			return
+		}
+		health[id] = item
+	}
+	for index := range list {
+		activeCandidates := 0
+		for _, candidate := range list[index].Candidates {
+			if candidate.Status == "active" {
+				activeCandidates++
+			}
+		}
+		list[index].ActiveCandidates = activeCandidates
+		item := health[uuid.MustParse(list[index].ID)]
+		list[index].Requests24h = item.requests
+		list[index].SuccessRate24h = item.rate
+		list[index].AvgLatencyMS24h = item.latency
+		list[index].LastUsedAt = item.lastUsed
+		list[index].HealthStatus = deriveHealthStatus(list[index].Status, item.requests, item.rate, item.latency, activeCandidates)
 	}
 	adminOK(w, list)
 }
@@ -179,7 +234,7 @@ func (d ServerDeps) CreateModelService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if accountCount != len(uniqueAccountIDs) {
-		adminError(w, http.StatusBadRequest, "SERVICE_ACCOUNT_NOT_FOUND", "候选引用的 Provider 账号不存在或不属于当前组织", nil)
+		adminError(w, http.StatusBadRequest, "SERVICE_ACCOUNT_NOT_FOUND", "候选引用的 供应商账号不存在或不属于当前组织", nil)
 		return
 	}
 	var policyID *uuid.UUID
@@ -202,12 +257,22 @@ func (d ServerDeps) CreateModelService(w http.ResponseWriter, r *http.Request) {
 		}
 		policyID = &parsed
 	}
+	if _, err := normalizeCandidateCurrencies(r.Context(), d.Pool, body.Candidates); err != nil {
+		adminError(w, http.StatusBadRequest, "SERVICE_CURRENCY_INVALID", err.Error(), nil)
+		return
+	}
 	serviceID := uuid.New()
 	err := pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(r.Context(), `
 			INSERT INTO model_services(id, organization_id, name, route_policy_id)
 			VALUES ($1,$2,$3,$4)
 		`, serviceID, principal.OrganizationID, body.Name, nullablePolicyID(policyID)); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(r.Context(), `
+			INSERT INTO model_service_grants(model_service_id, organization_id, subject_type, subject_id, actions, created_by)
+			VALUES ($1,$2,'organization',$2,ARRAY['read','invoke']::text[],$3)
+		`, serviceID, principal.OrganizationID, principal.UserID); err != nil {
 			return err
 		}
 		for _, c := range body.Candidates {
@@ -222,10 +287,10 @@ func (d ServerDeps) CreateModelService(w http.ResponseWriter, r *http.Request) {
 			}
 			if _, err := tx.Exec(r.Context(), `
 				INSERT INTO model_candidates(model_service_id, provider_account_id, upstream_model,
-				                             priority, weight, input_cost_per_million, output_cost_per_million, quality_score)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+				                             priority, weight, input_cost_per_million, output_cost_per_million, quality_score, cost_currency, status)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 			`, serviceID, accountID, c.UpstreamModel, priority, weight,
-				c.InputCostPerMillion, c.OutputCostPerMillion, candidateQuality(c)); err != nil {
+				c.InputCostPerMillion, c.OutputCostPerMillion, candidateQuality(c), c.CostCurrency, candidateStatus(c)); err != nil {
 				return err
 			}
 		}
@@ -253,6 +318,13 @@ func candidateQuality(c createCandidateRequest) float64 {
 		return 0.5
 	}
 	return *c.QualityScore
+}
+
+func candidateStatus(c createCandidateRequest) string {
+	if c.Status == "disabled" {
+		return "disabled"
+	}
+	return "active"
 }
 
 func nullablePolicyID(id *uuid.UUID) any {
@@ -365,7 +437,7 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if accountCount != len(uniqueAccountIDs) {
-		adminError(w, http.StatusBadRequest, "SERVICE_ACCOUNT_NOT_FOUND", "候选引用的 Provider 账号不存在或不属于当前组织", nil)
+		adminError(w, http.StatusBadRequest, "SERVICE_ACCOUNT_NOT_FOUND", "候选引用的 供应商账号不存在或不属于当前组织", nil)
 		return
 	}
 	var policyID *uuid.UUID
@@ -387,6 +459,10 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		policyID = &parsed
+	}
+	if _, err := normalizeCandidateCurrencies(r.Context(), d.Pool, body.Candidates); err != nil {
+		adminError(w, http.StatusBadRequest, "SERVICE_CURRENCY_INVALID", err.Error(), nil)
+		return
 	}
 	var oldName string
 	err = d.Pool.QueryRow(r.Context(), `
@@ -423,10 +499,10 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 			}
 			if _, err := tx.Exec(r.Context(), `
 				INSERT INTO model_candidates(model_service_id, provider_account_id, upstream_model,
-				                             priority, weight, input_cost_per_million, output_cost_per_million, quality_score)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+				                             priority, weight, input_cost_per_million, output_cost_per_million, quality_score, cost_currency, status)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 			`, serviceID, accountID, c.UpstreamModel, priority, weight,
-				c.InputCostPerMillion, c.OutputCostPerMillion, candidateQuality(c)); err != nil {
+				c.InputCostPerMillion, c.OutputCostPerMillion, candidateQuality(c), c.CostCurrency, candidateStatus(c)); err != nil {
 				return err
 			}
 		}

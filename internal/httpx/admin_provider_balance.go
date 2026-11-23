@@ -21,11 +21,14 @@ import (
 
 // balanceEntry 是一条余额信息;字段可空,取决于厂商接口返回口径。
 type balanceEntry struct {
-	Label     string   `json:"label"`
-	Remaining *float64 `json:"remaining"`
-	Total     *float64 `json:"total"`
-	Used      *float64 `json:"used"`
-	Unit      string   `json:"unit"`
+	Label         string   `json:"label"`
+	Kind          string   `json:"kind"`
+	Window        string   `json:"window,omitempty"`
+	Remaining     *float64 `json:"remaining"`
+	Total         *float64 `json:"total"`
+	Used          *float64 `json:"used"`
+	Unit          string   `json:"unit"`
+	NextResetTime *int64   `json:"next_reset_time,omitempty"`
 }
 
 // ProviderAccountBalance 查询厂商账户余额。
@@ -49,7 +52,7 @@ func (d ServerDeps) ProviderAccountBalance(w http.ResponseWriter, r *http.Reques
 		WHERE a.id = $1 AND a.organization_id = $2
 	`, accountID, principal.OrganizationID).Scan(&provider, &ciphertext)
 	if errors.Is(err, pgx.ErrNoRows) {
-		adminError(w, http.StatusNotFound, "PROVIDER_NOT_FOUND", "Provider 账号不存在或不属于当前组织", nil)
+		adminError(w, http.StatusNotFound, "PROVIDER_NOT_FOUND", "供应商账号不存在或不属于当前组织", nil)
 		return
 	}
 	if err != nil {
@@ -183,8 +186,13 @@ func queryDeepSeekBalance(ctx context.Context, apiKey string) ([]balanceEntry, e
 			unit = "CNY"
 		}
 		remaining := balanceF64(info, "total_balance")
-		label := unit + " 钱包余额"
-		entries = append(entries, balanceEntry{Label: label, Remaining: remaining, Unit: unit})
+		label := unit + " 钱包"
+		if unit == "CNY" {
+			label = "人民币钱包"
+		} else if unit == "USD" {
+			label = "美元钱包"
+		}
+		entries = append(entries, balanceEntry{Label: label, Kind: "balance", Remaining: remaining, Unit: unit})
 	}
 	if len(entries) == 0 {
 		return nil, errors.New("余额接口响应缺少 balance_infos 字段")
@@ -286,9 +294,9 @@ func queryZhipuPlanBalance(ctx context.Context, vendorID, baseURL, apiKey string
 	if !ok {
 		return nil, errors.New("套餐接口响应缺少 data.limits 字段")
 	}
-	labelByType := map[string]string{
-		"TOKENS_LIMIT":  "5小时窗口 已用",
-		"CREDIT_LIMIT":  "每周限额 已用",
+	windowByType := map[string]string{
+		"TOKENS_LIMIT": "5 小时",
+		"CREDIT_LIMIT": "每周",
 	}
 	entries := make([]balanceEntry, 0, len(limits))
 	for _, item := range limits {
@@ -297,7 +305,7 @@ func queryZhipuPlanBalance(ctx context.Context, vendorID, baseURL, apiKey string
 			continue
 		}
 		limitType, _ := limit["type"].(string)
-		label, known := labelByType[limitType]
+		window, known := windowByType[limitType]
 		if !known {
 			// 上游可能新增限额类型;小写/驼峰归一后仍不认识则跳过。
 			continue
@@ -306,7 +314,13 @@ func queryZhipuPlanBalance(ctx context.Context, vendorID, baseURL, apiKey string
 		if percentage == nil {
 			continue
 		}
-		entries = append(entries, balanceEntry{Label: label, Remaining: percentage, Unit: "%"})
+		remaining := 100 - *percentage
+		entry := balanceEntry{Label: window + "限额", Kind: "quota", Window: window, Used: percentage, Remaining: &remaining, Unit: "%"}
+		if reset := balanceF64(limit, "nextResetTime"); reset != nil {
+			value := int64(*reset)
+			entry.NextResetTime = &value
+		}
+		entries = append(entries, entry)
 	}
 	if len(entries) == 0 {
 		return nil, errors.New("套餐接口响应不含可用额度窗口")
@@ -352,7 +366,7 @@ func queryStepFunBalance(ctx context.Context, vendorID, baseURL, apiKey string) 
 	}
 	label := "StepFun"
 	if vendorID == "stepfun-api-en" {
-		label = "StepFun (EN)"
+		label = "StepFun 国际站"
 	}
 	return []balanceEntry{{Label: label, Remaining: remaining, Unit: "CNY"}}, nil
 }

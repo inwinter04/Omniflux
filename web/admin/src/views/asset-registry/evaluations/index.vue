@@ -15,6 +15,7 @@ import {
   fetchUpdatePromptEvaluationSet
 } from '@/service/api';
 import { formatTime } from '@/utils/admin-status';
+import { formatCurrency } from '@/utils/currency';
 import JsonEditor from '../prompt-templates/modules/json-editor.vue';
 
 defineOptions({ name: 'AssetRegistryEvaluations' });
@@ -45,6 +46,11 @@ const selectedModelIDs = ref<string[]>([]);
 const versionOptions = ref<{ label: string; value: string }[]>([]);
 const runs = ref<Api.Management.PromptRun[]>([]);
 const summary = ref<Api.Management.EvaluationSummary | null>(null);
+const runCosts = computed(() => {
+  const totals = new Map<string, number>();
+  for (const run of runs.value) totals.set(run.cost_currency, (totals.get(run.cost_currency) ?? 0) + run.cost);
+  return Array.from(totals, ([currency, total]) => ({ currency, total }));
+});
 const form = ref({ asset_id: '', name: '', description: '', cases: [] as CaseDraft[] });
 
 const selected = computed(() => overviews.value.find(item => item.id === selectedID.value) ?? null);
@@ -130,8 +136,8 @@ const runColumns: DataTableColumns<Api.Management.PromptRun> = [
   { title: '模型服务', key: 'model_service_name', minWidth: 150 },
   { title: '状态', key: 'status', width: 90, render: row => h(NTag, { size: 'small', type: row.status === 'success' ? 'success' : 'error' }, { default: () => row.status === 'success' ? '成功' : '失败' }) },
   { title: '匹配', key: 'matched', width: 90, render: row => row.matched === null ? '-' : row.matched ? '通过' : '未通过' },
-  { title: 'Token', key: 'tokens', width: 110, render: row => `${row.input_tokens} / ${row.output_tokens}` },
-  { title: '成本', key: 'cost', width: 120, render: row => `$${row.cost.toFixed(6)}` },
+  { title: '令牌', key: 'tokens', width: 110, render: row => `${row.input_tokens} / ${row.output_tokens}` },
+  { title: '成本', key: 'cost', width: 120, render: row => formatCurrency(row.cost, row.cost_currency) },
   { title: '耗时', key: 'total_ms', width: 100, render: row => `${row.total_ms} ms` }
 ];
 
@@ -384,7 +390,7 @@ function accuracyText(value: number | null) {
               <NStatistic label="运行数" :value="summary.total" />
               <NStatistic label="匹配率" :value="`${(summary.accuracy * 100).toFixed(1)}%`" />
               <NStatistic label="平均耗时" :value="`${summary.average_latency_ms} ms`" />
-              <NStatistic label="总成本" :value="`$${summary.total_cost.toFixed(6)}`" />
+              <NStatistic v-for="item in runCosts" :key="item.currency" :label="`总成本（${item.currency}）`" :value="formatCurrency(item.total, item.currency)" />
             </NSpace>
           </NCard>
           <NDataTable v-if="runs.length" :columns="runColumns" :data="runs" size="small" :bordered="false" :scroll-x="800" />

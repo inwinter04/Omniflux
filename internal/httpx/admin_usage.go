@@ -14,21 +14,28 @@ import (
 	"github.com/inwinter04/omniflux/internal/auth"
 )
 
+type usageCurrencyTotal struct {
+	Currency string `json:"currency"`
+	Total    string `json:"total"`
+}
+
 type usageSummaryResponse struct {
-	TotalRequests     int64               `json:"total_requests"`
-	SuccessRequests   int64               `json:"success_requests"`
-	FailedRequests    int64               `json:"failed_requests"`
-	TotalInputTokens  int64               `json:"total_input_tokens"`
-	TotalOutputTokens int64               `json:"total_output_tokens"`
-	TotalCost         string              `json:"total_cost"`
-	CostCurrency      string              `json:"cost_currency"`
-	ByModel           []usageModelSummary `json:"by_model"`
-	ByDay             []usageDaySummary   `json:"by_day"`
+	Costs             []usageCurrencyTotal `json:"costs"`
+	TotalRequests     int64                `json:"total_requests"`
+	SuccessRequests   int64                `json:"success_requests"`
+	FailedRequests    int64                `json:"failed_requests"`
+	TotalInputTokens  int64                `json:"total_input_tokens"`
+	TotalOutputTokens int64                `json:"total_output_tokens"`
+	TotalCost         string               `json:"total_cost"`
+	CostCurrency      string               `json:"cost_currency"`
+	ByModel           []usageModelSummary  `json:"by_model"`
+	ByDay             []usageDaySummary    `json:"by_day"`
 }
 
 type usageModelSummary struct {
 	Provider      string `json:"provider"`
 	UpstreamModel string `json:"upstream_model"`
+	CostCurrency  string `json:"cost_currency"`
 	Requests      int64  `json:"requests"`
 	InputTokens   int64  `json:"input_tokens"`
 	OutputTokens  int64  `json:"output_tokens"`
@@ -43,9 +50,9 @@ type usageDaySummary struct {
 type usageRecordResponse struct {
 	ID              string  `json:"id"`
 	CreatedAt       string  `json:"created_at"`
-	ProjectName     string  `json:"project_name"`
-	ApplicationName string  `json:"application_name"`
-	KeyName         string  `json:"key_name"`
+	ProjectName     *string `json:"project_name"`
+	ApplicationName *string `json:"application_name"`
+	KeyName         *string `json:"key_name"`
 	ModelService    string  `json:"model_service"`
 	State           string  `json:"state"`
 	StatusCode      *int    `json:"status_code"`
@@ -54,6 +61,8 @@ type usageRecordResponse struct {
 	InputTokens     int64   `json:"input_tokens"`
 	OutputTokens    int64   `json:"output_tokens"`
 	Cost            string  `json:"cost"`
+	CostCurrency    string  `json:"cost_currency"`
+	Source          string  `json:"source"`
 	TotalMS         *int    `json:"total_ms"`
 }
 
@@ -97,23 +106,51 @@ func (d ServerDeps) UsageSummary(w http.ResponseWriter, r *http.Request) {
 		SELECT count(*) FILTER (WHERE state IN ('success','failed','interrupted')),
 		       count(*) FILTER (WHERE state = 'success'),
 		       count(*) FILTER (WHERE state IN ('failed','interrupted')),
-		       COALESCE(sum(input_tokens), 0), COALESCE(sum(output_tokens), 0),
-		       COALESCE(sum(cost), 0)::text, COALESCE(max(cost_currency), 'USD')
-		FROM usage_records
+		       COALESCE(sum(input_tokens), 0), COALESCE(sum(output_tokens), 0)
+		FROM reporting_usage_records
 		WHERE organization_id = $1 AND created_at >= now() - ($2 || ' days')::interval
 	`, principal.OrganizationID, strconv.Itoa(days)).Scan(
 		&summary.TotalRequests, &summary.SuccessRequests, &summary.FailedRequests,
-		&summary.TotalInputTokens, &summary.TotalOutputTokens, &summary.TotalCost, &summary.CostCurrency,
+		&summary.TotalInputTokens, &summary.TotalOutputTokens,
 	); err != nil {
 		adminError(w, http.StatusInternalServerError, "USAGE_SUMMARY_FAILED", "无法查询用量汇总", nil)
 		return
 	}
-	modelRows, err := d.Pool.Query(r.Context(), `
-		SELECT COALESCE(provider, '未知'), COALESCE(upstream_model, '未知'),
-		       count(*), COALESCE(sum(input_tokens), 0), COALESCE(sum(output_tokens), 0), COALESCE(sum(cost), 0)::text
-		FROM usage_records
+	currencyRows, err := d.Pool.Query(r.Context(), `
+		SELECT cost_currency, COALESCE(sum(cost), 0)::text FROM reporting_usage_records
 		WHERE organization_id = $1 AND created_at >= now() - ($2 || ' days')::interval
-		GROUP BY provider, upstream_model
+		GROUP BY cost_currency ORDER BY cost_currency
+	`, principal.OrganizationID, strconv.Itoa(days))
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "USAGE_SUMMARY_FAILED", "无法查询币种汇总", nil)
+		return
+	}
+	defer currencyRows.Close()
+	summary.Costs = []usageCurrencyTotal{}
+	for currencyRows.Next() {
+		var item usageCurrencyTotal
+		if err := currencyRows.Scan(&item.Currency, &item.Total); err != nil {
+			adminError(w, http.StatusInternalServerError, "USAGE_SUMMARY_FAILED", "无法读取币种汇总", nil)
+			return
+		}
+		summary.Costs = append(summary.Costs, item)
+	}
+	if len(summary.Costs) == 1 {
+		summary.TotalCost = summary.Costs[0].Total
+		summary.CostCurrency = summary.Costs[0].Currency
+	} else if len(summary.Costs) > 1 {
+		summary.TotalCost = "0"
+		summary.CostCurrency = "MIXED"
+	} else {
+		summary.TotalCost = "0"
+		summary.CostCurrency = "USD"
+	}
+	modelRows, err := d.Pool.Query(r.Context(), `
+		SELECT COALESCE(provider, '未知'), COALESCE(upstream_model, '未知'), cost_currency,
+		       count(*), COALESCE(sum(input_tokens), 0), COALESCE(sum(output_tokens), 0), COALESCE(sum(cost), 0)::text
+		FROM reporting_usage_records
+		WHERE organization_id = $1 AND created_at >= now() - ($2 || ' days')::interval
+		GROUP BY provider, upstream_model, cost_currency
 		ORDER BY count(*) DESC
 		LIMIT 20
 	`, principal.OrganizationID, strconv.Itoa(days))
@@ -125,7 +162,7 @@ func (d ServerDeps) UsageSummary(w http.ResponseWriter, r *http.Request) {
 	summary.ByModel = []usageModelSummary{}
 	for modelRows.Next() {
 		var item usageModelSummary
-		if err := modelRows.Scan(&item.Provider, &item.UpstreamModel, &item.Requests,
+		if err := modelRows.Scan(&item.Provider, &item.UpstreamModel, &item.CostCurrency, &item.Requests,
 			&item.InputTokens, &item.OutputTokens, &item.Cost); err != nil {
 			adminError(w, http.StatusInternalServerError, "USAGE_SUMMARY_FAILED", "无法查询用量汇总", nil)
 			return
@@ -134,7 +171,7 @@ func (d ServerDeps) UsageSummary(w http.ResponseWriter, r *http.Request) {
 	}
 	dayRows, err := d.Pool.Query(r.Context(), `
 		SELECT to_char(date_trunc('day', created_at), 'YYYY-MM-DD') AS day, count(*)
-		FROM usage_records
+		FROM reporting_usage_records
 		WHERE organization_id = $1 AND created_at >= now() - ($2 || ' days')::interval
 		GROUP BY 1 ORDER BY 1
 	`, principal.OrganizationID, strconv.Itoa(days))
@@ -165,7 +202,7 @@ func (d ServerDeps) UsageRecords(w http.ResponseWriter, r *http.Request) {
 	offset := (page - 1) * pageSize
 	result := usageRecordsPage{Page: page, PageSize: pageSize, Records: []usageRecordResponse{}}
 	if err := d.Pool.QueryRow(r.Context(), `
-		SELECT count(*) FROM usage_records WHERE organization_id = $1
+		SELECT count(*) FROM reporting_usage_records WHERE organization_id = $1
 	`, principal.OrganizationID).Scan(&result.Total); err != nil {
 		adminError(w, http.StatusInternalServerError, "USAGE_RECORDS_FAILED", "无法查询用量明细", nil)
 		return
@@ -173,11 +210,11 @@ func (d ServerDeps) UsageRecords(w http.ResponseWriter, r *http.Request) {
 	rows, err := d.Pool.Query(r.Context(), `
 		SELECT u.id, u.created_at, p.name, a.name, k.name, m.name,
 		       u.state, u.status_code, u.provider, u.upstream_model,
-		       u.input_tokens, u.output_tokens, u.cost::text, u.total_ms
-		FROM usage_records u
-		JOIN projects p ON p.id = u.project_id
-		JOIN applications a ON a.id = u.application_id
-		JOIN api_keys k ON k.id = u.api_key_id
+		       u.input_tokens, u.output_tokens, u.cost::text, u.cost_currency, u.source, u.total_ms
+		FROM reporting_usage_records u
+		LEFT JOIN projects p ON p.id = u.project_id
+		LEFT JOIN applications a ON a.id = u.application_id
+		LEFT JOIN api_keys k ON k.id = u.api_key_id
 		JOIN model_services m ON m.id = u.model_service_id
 		WHERE u.organization_id = $1
 		ORDER BY u.created_at DESC
@@ -194,7 +231,7 @@ func (d ServerDeps) UsageRecords(w http.ResponseWriter, r *http.Request) {
 		var createdAt time.Time
 		if err := rows.Scan(&id, &createdAt, &item.ProjectName, &item.ApplicationName, &item.KeyName,
 			&item.ModelService, &item.State, &item.StatusCode, &item.Provider, &item.UpstreamModel,
-			&item.InputTokens, &item.OutputTokens, &item.Cost, &item.TotalMS); err != nil {
+			&item.InputTokens, &item.OutputTokens, &item.Cost, &item.CostCurrency, &item.Source, &item.TotalMS); err != nil {
 			adminError(w, http.StatusInternalServerError, "USAGE_RECORDS_FAILED", "无法查询用量明细", nil)
 			return
 		}

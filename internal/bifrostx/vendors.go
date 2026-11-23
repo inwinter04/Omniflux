@@ -6,12 +6,12 @@ import "strings"
 type VendorGroup string
 
 const (
-	GroupCN         VendorGroup = "cn"         // 国内官方
-	GroupGlobal     VendorGroup = "global"     // 海外与云
-	GroupAggregator VendorGroup = "aggregator" // 聚合平台
+	GroupCN         VendorGroup = "cn"          // 国内官方
+	GroupGlobal     VendorGroup = "global"      // 海外与云
+	GroupAggregator VendorGroup = "aggregator"  // 聚合平台
 	GroupThirdParty VendorGroup = "third_party" // 第三方服务
-	GroupLocal      VendorGroup = "local"      // 本地与自部署
-	GroupCustom     VendorGroup = "custom"     // 自定义 OpenAI 兼容
+	GroupLocal      VendorGroup = "local"       // 本地与自部署
+	GroupCustom     VendorGroup = "custom"      // 自定义 OpenAI 兼容
 )
 
 // vendorEntry 是厂商目录的单条预置。
@@ -107,7 +107,7 @@ var vendorCatalog = []vendorEntry{
 	{ID: "xiaomi-mimo-token-plan", Name: "Xiaomi MiMo Token Plan (China)", Group: GroupCN, BaseURL: "https://token-plan-cn.xiaomimimo.com", URLPath: "/v1", WebsiteURL: "https://platform.xiaomimimo.com/#/token-plan", APIKeyURL: "https://platform.xiaomimimo.com/#/console/plan-manage", BalanceKind: "", EditableURL: false},
 	{ID: "baseten", Name: "Baseten", Group: GroupAggregator, BaseURL: "https://inference.baseten.co", URLPath: "/v1", WebsiteURL: "https://www.baseten.co", APIKeyURL: "https://app.baseten.co/settings/api_keys", BalanceKind: "", EditableURL: false},
 	{ID: "novita", Name: "Novita AI", Group: GroupAggregator, BaseURL: "https://api.novita.ai", URLPath: "/openai/v1", WebsiteURL: "https://novita.ai", APIKeyURL: "https://novita.ai", BalanceKind: "novita", EditableURL: false},
-	{ID: "xai", Name: "xAI (Grok)", Group: GroupThirdParty, BaseURL: "https://api.x.ai", URLPath: "/v1", WebsiteURL: "https://x.ai/api", APIKeyURL: "https://console.x.ai", BalanceKind: "", EditableURL: false},
+	{ID: "xai", Name: "xAI (Grok)", Group: GroupCN, BaseURL: "https://api.x.ai", URLPath: "/v1", WebsiteURL: "https://x.ai/api", APIKeyURL: "https://console.x.ai", BalanceKind: "", EditableURL: false},
 	{ID: "nvidia", Name: "Nvidia", Group: GroupAggregator, BaseURL: "https://integrate.api.nvidia.com", URLPath: "/v1", WebsiteURL: "https://build.nvidia.com", APIKeyURL: "https://build.nvidia.com/settings/api-keys", BalanceKind: "", EditableURL: false},
 	{ID: "ollama-cloud", Name: "Ollama Cloud", Group: GroupGlobal, BaseURL: "https://ollama.com", URLPath: "/v1", WebsiteURL: "https://ollama.com", APIKeyURL: "https://ollama.com/settings/keys", BalanceKind: "", EditableURL: false},
 	{ID: "ollama", Name: "Ollama", Group: GroupLocal, BaseURL: "http://localhost:11434", URLPath: "/v1", WebsiteURL: "https://ollama.com", APIKeyURL: "", BalanceKind: "", EditableURL: true},
@@ -157,32 +157,101 @@ func VendorByID(id string) *vendorEntry {
 
 // VendorCatalogEntry 是下发给管理台的目录条目;不含密钥等敏感信息。
 type VendorCatalogEntry struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Group       string `json:"group"`
-	BaseURL     string `json:"base_url"`
-	WebsiteURL  string `json:"website_url"`
-	APIKeyURL   string `json:"api_key_url"`
-	BalanceKind string `json:"balance_kind"`
-	EditableURL bool   `json:"editable_url"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Group        string `json:"group"`
+	FamilyID     string `json:"family_id"`
+	FamilyName   string `json:"family_name"`
+	VersionLabel string `json:"version_label"`
+	BaseURL      string `json:"base_url"`
+	APIBaseURL   string `json:"api_base_url"`
+	WebsiteURL   string `json:"website_url"`
+	APIKeyURL    string `json:"api_key_url"`
+	BalanceKind  string `json:"balance_kind"`
+	EditableURL  bool   `json:"editable_url"`
 }
 
 // VendorCatalog 返回完整厂商目录。
 func VendorCatalog() []VendorCatalogEntry {
 	list := make([]VendorCatalogEntry, 0, len(vendorCatalog))
 	for _, v := range vendorCatalog {
+		familyID, familyName, versionLabel := vendorPresentation(v)
 		list = append(list, VendorCatalogEntry{
-			ID:          v.ID,
-			Name:        v.Name,
-			Group:       string(v.Group),
-			BaseURL:     v.BaseURL,
-			WebsiteURL:  v.WebsiteURL,
-			APIKeyURL:   v.APIKeyURL,
-			BalanceKind: v.BalanceKind,
-			EditableURL: v.EditableURL,
+			ID:           v.ID,
+			Name:         v.Name,
+			Group:        string(v.Group),
+			FamilyID:     familyID,
+			FamilyName:   familyName,
+			VersionLabel: versionLabel,
+			BaseURL:      v.BaseURL,
+			APIBaseURL:   strings.TrimSuffix(v.BaseURL, "/") + v.URLPath,
+			WebsiteURL:   v.WebsiteURL,
+			APIKeyURL:    v.APIKeyURL,
+			BalanceKind:  v.BalanceKind,
+			EditableURL:  v.EditableURL,
 		})
 	}
 	return list
+}
+
+func vendorPresentation(v vendorEntry) (string, string, string) {
+	families := []struct {
+		prefixes []string
+		id       string
+		name     string
+	}{
+		{[]string{"kimi"}, "kimi", "Kimi"},
+		{[]string{"zhipu"}, "zhipu", "智谱 GLM"},
+		{[]string{"volcano", "volcengine"}, "volcengine", "火山引擎"},
+		{[]string{"qwencloud"}, "qwencloud", "千问云"},
+		{[]string{"qwenai"}, "qwenai", "千问 AI 平台"},
+		{[]string{"stepfun"}, "stepfun", "阶跃星辰"},
+		{[]string{"streamlake"}, "streamlake", "StreamLake"},
+		{[]string{"minimax"}, "minimax", "MiniMax"},
+		{[]string{"siliconflow"}, "siliconflow", "硅基流动"},
+		{[]string{"baidu-qianfan"}, "baidu-qianfan", "百度千帆"},
+		{[]string{"xiaomi-mimo"}, "xiaomi-mimo", "小米 MiMo"},
+		{[]string{"compshare"}, "compshare", "Compshare"},
+	}
+	familyID, familyName := v.ID, v.Name
+	matched := false
+	for _, family := range families {
+		for _, prefix := range family.prefixes {
+			if strings.HasPrefix(v.ID, prefix) {
+				familyID, familyName, matched = family.id, family.name, true
+				break
+			}
+		}
+		if matched {
+			break
+		}
+	}
+	if !matched {
+		return familyID, familyName, "标准服务"
+	}
+	plan := "标准 API"
+	switch {
+	case strings.Contains(v.ID, "coding"):
+		plan = "编程套餐"
+	case strings.Contains(v.ID, "agent-plan"):
+		plan = "智能体套餐"
+	case strings.Contains(v.ID, "token-plan"):
+		plan = "令牌套餐"
+	case strings.Contains(v.ID, "plan"):
+		plan = "订阅套餐"
+	}
+	region := "国内站"
+	globalIDs := map[string]bool{
+		"kimi-global": true, "kimi-for-coding-global": true,
+		"zhipu-glm-en": true, "zhipu-glm-en-coding": true,
+		"qwencloud": true, "qwencloud-coding": true, "qwencloud-token-plan": true,
+		"stepfun-api-en": true, "stepfun-plan-en": true,
+		"streamlake-en": true, "minimax-en": true, "siliconflow-en": true,
+	}
+	if globalIDs[v.ID] {
+		region = "国际站"
+	}
+	return familyID, familyName, plan + " · " + region
 }
 
 // vendorChatPath 返回厂商的 Chat Completions 完整路径。

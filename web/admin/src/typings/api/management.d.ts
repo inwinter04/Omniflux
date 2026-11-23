@@ -56,6 +56,7 @@ declare namespace Api {
       name: string;
       region: string | null;
       base_url: string | null;
+      billing_currency: string;
       status: string;
       /** 近 24 小时被动健康统计;无流量时为 null */
       requests_24h: number;
@@ -72,7 +73,11 @@ declare namespace Api {
       id: string;
       name: string;
       group: string;
+      family_id: string;
+      family_name: string;
+      version_label: string;
       base_url: string;
+      api_base_url: string;
       website_url: string;
       api_key_url: string;
       balance_kind: string;
@@ -85,12 +90,22 @@ declare namespace Api {
       entries: ProviderCatalogEntry[];
     }
 
+    interface ProviderModel {
+      id: string;
+      name: string;
+      input_cost_per_million: number | null;
+      output_cost_per_million: number | null;
+    }
+
     interface ProviderBalanceEntry {
       label: string;
+      kind: 'balance' | 'quota';
+      window?: '5 小时' | '每周';
       remaining: number | null;
       total: number | null;
       used: number | null;
       unit: string;
+      next_reset_time?: number;
     }
 
     interface CreateProviderAccountParams {
@@ -98,6 +113,7 @@ declare namespace Api {
       name: string;
       region?: string;
       base_url?: string;
+      billing_currency?: string;
       api_key: string;
     }
 
@@ -143,6 +159,7 @@ declare namespace Api {
       input_cost_per_million: number;
       output_cost_per_million: number;
       quality_score: number;
+      cost_currency: string;
       status: string;
     }
 
@@ -170,6 +187,7 @@ declare namespace Api {
       input_cost_per_million: number;
       output_cost_per_million: number;
       quality_score: number;
+      cost_currency?: string;
       status?: 'active' | 'disabled';
     }
 
@@ -236,6 +254,7 @@ declare namespace Api {
       name: string;
       region?: string;
       base_url?: string;
+      billing_currency?: string;
     }
 
     interface UpdateRoutePolicyParams {

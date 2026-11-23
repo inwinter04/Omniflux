@@ -444,6 +444,12 @@ export async function streamAgentChat(id: string, params: Api.Management.AgentCh
   if (buffer.trim()) processBlock(buffer);
 }
 
+export function fetchProviderModels(id: string) {
+  return request<{ models: Api.Management.ProviderModel[]; pricing_source: string }>({
+    url: `/provider-accounts/${id}/models`
+  });
+}
+
 export function fetchUpdateProviderAccountStatus(id: string, status: 'active' | 'disabled') {
   return request({ url: `/provider-accounts/${id}/status`, method: 'patch', data: { status } });
 }
