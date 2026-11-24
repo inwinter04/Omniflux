@@ -7,6 +7,7 @@ import { schemaFromExample } from './json-schema';
 import TemplateCodeEditor from './template-code-editor.vue';
 import type { VariableDraft } from './template-form-types';
 import TemplateVariablesTable from './template-variables-table.vue';
+import TemplateVersionsModal from './template-versions-modal.vue';
 
 const props = defineProps<{
   show: boolean;
@@ -24,7 +25,14 @@ const saving = ref(false);
 const dirty = ref(false);
 const closeConfirm = ref(false);
 const showExample = ref(false);
-const exampleText = computed(() => $t('business.name-john-doe-age-30'));
+const showVersions = ref(false);
+// 示例内容可编辑:每次打开弹窗时用当前语言的示例重置。
+const exampleText = ref('');
+
+function openExample() {
+  exampleText.value = $t('business.name-john-doe-age-30');
+  showExample.value = true;
+}
 const activeTab = ref('content');
 const detail = ref<Api.Management.AssetDetail | null>(null);
 const models = ref<Api.Management.ModelService[]>([]);
@@ -170,11 +178,10 @@ function discardAndClose() {
 </script>
 
 <template>
-  <NModal
+  <NDrawer
     :show="props.show"
-    preset="card"
-    :title="$t('business.edit-template')"
-    class="w-1000px"
+    :width="1200"
+    placement="right"
     :mask-closable="false"
     @update:show="
       value => {
@@ -183,6 +190,7 @@ function discardAndClose() {
       }
     "
   >
+    <NDrawerContent :title="$t('business.edit-template')" closable>
     <NSpin :show="loading">
       <NAlert v-if="detail?.status === 'archived'" type="info" :bordered="false" class="mb-16px">
         {{ $t('business.archived-templates-are-read-only') }}
@@ -229,7 +237,7 @@ function discardAndClose() {
                   secondary
                   class="mt-8px"
                   :disabled="detail?.status === 'archived'"
-                  @click="showExample = true"
+                  @click="openExample"
                 >
                   {{ $t('business.generate-from-sample') }}
                 </NButton>
@@ -239,31 +247,35 @@ function discardAndClose() {
         </NTabPane>
       </NTabs>
     </NSpin>
-    <template #footer>
-      <div class="flex items-center justify-between">
-        <NText depth="3">
-          {{
-            dirty
-              ? $t('business.unsavedChanges')
-              : detail
-                ? $t('business.editingLatestVersion', {
-                    version: detail.latest_version
-                  })
-                : ''
-          }}
-        </NText>
-        <NSpace>
-          <NButton @click="requestClose">{{ $t('business.close') }}</NButton>
-          <NButton :loading="saving" :disabled="detail?.status === 'archived'" @click="save(true)">
-            {{ $t('business.save-and-test') }}
-          </NButton>
-          <NButton type="primary" :loading="saving" :disabled="detail?.status === 'archived'" @click="save(false)">
-            {{ $t('business.save-as-new-version') }}
-          </NButton>
-        </NSpace>
-      </div>
-    </template>
-  </NModal>
+      <template #footer>
+        <div class="flex items-center justify-between">
+          <NText depth="3">
+            {{
+              dirty
+                ? $t('business.unsavedChanges')
+                : detail
+                  ? $t('business.editingLatestVersion', {
+                      version: detail.latest_version
+                    })
+                  : ''
+            }}
+          </NText>
+          <NSpace>
+            <NButton @click="showVersions = true">{{ $t('business.version-management') }}</NButton>
+            <NButton @click="requestClose">{{ $t('business.close') }}</NButton>
+            <NButton :loading="saving" :disabled="detail?.status === 'archived'" @click="save(true)">
+              {{ $t('business.save-and-test') }}
+            </NButton>
+            <NButton type="primary" :loading="saving" :disabled="detail?.status === 'archived'" @click="save(false)">
+              {{ $t('business.save-as-new-version') }}
+            </NButton>
+          </NSpace>
+        </div>
+      </template>
+    </NDrawerContent>
+  </NDrawer>
+
+  <TemplateVersionsModal v-model:show="showVersions" :asset="detail" @saved="initialize" />
 
   <NModal
     v-model:show="closeConfirm"

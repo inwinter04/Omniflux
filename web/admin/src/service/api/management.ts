@@ -501,7 +501,7 @@ export async function streamPromptRun(
   callbacks: StreamPromptCallbacks,
   signal?: AbortSignal
 ) {
-  const baseURL = import.meta.env.VITE_HTTP_PROXY === 'Y' ? '/proxy-default' : import.meta.env.VITE_SERVICE_BASE_URL;
+  const baseURL = import.meta.env.DEV && import.meta.env.VITE_HTTP_PROXY === 'Y' ? '/proxy-default' : import.meta.env.VITE_SERVICE_BASE_URL;
   const response = await fetch(`${baseURL}/assets/${id}/run`, {
     method: 'POST',
     credentials: 'include',
@@ -605,7 +605,7 @@ export async function streamAgentChat(
   callbacks: StreamAgentCallbacks,
   signal?: AbortSignal
 ) {
-  const baseURL = import.meta.env.VITE_HTTP_PROXY === 'Y' ? '/proxy-default' : import.meta.env.VITE_SERVICE_BASE_URL;
+  const baseURL = import.meta.env.DEV && import.meta.env.VITE_HTTP_PROXY === 'Y' ? '/proxy-default' : import.meta.env.VITE_SERVICE_BASE_URL;
   const response = await fetch(`${baseURL}/assets/${id}/agent/chat`, {
     method: 'POST',
     credentials: 'include',

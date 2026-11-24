@@ -76,8 +76,8 @@ const matchOptions = computed(() => [
 ]);
 
 const overviewColumns = computed<DataTableColumns<Api.Management.EvaluationSetOverview>>(() => [
-  { title: $t('business.evaluation-set-name'), key: 'name', minWidth: 180 },
-  { title: $t('business.template'), key: 'asset_name', minWidth: 180 },
+  { title: $t('business.evaluation-set-name'), key: 'name', ellipsis: { tooltip: true }, minWidth: 180 },
+  { title: $t('business.template'), key: 'asset_name', ellipsis: { tooltip: true }, minWidth: 180 },
   { title: $t('business.cases'), key: 'case_count', width: 90 },
   { title: $t('business.runs'), key: 'run_count', width: 90 },
   {
@@ -258,7 +258,7 @@ onMounted(async () => {
   try {
     const [setRes, assetRes, modelRes] = await Promise.all([
       fetchAllPromptEvaluationSets(),
-      fetchAssets(),
+      fetchAssets('prompt_template'),
       fetchModelServices()
     ]);
     if (!setRes.error && setRes.data) overviews.value = setRes.data;
@@ -476,7 +476,7 @@ function accuracyText(value: number | null) {
           <NButton quaternary type="primary" :loading="loading" @click="reloadList">
             {{ $t('business.refresh') }}
           </NButton>
-          <NButton type="primary" @click="startCreate">{{ $t('business.create-evaluation-set') }}</NButton>
+          <NButton v-if="canManage" type="primary" @click="startCreate">{{ $t('business.create-evaluation-set') }}</NButton>
         </NSpace>
       </template>
       <NDataTable
@@ -541,7 +541,7 @@ function accuracyText(value: number | null) {
           <NFormItem :label="$t('business.usage-description')"><NInput v-model:value="form.description" /></NFormItem>
         </NForm>
 
-        <NDivider title-placement="left">{{ $t('business.test-cases') }}{{ form.cases.length }} / 50）</NDivider>
+        <NDivider title-placement="left">{{ $t('business.test-case-count', { count: form.cases.length, max: 50 }) }}</NDivider>
         <NDataTable
           :columns="caseColumns"
           :data="form.cases"
@@ -558,30 +558,33 @@ function accuracyText(value: number | null) {
         </NSpace>
 
         <template v-if="pageMode === 'detail'">
-          <NDivider title-placement="left">{{ $t('business.run-evaluation') }}</NDivider>
-          <NGrid cols="1 700:2" :x-gap="16">
-            <NFormItemGi :label="$t('business.template-version')" :show-feedback="false">
-              <NSelect v-model:value="selectedVersionID" :options="versionOptions" />
-            </NFormItemGi>
-            <NFormItemGi :label="$t('business.model-service')" :show-feedback="false">
-              <NSelect
-                v-model:value="selectedModelIDs"
-                multiple
-                :max="4"
-                :options="modelOptions"
-                :placeholder="$t('business.use-the-template-s-bound')"
-              />
-            </NFormItemGi>
-          </NGrid>
-          <NButton
-            type="primary"
-            class="my-12px"
-            :loading="running"
-            :disabled="!selectedVersionID"
-            @click="runEvaluation"
-          >
-            {{ $t('business.run-evaluation') }}
-          </NButton>
+          <!-- 运行评估会调用模型并产生运行记录,只读角色只能查看已有结果。 -->
+          <template v-if="canManage">
+            <NDivider title-placement="left">{{ $t('business.run-evaluation') }}</NDivider>
+            <NGrid cols="1 700:2" :x-gap="16">
+              <NFormItemGi :label="$t('business.template-version')" :show-feedback="false">
+                <NSelect v-model:value="selectedVersionID" :options="versionOptions" />
+              </NFormItemGi>
+              <NFormItemGi :label="$t('business.model-service')" :show-feedback="false">
+                <NSelect
+                  v-model:value="selectedModelIDs"
+                  multiple
+                  :max="4"
+                  :options="modelOptions"
+                  :placeholder="$t('business.use-the-template-s-bound')"
+                />
+              </NFormItemGi>
+            </NGrid>
+            <NButton
+              type="primary"
+              class="my-12px"
+              :loading="running"
+              :disabled="!selectedVersionID"
+              @click="runEvaluation"
+            >
+              {{ $t('business.run-evaluation') }}
+            </NButton>
+          </template>
           <NCard v-if="summary" size="small" class="mb-12px">
             <NSpace size="large">
               <NStatistic :label="$t('business.runs')" :value="summary.total" />

@@ -380,14 +380,19 @@ func (d ServerDeps) DeleteModelService(w http.ResponseWriter, r *http.Request) {
 			"service-has-usage", nil)
 		return
 	}
-	if _, err := d.Pool.Exec(r.Context(), `DELETE FROM model_services WHERE id = $1`, serviceID); err != nil {
+	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
+		// 资源删除后已查不到名称,审计里记下它,审计列表才能显示“删的是什么”。
+		var name string
+		if err := tx.QueryRow(r.Context(), `DELETE FROM model_services WHERE id = $1 RETURNING name`, serviceID).Scan(&name); err != nil {
+			return err
+		}
+		return writeAuditEvent(r.Context(), tx, principal.OrganizationID, principal.UserID,
+			"model_service.deleted", "model_service", serviceID.String(), map[string]any{"name": name}, nil)
+	})
+	if err != nil {
 		adminError(w, http.StatusInternalServerError, "SERVICE_DELETE_FAILED", "failed-to-delete-the-model-service", nil)
 		return
 	}
-	_, _ = d.Pool.Exec(r.Context(), `
-		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id)
-		VALUES ($1,$2,'user','model_service.deleted','model_service',$3)
-	`, principal.OrganizationID, principal.UserID, serviceID.String())
 	adminOK(w, nil)
 }
 

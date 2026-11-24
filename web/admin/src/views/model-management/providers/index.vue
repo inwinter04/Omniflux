@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, h, onMounted, reactive, ref } from 'vue';
-import { useRouter } from 'vue-router';
-import { NButton, NDropdown, NSpace, NTag } from 'naive-ui';
+import { useRoute, useRouter } from 'vue-router';
+import { NButton, NDropdown, NPopconfirm, NSpace, NTag } from 'naive-ui';
 import type { DataTableColumns, FormInst, FormRules, SelectGroupOption } from 'naive-ui';
 import {
   formatTime,
@@ -48,6 +48,7 @@ function providerTestMessage(result: Api.Management.ProviderTestResult) {
   return $t('business.providerTestUnknown');
 }
 
+const route = useRoute();
 const router = useRouter();
 const catalogGroups = ref<Api.Management.ProviderCatalogGroup[]>([]);
 const catalogLoading = ref(true);
@@ -157,37 +158,14 @@ function openApiKeyUrl() {
   if (selectedVendor.value?.api_key_url) window.open(selectedVendor.value.api_key_url, '_blank', 'noopener,noreferrer');
 }
 
+// 列顺序把状态、健康等关键信息排在前面:列多于一屏宽度时,这些列在常见窗口下仍然可见,其余列横向滚动查看。
 const columns = computed<DataTableColumns<Api.Management.ProviderAccount>>(() => [
-  { title: $t('business.name'), key: 'name', minWidth: 150 },
+  { title: $t('business.name'), key: 'name', ellipsis: { tooltip: true }, minWidth: 150 },
   {
     title: $t('business.provider'),
     key: 'provider',
     width: 140,
     render: row => providerLabel(row.provider)
-  },
-  {
-    title: $t('business.service-version'),
-    key: 'version',
-    width: 160,
-    render: row => providerVersionLabel(findVendor(row.provider))
-  },
-  {
-    title: $t('business.settlement-currency'),
-    key: 'billing_currency',
-    width: 100
-  },
-  {
-    title: $t('business.region'),
-    key: 'region',
-    width: 100,
-    render: row => row.region ?? '-'
-  },
-  {
-    title: $t('business.api-endpoint'),
-    key: 'base_url',
-    minWidth: 240,
-    ellipsis: { tooltip: true },
-    render: row => row.base_url ?? findVendor(row.provider)?.api_base_url ?? '-'
   },
   {
     title: $t('business.status'),
@@ -221,6 +199,30 @@ const columns = computed<DataTableColumns<Api.Management.ProviderAccount>>(() =>
       ])
   },
   {
+    title: $t('business.service-version'),
+    key: 'version',
+    width: 160,
+    render: row => providerVersionLabel(findVendor(row.provider))
+  },
+  {
+    title: $t('business.settlement-currency'),
+    key: 'billing_currency',
+    width: 100
+  },
+  {
+    title: $t('business.region'),
+    key: 'region',
+    width: 100,
+    render: row => row.region ?? '-'
+  },
+  {
+    title: $t('business.api-endpoint'),
+    key: 'base_url',
+    minWidth: 240,
+    ellipsis: { tooltip: true },
+    render: row => row.base_url ?? findVendor(row.provider)?.api_base_url ?? '-'
+  },
+  {
     title: $t('business.created-at'),
     key: 'created_at',
     width: 170,
@@ -230,6 +232,8 @@ const columns = computed<DataTableColumns<Api.Management.ProviderAccount>>(() =>
     title: $t('business.actions'),
     key: 'actions',
     width: 310,
+    // 操作列固定在右侧:列多于一屏宽度时,行内操作不用横向滚动也能点到。
+    fixed: 'right',
     render(row) {
       if (!canManage.value) return '';
       const moreOptions = [{ label: $t('business.delete-account'), key: 'delete' }];
@@ -273,18 +277,27 @@ const columns = computed<DataTableColumns<Api.Management.ProviderAccount>>(() =>
               },
               { default: () => $t('business.test') }
             ),
-            h(
-              NButton,
-              {
-                size: 'small',
-                quaternary: true,
-                type: row.status === 'active' ? 'warning' : 'success',
-                onClick: () => toggleStatus(row)
-              },
-              {
-                default: () => (row.status === 'active' ? $t('business.disabled') : $t('business.enable'))
-              }
-            ),
+            // 停用会立即影响线上调用,需要确认;启用直接执行。
+            row.status === 'active'
+              ? h(
+                  NPopconfirm,
+                  { onPositiveClick: () => toggleStatus(row) },
+                  {
+                    trigger: () =>
+                      h(NButton, { size: 'small', quaternary: true, type: 'warning' }, { default: () => $t('business.disabled') }),
+                    default: () => $t('business.provider-account-disable-confirm')
+                  }
+                )
+              : h(
+                  NButton,
+                  {
+                    size: 'small',
+                    quaternary: true,
+                    type: 'success',
+                    onClick: () => toggleStatus(row)
+                  },
+                  { default: () => $t('business.enable') }
+                ),
             h(
               NDropdown,
               {
@@ -417,7 +430,7 @@ const modelAccountID = ref('');
 const selectedModelKeys = ref<string[]>([]);
 const modelColumns = computed<DataTableColumns<Api.Management.ProviderModel>>(() => [
   { type: 'selection' },
-  { title: $t('business.model-identifier'), key: 'id', minWidth: 220 },
+  { title: $t('business.model-identifier'), key: 'id', ellipsis: { tooltip: true }, minWidth: 220 },
   {
     title: $t('business.input-price-usd-per-million-1858l67'),
     key: 'input_cost_per_million',
@@ -533,9 +546,13 @@ async function handleDelete(id: string) {
   }
 }
 
-onMounted(() => {
-  void loadCatalog();
-  void loadData();
+onMounted(async () => {
+  await Promise.all([loadCatalog(), loadData()]);
+  const providerID = typeof route.query.provider === 'string' ? route.query.provider : '';
+  if (providerID) {
+    const account = list.value.find(item => item.id === providerID);
+    if (account) openEdit(account);
+  }
 });
 </script>
 

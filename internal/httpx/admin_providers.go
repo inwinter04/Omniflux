@@ -275,18 +275,14 @@ func (d ServerDeps) DeleteProviderAccount(w http.ResponseWriter, r *http.Request
 		if _, err := tx.Exec(r.Context(), `DELETE FROM model_candidates WHERE provider_account_id = $1 AND retired_at IS NOT NULL`, accountID); err != nil {
 			return err
 		}
-		tag, err := tx.Exec(r.Context(), `DELETE FROM provider_accounts WHERE id = $1 AND organization_id = $2`, accountID, principal.OrganizationID)
-		if err != nil {
+		// 资源删除后已查不到名称,审计里记下它,审计列表才能显示“删的是什么”。
+		var name string
+		if err := tx.QueryRow(r.Context(), `DELETE FROM provider_accounts WHERE id = $1 AND organization_id = $2 RETURNING name`,
+			accountID, principal.OrganizationID).Scan(&name); err != nil {
 			return err
 		}
-		if tag.RowsAffected() == 0 {
-			return pgx.ErrNoRows
-		}
-		_, err = tx.Exec(r.Context(), `
-			INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id)
-			VALUES ($1,$2,'user','provider_account.deleted','provider_account',$3)
-		`, principal.OrganizationID, principal.UserID, accountID.String())
-		return err
+		return writeAuditEvent(r.Context(), tx, principal.OrganizationID, principal.UserID,
+			"provider_account.deleted", "provider_account", accountID.String(), map[string]any{"name": name}, nil)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		adminError(w, http.StatusNotFound, "PROVIDER_NOT_FOUND", "provider-account-does-not-exist", nil)
@@ -371,9 +367,10 @@ func (d ServerDeps) UpdateProviderAccount(w http.ResponseWriter, r *http.Request
 		}
 	}
 	var oldName, provider, oldBillingCurrency string
+	var oldRegion, oldBaseURL *string
 	err = d.Pool.QueryRow(r.Context(), `
-		SELECT name, provider, billing_currency FROM provider_accounts WHERE id = $1 AND organization_id = $2
-	`, accountID, principal.OrganizationID).Scan(&oldName, &provider, &oldBillingCurrency)
+		SELECT name, provider, billing_currency, region, base_url FROM provider_accounts WHERE id = $1 AND organization_id = $2
+	`, accountID, principal.OrganizationID).Scan(&oldName, &provider, &oldBillingCurrency, &oldRegion, &oldBaseURL)
 	if errors.Is(err, pgx.ErrNoRows) {
 		adminError(w, http.StatusNotFound, "PROVIDER_NOT_FOUND", "provider-account-does-not-exist-or", nil)
 		return
@@ -435,7 +432,8 @@ func (d ServerDeps) UpdateProviderAccount(w http.ResponseWriter, r *http.Request
 			INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, before_state, after_state)
 			VALUES ($1,$2,'user','provider_account.updated','provider_account',$3,$4,$5)
 		`, principal.OrganizationID, principal.UserID, accountID.String(),
-			auditJSON(map[string]any{"name": oldName, "billing_currency": oldBillingCurrency}),
+			auditJSON(map[string]any{"name": oldName, "region": oldRegion, "base_url": oldBaseURL,
+				"billing_currency": oldBillingCurrency, "credentials_rotated": false}),
 			auditJSON(map[string]any{"name": body.Name, "region": body.Region, "base_url": body.BaseURL,
 				"billing_currency": billingCurrency, "credentials_rotated": rotateCredential}))
 		return err

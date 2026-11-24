@@ -52,6 +52,8 @@ const accountOptions = ref<{ label: string; value: string; currency?: string }[]
 const policyOptions = ref<{ label: string; value: string }[]>([]);
 const showCreate = ref(false);
 const showEdit = ref(false);
+const editTab = ref<'candidates' | 'health' | 'grants'>('candidates');
+const editService = ref<Api.Management.ModelService | null>(null);
 const grantsVisible = ref(false);
 const activeService = ref<Api.Management.ModelService | null>(null);
 const submitting = ref(false);
@@ -84,6 +86,7 @@ const candidateColumns = computed<DataTableColumns<Api.Management.ModelCandidate
   {
     title: $t('business.upstream-model'),
     key: 'upstream_model',
+    ellipsis: { tooltip: true },
     minWidth: 160
   },
   {
@@ -153,10 +156,11 @@ const columns = computed<DataTableColumns<Api.Management.ModelService>>(() => [
       });
     }
   },
-  { title: $t('business.name'), key: 'name', width: 180 },
+  { title: $t('business.name'), key: 'name', ellipsis: { tooltip: true }, width: 180 },
   {
     title: $t('business.route-policy'),
     key: 'route_policy_id',
+    ellipsis: { tooltip: true },
     width: 160,
     render: row => policyOptions.value.find(item => item.value === row.route_policy_id)?.label ?? '-'
   },
@@ -212,8 +216,17 @@ const columns = computed<DataTableColumns<Api.Management.ModelService>>(() => [
     title: $t('business.actions'),
     key: 'actions',
     width: 300,
+    // 操作列固定在右侧:列多于一屏宽度时,行内操作不用横向滚动也能点到。
+    fixed: 'right',
     render: row => {
-      if (!canManage.value) return '';
+      // 只读角色只能查看授权范围:授权接口本身允许 viewer 读取。
+      if (!canManage.value) {
+        return h(
+          NButton,
+          { size: 'small', quaternary: true, type: 'primary', onClick: () => openGrants(row) },
+          { default: () => $t('business.grants') }
+        );
+      }
       return h(
         NSpace,
         { size: 4 },
@@ -239,18 +252,27 @@ const columns = computed<DataTableColumns<Api.Management.ModelService>>(() => [
               },
               { default: () => $t('business.grants') }
             ),
-            h(
-              NButton,
-              {
-                size: 'small',
-                quaternary: true,
-                type: row.status === 'active' ? 'warning' : 'success',
-                onClick: () => toggleServiceStatus(row)
-              },
-              {
-                default: () => (row.status === 'active' ? $t('business.disabled') : $t('business.enable'))
-              }
-            ),
+            // 停用会立即影响线上调用,需要确认;启用直接执行。
+            row.status === 'active'
+              ? h(
+                  NPopconfirm,
+                  { onPositiveClick: () => toggleServiceStatus(row) },
+                  {
+                    trigger: () =>
+                      h(NButton, { size: 'small', quaternary: true, type: 'warning' }, { default: () => $t('business.disabled') }),
+                    default: () => $t('business.model-service-disable-confirm')
+                  }
+                )
+              : h(
+                  NButton,
+                  {
+                    size: 'small',
+                    quaternary: true,
+                    type: 'success',
+                    onClick: () => toggleServiceStatus(row)
+                  },
+                  { default: () => $t('business.enable') }
+                ),
             h(
               NPopconfirm,
               { onPositiveClick: () => handleDelete(row.id) },
@@ -358,6 +380,8 @@ async function openDiscoveredModels() {
 }
 
 function openEdit(row: Api.Management.ModelService) {
+  editService.value = row;
+  editTab.value = 'candidates';
   editModel.id = row.id;
   editModel.name = row.name;
   editModel.route_policy_id = row.route_policy_id;
@@ -478,6 +502,16 @@ async function handleDelete(id: string) {
 
 onMounted(async () => {
   await loadData();
+  const serviceID = typeof route.query.service === 'string' ? route.query.service : '';
+  if (serviceID) {
+    const service = list.value.find(item => item.id === serviceID);
+    if (service) {
+      // 审计里的授权事件带 grants=1,直接打开授权弹窗(标题已带服务名);
+      // 不叠开编辑抽屉:同帧挂载时抽屉层级更高,会把弹窗盖住。
+      if (route.query.grants === '1') openGrants(service);
+      else openEdit(service);
+    }
+  }
   await openDiscoveredModels();
 });
 </script>
@@ -503,7 +537,7 @@ onMounted(async () => {
       />
     </NCard>
 
-    <NModal v-model:show="showCreate" preset="card" :title="$t('business.create-model-service')" class="w-1200px">
+    <NModal v-model:show="showCreate" preset="card" :title="$t('business.create-model-service')" class="w-1340px">
       <NForm ref="formRef" :model="formModel" :rules="formRules" label-placement="left" label-width="100">
         <NFormItem :label="$t('business.service-name')" path="name">
           <NInput v-model:value="formModel.name" :placeholder="$t('business.logical-model-name-used-by')" />
@@ -528,28 +562,75 @@ onMounted(async () => {
     </NModal>
 
     <ModelServiceGrantsModal v-model:show="grantsVisible" :service="activeService" />
-    <NModal v-model:show="showEdit" preset="card" :title="$t('business.edit-model-service')" class="w-1200px">
-      <NForm ref="editFormRef" :model="editModel" :rules="formRules" label-placement="left" label-width="100">
-        <NFormItem :label="$t('business.service-name')" path="name">
-          <NInput v-model:value="editModel.name" />
-        </NFormItem>
-        <NFormItem :label="$t('business.route-policy')">
-          <NSelect
-            v-model:value="editModel.route_policy_id"
-            :options="policyOptions"
-            clearable
-            :placeholder="$t('business.optional-leave-unselected-to-use')"
-          />
-        </NFormItem>
-        <NDivider title-placement="left">{{ $t('business.candidate-models-all-replaced-after') }}</NDivider>
-        <CandidateEditor v-model:candidates="editModel.candidates" :account-options="accountOptions" />
-      </NForm>
-      <template #footer>
-        <NSpace justify="end">
-          <NButton @click="showEdit = false">{{ $t('business.cancel') }}</NButton>
-          <NButton type="primary" :loading="submitting" @click="handleUpdate">{{ $t('business.save') }}</NButton>
-        </NSpace>
-      </template>
-    </NModal>
+    <NDrawer v-model:show="showEdit" :width="1340" placement="right">
+      <NDrawerContent :title="$t('business.edit-model-service')" closable>
+        <NTabs v-model:value="editTab" type="line" animated>
+          <NTabPane name="candidates" :tab="$t('business.candidate-models')">
+            <NForm ref="editFormRef" :model="editModel" :rules="formRules" label-placement="left" label-width="100">
+              <NFormItem :label="$t('business.service-name')" path="name">
+                <NInput v-model:value="editModel.name" />
+              </NFormItem>
+              <NFormItem :label="$t('business.route-policy')">
+                <NSelect
+                  v-model:value="editModel.route_policy_id"
+                  :options="policyOptions"
+                  clearable
+                  :placeholder="$t('business.optional-leave-unselected-to-use')"
+                />
+              </NFormItem>
+              <NDivider title-placement="left">{{ $t('business.candidate-models-all-replaced-after') }}</NDivider>
+              <CandidateEditor v-model:candidates="editModel.candidates" :account-options="accountOptions" />
+            </NForm>
+          </NTabPane>
+          <NTabPane name="health" :tab="$t('business.healthAndUsage')">
+            <NDescriptions v-if="editService" :column="2" bordered size="small" label-placement="left">
+              <NDescriptionsItem :label="$t('business.status')">
+                <NTag :type="statusTagType(editService?.status)" size="small" round>
+                  {{ statusText(editService?.status, 'service') }}
+                </NTag>
+              </NDescriptionsItem>
+              <NDescriptionsItem :label="$t('business.healthy')">
+                <NTag :type="healthTagType(editService?.health_status)" size="small" round>
+                  {{ healthStatusText(editService?.health_status) }}
+                </NTag>
+              </NDescriptionsItem>
+              <NDescriptionsItem :label="$t('business.route-policy')">
+                {{ policyOptions.find(item => item.value === editService?.route_policy_id)?.label ?? '-' }}
+              </NDescriptionsItem>
+              <NDescriptionsItem :label="$t('business.activeCandidates')">
+                {{ editService?.active_candidates }} / {{ editService?.candidates.length }}
+              </NDescriptionsItem>
+              <NDescriptionsItem :label="$t('business.requests24h')">
+                {{ editService?.requests_24h }}
+              </NDescriptionsItem>
+              <NDescriptionsItem :label="$t('business.successRate24h')">
+                {{ editService?.success_rate_24h != null ? `${Math.round(editService?.success_rate_24h * 100)}%` : '-' }}
+              </NDescriptionsItem>
+              <NDescriptionsItem :label="$t('business.avgLatency24h')">
+                {{ editService?.avg_latency_ms_24h != null ? `${Math.round(editService?.avg_latency_ms_24h)} ms` : '-' }}
+              </NDescriptionsItem>
+              <NDescriptionsItem :label="$t('business.last-used')">
+                {{ formatTime(editService?.last_used_at) }}
+              </NDescriptionsItem>
+              <NDescriptionsItem :label="$t('business.created-at')" :span="2">
+                {{ formatTime(editService?.created_at) }}
+              </NDescriptionsItem>
+            </NDescriptions>
+          </NTabPane>
+          <NTabPane name="grants" :tab="$t('business.grants')">
+            <NAlert type="info" :bordered="false" class="mb-12px">{{ $t('business.modelGrantNotice') }}</NAlert>
+            <NButton type="primary" @click="editService ? openGrants(editService) : undefined">
+              {{ $t('business.grants') }}
+            </NButton>
+          </NTabPane>
+        </NTabs>
+        <template #footer>
+          <NSpace justify="end">
+            <NButton @click="showEdit = false">{{ $t('business.cancel') }}</NButton>
+            <NButton type="primary" :loading="submitting" @click="handleUpdate">{{ $t('business.save') }}</NButton>
+          </NSpace>
+        </template>
+      </NDrawerContent>
+    </NDrawer>
   </div>
 </template>

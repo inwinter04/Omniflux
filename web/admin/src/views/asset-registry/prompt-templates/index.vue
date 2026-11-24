@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { h, onMounted, ref, computed } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { NButton, NDropdown, NSpace, NTag } from 'naive-ui';
 import type { DataTableColumns } from 'naive-ui';
 import { formatTime, statusTagType, statusText } from '@/utils/admin-status';
@@ -28,10 +28,11 @@ const grantsVisible = ref(false);
 const editingID = ref<string | null>(null);
 const activeAsset = ref<Api.Management.Asset | null>(null);
 const archiveTarget = ref<Api.Management.Asset | null>(null);
+const route = useRoute();
 const router = useRouter();
 
 const columns = computed<DataTableColumns<Api.Management.Asset>>(() => [
-  { title: $t('business.template-name'), key: 'name', minWidth: 160 },
+  { title: $t('business.template-name'), key: 'name', ellipsis: { tooltip: true }, minWidth: 160 },
   {
     title: $t('business.usage-description'),
     key: 'description',
@@ -86,6 +87,8 @@ const columns = computed<DataTableColumns<Api.Management.Asset>>(() => [
     title: $t('business.actions'),
     key: 'actions',
     width: 370,
+    // 操作列固定在右侧:列多于一屏宽度时,行内操作不用横向滚动也能点到。
+    fixed: 'right',
     render: row => {
       if (!canManage.value) {
         return h(NSpace, { size: 4 }, {
@@ -104,6 +107,11 @@ const columns = computed<DataTableColumns<Api.Management.Asset>>(() => [
                 onClick: () => router.push({ name: 'asset-registry_evaluations', query: { asset: row.id } })
               },
               { default: () => $t('business.evaluate') }
+            ),
+            h(
+              NButton,
+              { size: 'small', quaternary: true, type: 'primary', onClick: () => openAction('grants', row) },
+              { default: () => $t('business.grants') }
             )
           ]
         });
@@ -187,7 +195,7 @@ const columns = computed<DataTableColumns<Api.Management.Asset>>(() => [
 async function loadData() {
   loading.value = true;
   try {
-    const { data, error } = await fetchAssets();
+    const { data, error } = await fetchAssets('prompt_template');
     if (!error && data) list.value = data;
   } finally {
     loading.value = false;
@@ -254,7 +262,15 @@ function openTestFor(id: string) {
     });
 }
 
-onMounted(loadData);
+onMounted(async () => {
+  await loadData();
+  const assetID = typeof route.query.asset === 'string' ? route.query.asset : '';
+  const asset = list.value.find(item => item.id === assetID);
+  if (!asset) return;
+  // 审计里的授权事件带 grants=1,直接打开授权弹窗,不叠开编辑表单。
+  if (route.query.grants === '1') openAction('grants', asset);
+  else openForm(asset.id);
+});
 </script>
 
 <template>

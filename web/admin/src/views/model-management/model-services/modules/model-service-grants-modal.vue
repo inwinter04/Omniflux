@@ -11,12 +11,15 @@ import {
   fetchUpsertModelServiceGrant
 } from '@/service/api';
 import { $t } from '@/locales';
+import { usePermission } from '@/hooks/common/permission';
 
 const props = defineProps<{
   show: boolean;
   service: Api.Management.ModelService | null;
 }>();
 const emit = defineEmits<{ 'update:show': [value: boolean] }>();
+// 只读角色也能查看授权范围(审计直达会打开本弹窗),但不提供保存与移除入口;后端同样要求 project_admin。
+const { canManage } = usePermission();
 
 const loading = ref(false);
 const saving = ref(false);
@@ -48,7 +51,7 @@ const subjectTypeOptions = computed(() => [
   { label: $t('business.selected-departments'), value: 'department' },
   { label: $t('business.selected-projects'), value: 'project' }
 ]);
-const columns = computed<DataTableColumns<Api.Management.ModelServiceGrant>>(() => [
+const baseColumns = computed<DataTableColumns<Api.Management.ModelServiceGrant>>(() => [
   {
     title: $t('business.access-scope'),
     key: 'subject_name',
@@ -77,6 +80,10 @@ const columns = computed<DataTableColumns<Api.Management.ModelServiceGrant>>(() 
         }
       )
   },
+]);
+
+// 移除入口只给可管理角色;只读角色只能查看已授权范围。
+const manageColumns = computed<DataTableColumns<Api.Management.ModelServiceGrant>>(() => [
   {
     title: $t('business.actions'),
     key: 'actions',
@@ -93,6 +100,10 @@ const columns = computed<DataTableColumns<Api.Management.ModelServiceGrant>>(() 
       )
   }
 ]);
+
+const columns = computed<DataTableColumns<Api.Management.ModelServiceGrant>>(() =>
+  canManage.value ? [...baseColumns.value, ...manageColumns.value] : baseColumns.value
+);
 
 watch(
   () => props.show,
@@ -181,7 +192,7 @@ async function revoke(grantID: string) {
       <NAlert type="info" :bordered="false" class="mb-16px">
         {{ $t('business.modelGrantNotice') }}
       </NAlert>
-      <NForm label-placement="left" label-width="90">
+      <NForm v-if="canManage" label-placement="left" label-width="auto">
         <NGrid cols="1 640:2" :x-gap="16">
           <NFormItemGi :label="$t('business.scope-type')">
             <NSelect

@@ -426,6 +426,12 @@ const local: App.I18n.Schema = {
       'After disabling, all API keys under this project stop working immediately. You can enable it again later. Disable?',
     'application-disable-confirm':
       'After disabling, all API keys under this application stop working immediately. You can enable it again later. Disable?',
+    'model-service-disable-confirm':
+      'After disabling, business systems can no longer call this model service. You can enable it again later. Disable?',
+    'provider-account-disable-confirm':
+      'After disabling, candidates from this account no longer take part in routing, and model services that only use this account stop working. You can enable it again later. Disable?',
+    'route-policy-disable-confirm':
+      'After disabling, model services that use this policy fall back to the default policy (hard constraints no longer apply). You can enable it again later. Disable?',
     'password-reset': 'Password reset',
     'user-enabled': 'User enabled',
     'user-disabled': 'User disabled',
@@ -545,7 +551,7 @@ const local: App.I18n.Schema = {
     back: 'Back',
     'edit-evaluation-set': 'Edit evaluation set',
     'delete-evaluation-set': 'Delete evaluation set',
-    'test-cases': 'Test cases (',
+    'test-case-count': 'Test cases ({count} / {max})',
     'add-case': 'Add case',
     'save-evaluation-set': 'Save evaluation set',
     'run-evaluation': 'Run evaluation',
@@ -650,6 +656,7 @@ const local: App.I18n.Schema = {
     'save-grant': 'Save grant',
     'granted-scopes': 'Granted scopes',
     'access-grants': 'Access grants',
+    'asset-access-title': '{name} · Access grants',
     'prompt-tokens': 'First-token latency',
     'total-latency': 'Total latency',
     'view-actual-input': 'View actual input',
@@ -744,6 +751,11 @@ const local: App.I18n.Schema = {
     'candidate-model-enabled': 'Candidate model enabled',
     'candidate-model-disabled': 'Candidate model disabled',
     'model-service-deleted': 'Model service deleted',
+    healthAndUsage: 'Health and usage',
+    activeCandidates: 'Active candidates',
+    requests24h: 'Requests (24h)',
+    successRate24h: 'Success rate (24h)',
+    avgLatency24h: 'Avg latency (24h)',
     'logical-model-name-used-by': 'Logical model name used by business calls',
     'service-name': 'Service name',
     'optional-leave-unselected-to-use': 'Optional. Leave unselected to use the default timeout configuration',
@@ -1142,9 +1154,10 @@ const local: App.I18n.Schema = {
     'hong-kong-dollar-hkd': 'Hong Kong Dollar (HKD)',
     'new-taiwan-dollar-twd': 'New Taiwan Dollar (TWD)',
     'korean-won-krw': 'Korean Won (KRW)',
-    'name-john-doe-age-30': '{\n  "name": "John Doe",\n  "age": 30,\n  "tags": ["Key account"]\n}',
+    // 以下两条是带字面花括号的示例内容,花括号必须写成 vue-i18n 的字面量插值,否则消息编译失败。
+    'name-john-doe-age-30': "{'{'}\n  \"name\": \"John Doe\",\n  \"age\": 30,\n  \"tags\": [\"Key account\"]\n{'}'}",
     'answer-the-question-using-the':
-      'Answer the question using the known information.\n\nUser question: {{ .question }}',
+      "Answer the question using the known information.\n\nUser question: {'{{'} .question {'}}'}",
     'variables-you-can-also-continue-1cevi35': 'variables. You can also continue without any variables.',
     'new-version-enabled': 'New version enabled',
     'add-to-model-service': 'Add to model service',

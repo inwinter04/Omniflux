@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"regexp"
 	"strings"
@@ -191,13 +192,31 @@ func (d ServerDeps) DeletePromptEvaluationSet(w http.ResponseWriter, r *http.Req
 		adminError(w, http.StatusBadRequest, "EVALUATION_SET_ID_INVALID", "invalid-evaluation-set-id", nil)
 		return
 	}
-	tag, err := d.Pool.Exec(r.Context(), `DELETE FROM prompt_evaluation_sets WHERE id=$1 AND organization_id=$2 AND asset_id=$3`, setID, principal.OrganizationID, assetID)
-	if err != nil {
-		adminError(w, http.StatusInternalServerError, "EVALUATION_SET_DELETE_FAILED", "failed-to-delete-the-evaluation-set", nil)
+	// 测试集删除后记录已不存在,审计里记下名称与用例数,和创建 / 更新保持同样的可追溯性。
+	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
+		var name string
+		var caseCount int
+		if err := tx.QueryRow(r.Context(), `
+			SELECT s.name, (SELECT count(*) FROM prompt_evaluation_cases c WHERE c.evaluation_set_id = s.id)
+			FROM prompt_evaluation_sets s
+			WHERE s.id = $1 AND s.organization_id = $2 AND s.asset_id = $3
+			FOR UPDATE
+		`, setID, principal.OrganizationID, assetID).Scan(&name, &caseCount); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(r.Context(), `DELETE FROM prompt_evaluation_sets WHERE id = $1`, setID); err != nil {
+			return err
+		}
+		return writeAuditEvent(r.Context(), tx, principal.OrganizationID, principal.UserID,
+			"evaluation_set.deleted", "evaluation_set", setID.String(),
+			map[string]any{"asset_id": assetID.String(), "name": name, "cases": caseCount}, nil)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		adminError(w, http.StatusNotFound, "EVALUATION_SET_NOT_FOUND", "evaluation-set-does-not-exist", nil)
 		return
 	}
-	if tag.RowsAffected() == 0 {
-		adminError(w, http.StatusNotFound, "EVALUATION_SET_NOT_FOUND", "evaluation-set-does-not-exist", nil)
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "EVALUATION_SET_DELETE_FAILED", "failed-to-delete-the-evaluation-set", nil)
 		return
 	}
 	adminOK(w, nil)

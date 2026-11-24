@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { h, onMounted, ref, computed } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { NButton, NDropdown, NSpace, NTag } from 'naive-ui';
 import type { DataTableColumns } from 'naive-ui';
 import { formatTime, statusTagType, statusText } from '@/utils/admin-status';
@@ -14,6 +15,8 @@ import AgentFormModal from './modules/agent-form-modal.vue';
 defineOptions({ name: 'AssetRegistryAgents' });
 
 const { canManage } = usePermission();
+const route = useRoute();
+const router = useRouter();
 
 const loading = ref(true);
 const list = ref<Api.Management.Asset[]>([]);
@@ -26,7 +29,7 @@ const chatAsset = ref<Api.Management.Asset | null>(null);
 const archiveTarget = ref<Api.Management.Asset | null>(null);
 
 const columns = computed<DataTableColumns<Api.Management.Asset>>(() => [
-  { title: $t('business.agent-name'), key: 'name', minWidth: 170 },
+  { title: $t('business.agent-name'), key: 'name', ellipsis: { tooltip: true }, minWidth: 170 },
   {
     title: $t('business.usage-description'),
     key: 'description',
@@ -81,13 +84,24 @@ const columns = computed<DataTableColumns<Api.Management.Asset>>(() => [
     title: $t('business.actions'),
     key: 'actions',
     width: 330,
+    // 操作列固定在右侧:列多于一屏宽度时,行内操作不用横向滚动也能点到。
+    fixed: 'right',
     render: row => {
       if (!canManage.value) {
-        return h(
-          NButton,
-          { size: 'small', quaternary: true, type: 'primary', onClick: () => openAction('versions', row) },
-          { default: () => $t('business.version') }
-        );
+        return h(NSpace, { size: 4 }, {
+          default: () => [
+            h(
+              NButton,
+              { size: 'small', quaternary: true, type: 'primary', onClick: () => openAction('versions', row) },
+              { default: () => $t('business.version') }
+            ),
+            h(
+              NButton,
+              { size: 'small', quaternary: true, type: 'primary', onClick: () => openAction('grants', row) },
+              { default: () => $t('business.grants') }
+            )
+          ]
+        });
       }
       return h(
         NSpace,
@@ -151,7 +165,23 @@ const columns = computed<DataTableColumns<Api.Management.Asset>>(() => [
   }
 ]);
 
-onMounted(loadData);
+onMounted(async () => {
+  await loadData();
+  const assetID = typeof route.query.asset === 'string' ? route.query.asset : '';
+  if (assetID) {
+    const asset = list.value.find(item => item.id === assetID);
+    if (asset) {
+      // 审计里的授权事件带 grants=1,直接打开授权弹窗,不叠开编辑表单。
+      if (route.query.grants === '1') openAction('grants', asset);
+      else openForm(asset.id);
+    }
+  }
+  const agentID = typeof route.query.agent === 'string' ? route.query.agent : '';
+  if (agentID) {
+    const asset = list.value.find(item => item.id === agentID);
+    if (asset) chatAsset.value = asset;
+  }
+});
 
 async function loadData() {
   loading.value = true;
@@ -176,6 +206,14 @@ function openAction(action: 'versions' | 'grants', asset: Api.Management.Asset) 
 
 function openChat(asset: Api.Management.Asset) {
   chatAsset.value = asset;
+  void router.replace({ query: { ...route.query, agent: asset.id } });
+}
+
+function closeChat() {
+  chatAsset.value = null;
+  const query = { ...route.query };
+  delete query.agent;
+  void router.replace({ query });
 }
 
 function lifecycleOptions(asset: Api.Management.Asset) {
@@ -211,7 +249,7 @@ async function archiveAsset() {
 
 <template>
   <div class="min-h-full bg-#f6f7f9 p-4px dark:bg-#101014">
-    <AgentChatWorkspace v-if="chatAsset" :asset="chatAsset" @back="chatAsset = null" />
+    <AgentChatWorkspace v-if="chatAsset" :asset="chatAsset" @back="closeChat" />
     <NCard v-else :title="$t('business.agent-management')" :bordered="false" class="card-wrapper">
       <template #header-extra>
         <NSpace>

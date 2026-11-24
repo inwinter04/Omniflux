@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { h, onMounted, reactive, ref, computed } from 'vue';
+import { useRoute } from 'vue-router';
 import { NButton, NPopconfirm, NSpace, NTag } from 'naive-ui';
 import type { DataTableColumns, FormInst, FormRules, SelectOption } from 'naive-ui';
 import { formatTime, statusTagType, statusText } from '@/utils/admin-status';
@@ -20,6 +21,7 @@ defineOptions({
 });
 
 const { canManage } = usePermission();
+const route = useRoute();
 
 const strategyOptions = computed(() => [
   { label: $t('business.cost-first'), value: 'cost_first' },
@@ -123,13 +125,26 @@ function strategyLabel(value: string) {
   return strategyOptions.value.find(item => item.value === value)?.label ?? value;
 }
 
+// 列顺序把状态、健康等关键信息排在前面:列多于一屏宽度时,这些列在常见窗口下仍然可见,其余列横向滚动查看。
 const columns = computed<DataTableColumns<Api.Management.RoutePolicy>>(() => [
-  { title: $t('business.name'), key: 'name', width: 160 },
+  { title: $t('business.name'), key: 'name', ellipsis: { tooltip: true }, width: 160 },
   {
     title: $t('business.strategy'),
     key: 'strategy',
     width: 180,
     render: row => strategyLabel(row.strategy)
+  },
+  {
+    title: $t('business.status'),
+    key: 'status',
+    width: 90,
+    render(row) {
+      return h(
+        NTag,
+        { type: statusTagType(row.status), size: 'small', round: true },
+        { default: () => statusText(row.status, 'policy') }
+      );
+    }
   },
   { title: $t('business.version'), key: 'version', width: 70 },
   { title: $t('business.failover-limit'), key: 'fallback_limit', width: 120 },
@@ -144,18 +159,6 @@ const columns = computed<DataTableColumns<Api.Management.RoutePolicy>>(() => [
     width: 140
   },
   {
-    title: $t('business.status'),
-    key: 'status',
-    width: 90,
-    render(row) {
-      return h(
-        NTag,
-        { type: statusTagType(row.status), size: 'small', round: true },
-        { default: () => statusText(row.status, 'policy') }
-      );
-    }
-  },
-  {
     title: $t('business.updated-at'),
     key: 'updated_at',
     width: 180,
@@ -165,6 +168,8 @@ const columns = computed<DataTableColumns<Api.Management.RoutePolicy>>(() => [
     title: $t('business.actions'),
     key: 'actions',
     width: 230,
+    // 操作列固定在右侧:列多于一屏宽度时,行内操作不用横向滚动也能点到。
+    fixed: 'right',
     render(row) {
       if (!canManage.value) return '';
       return h(
@@ -182,18 +187,27 @@ const columns = computed<DataTableColumns<Api.Management.RoutePolicy>>(() => [
               },
               { default: () => $t('business.edit') }
             ),
-            h(
-              NButton,
-              {
-                size: 'small',
-                quaternary: true,
-                type: row.status === 'active' ? 'warning' : 'success',
-                onClick: () => toggleStatus(row)
-              },
-              {
-                default: () => (row.status === 'active' ? $t('business.disabled') : $t('business.enable'))
-              }
-            ),
+            // 停用会立即影响线上路由,需要确认;启用直接执行。
+            row.status === 'active'
+              ? h(
+                  NPopconfirm,
+                  { onPositiveClick: () => toggleStatus(row) },
+                  {
+                    trigger: () =>
+                      h(NButton, { size: 'small', quaternary: true, type: 'warning' }, { default: () => $t('business.disabled') }),
+                    default: () => $t('business.route-policy-disable-confirm')
+                  }
+                )
+              : h(
+                  NButton,
+                  {
+                    size: 'small',
+                    quaternary: true,
+                    type: 'success',
+                    onClick: () => toggleStatus(row)
+                  },
+                  { default: () => $t('business.enable') }
+                ),
             h(
               NPopconfirm,
               { onPositiveClick: () => handleDelete(row.id) },
@@ -338,9 +352,13 @@ async function handleDelete(id: string) {
   }
 }
 
-onMounted(() => {
-  void loadCatalog();
-  void loadData();
+onMounted(async () => {
+  await Promise.all([loadCatalog(), loadData()]);
+  const policyID = typeof route.query.policy === 'string' ? route.query.policy : '';
+  if (policyID) {
+    const policy = list.value.find(item => item.id === policyID);
+    if (policy) openEdit(policy);
+  }
 });
 </script>
 
@@ -354,7 +372,7 @@ onMounted(() => {
         </NSpace>
       </template>
       <NAlert type="info" :bordered="false" class="mb-12px">
-        {{ $t('business.scoring-weights-apply-according-to') }}traints。
+        {{ $t('business.scoring-weights-apply-according-to') }}
       </NAlert>
       <NDataTable :columns="columns" :data="list" :loading="loading" :bordered="false" :scroll-x="1200" />
     </NCard>

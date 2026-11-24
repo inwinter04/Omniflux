@@ -147,12 +147,21 @@ func (d ServerDeps) CreateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 		weights = json.RawMessage(strategyWeights(body.Strategy))
 	}
 	policyID := uuid.New()
-	if _, err := d.Pool.Exec(r.Context(), `
-		INSERT INTO route_policies(id, organization_id, name, strategy, constraints, weights,
-		                           fallback_limit, provider_timeout_ms, first_token_timeout_ms)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-	`, policyID, principal.OrganizationID, body.Name, body.Strategy, constraints, weights,
-		fallbackLimit, providerTimeout, firstTokenTimeout); err != nil {
+	err := pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(r.Context(), `
+			INSERT INTO route_policies(id, organization_id, name, strategy, constraints, weights,
+			                           fallback_limit, provider_timeout_ms, first_token_timeout_ms)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		`, policyID, principal.OrganizationID, body.Name, body.Strategy, constraints, weights,
+			fallbackLimit, providerTimeout, firstTokenTimeout); err != nil {
+			return err
+		}
+		return writeAuditEvent(r.Context(), tx, principal.OrganizationID, principal.UserID,
+			"route_policy.created", "route_policy", policyID.String(), nil, map[string]any{
+				"name": body.Name, "strategy": body.Strategy, "constraints": json.RawMessage(constraints),
+			})
+	})
+	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.ConstraintName == "route_policies_organization_id_name_key" {
 			adminError(w, http.StatusConflict, "POLICY_NAME_EXISTS", "a-route-policy-with-the-same", nil)
@@ -161,10 +170,6 @@ func (d ServerDeps) CreateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusInternalServerError, "POLICY_CREATE_FAILED", "failed-to-create-the-route-policy", nil)
 		return
 	}
-	_, _ = d.Pool.Exec(r.Context(), `
-		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, after_state)
-		VALUES ($1,$2,'user','route_policy.created','route_policy',$3,$4)
-	`, principal.OrganizationID, principal.UserID, policyID.String(), auditJSON(map[string]any{"name": body.Name, "strategy": body.Strategy}))
 	adminOK(w, map[string]string{"id": policyID.String()})
 }
 
@@ -214,14 +219,19 @@ func (d ServerDeps) DeleteRoutePolicy(w http.ResponseWriter, r *http.Request) {
 			"policy-has-decisions", nil)
 		return
 	}
-	if _, err := d.Pool.Exec(r.Context(), `DELETE FROM route_policies WHERE id = $1`, policyID); err != nil {
+	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
+		// 资源删除后已查不到名称,审计里记下它,审计列表才能显示“删的是什么”。
+		var name string
+		if err := tx.QueryRow(r.Context(), `DELETE FROM route_policies WHERE id = $1 RETURNING name`, policyID).Scan(&name); err != nil {
+			return err
+		}
+		return writeAuditEvent(r.Context(), tx, principal.OrganizationID, principal.UserID,
+			"route_policy.deleted", "route_policy", policyID.String(), map[string]any{"name": name}, nil)
+	})
+	if err != nil {
 		adminError(w, http.StatusInternalServerError, "POLICY_DELETE_FAILED", "failed-to-delete-the-route-policy", nil)
 		return
 	}
-	_, _ = d.Pool.Exec(r.Context(), `
-		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id)
-		VALUES ($1,$2,'user','route_policy.deleted','route_policy',$3)
-	`, principal.OrganizationID, principal.UserID, policyID.String())
 	adminOK(w, nil)
 }
 
@@ -296,6 +306,21 @@ func (d ServerDeps) UpdateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusInternalServerError, "POLICY_UPDATE_FAILED", "failed-to-update-the-route-policy", nil)
 		return
 	}
+	// 未提交的可选字段沿用原值(与 UPDATE 的 COALESCE 一致),审计快照记录生效后的值。
+	newFallbackLimit, newProviderTimeout, newFirstTokenTimeout := oldFallbackLimit, oldProviderTimeout, oldFirstTokenTimeout
+	if body.FallbackLimit != nil {
+		newFallbackLimit = *body.FallbackLimit
+	}
+	if body.ProviderTimeoutMS != nil {
+		newProviderTimeout = *body.ProviderTimeoutMS
+	}
+	if body.FirstTokenTimeoutMS != nil {
+		newFirstTokenTimeout = *body.FirstTokenTimeoutMS
+	}
+	newConstraints := oldConstraints
+	if len(constraints) > 0 {
+		newConstraints = constraints
+	}
 	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(r.Context(), `
 			UPDATE route_policies SET
@@ -324,8 +349,8 @@ func (d ServerDeps) UpdateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 				"fallback_limit": oldFallbackLimit, "provider_timeout_ms": oldProviderTimeout,
 				"first_token_timeout_ms": oldFirstTokenTimeout, "constraints": rawJSONOrEmpty(oldConstraints)}),
 			auditJSON(map[string]any{"name": body.Name, "strategy": body.Strategy,
-				"fallback_limit": body.FallbackLimit, "provider_timeout_ms": body.ProviderTimeoutMS,
-				"first_token_timeout_ms": body.FirstTokenTimeoutMS, "constraints": rawJSONOrEmpty(constraints)}))
+				"fallback_limit": newFallbackLimit, "provider_timeout_ms": newProviderTimeout,
+				"first_token_timeout_ms": newFirstTokenTimeout, "constraints": rawJSONOrEmpty(newConstraints)}))
 		return err
 	})
 	if errors.Is(err, pgx.ErrNoRows) {

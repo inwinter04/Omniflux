@@ -172,19 +172,37 @@ func (d ServerDeps) RevokeModelServiceGrant(w http.ResponseWriter, r *http.Reque
 		adminError(w, http.StatusBadRequest, "SERVICE_GRANT_ID_INVALID", "invalid-grant-id", nil)
 		return
 	}
-	result, err := d.Pool.Exec(r.Context(), `DELETE FROM model_service_grants WHERE id = $1 AND model_service_id = $2 AND organization_id = $3`,
-		grantID, serviceID, principal.OrganizationID)
+	// 先读出授权再删除:撤销后记录已不存在,审计快照是回溯所属模型服务的唯一来源。
+	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
+		var subjectType string
+		var subjectID uuid.UUID
+		var actions []string
+		err := tx.QueryRow(r.Context(), `
+			SELECT subject_type, subject_id, actions
+			FROM model_service_grants
+			WHERE id = $1 AND model_service_id = $2 AND organization_id = $3
+			FOR UPDATE
+		`, grantID, serviceID, principal.OrganizationID).Scan(&subjectType, &subjectID, &actions)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return &assetAPIError{status: http.StatusNotFound, code: "SERVICE_GRANT_NOT_FOUND", reason: "grant-does-not-exist-or-does"}
+		}
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(r.Context(), `DELETE FROM model_service_grants WHERE id = $1`, grantID); err != nil {
+			return err
+		}
+		_, err = tx.Exec(r.Context(), `
+			INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, before_state)
+			VALUES ($1,$2,'user','model_service_grant.revoked','model_service_grant',$3,$4)
+		`, principal.OrganizationID, principal.UserID, grantID.String(), auditJSON(map[string]any{
+			"model_service_id": serviceID.String(), "subject_type": subjectType, "subject_id": subjectID.String(), "actions": actions,
+		}))
+		return err
+	})
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "SERVICE_GRANT_REVOKE_FAILED", "failed-to-revoke-the-model-service", nil)
+		writeAssetError(w, err, "SERVICE_GRANT_REVOKE_FAILED", "failed-to-revoke-the-model-service")
 		return
 	}
-	if result.RowsAffected() == 0 {
-		adminError(w, http.StatusNotFound, "SERVICE_GRANT_NOT_FOUND", "grant-does-not-exist-or-does", nil)
-		return
-	}
-	_, _ = d.Pool.Exec(r.Context(), `
-		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id)
-		VALUES ($1,$2,'user','model_service_grant.revoked','model_service_grant',$3)
-	`, principal.OrganizationID, principal.UserID, grantID.String())
 	adminOK(w, nil)
 }

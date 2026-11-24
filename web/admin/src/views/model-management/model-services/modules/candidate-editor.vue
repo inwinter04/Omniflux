@@ -42,7 +42,7 @@ const columns = computed<DataTableColumns<CandidateDraft>>(() => [
   {
     title: $t('business.provider-account'),
     key: 'provider_account_id',
-    width: 210,
+    width: 190,
     render: row =>
       h(NSelect, {
         value: row.provider_account_id,
@@ -61,7 +61,7 @@ const columns = computed<DataTableColumns<CandidateDraft>>(() => [
   {
     title: $t('business.upstream-model'),
     key: 'upstream_model',
-    width: 240,
+    width: 200,
     render: row =>
       h(NSelect, {
         value: row.upstream_model || null,
@@ -79,7 +79,7 @@ const columns = computed<DataTableColumns<CandidateDraft>>(() => [
   {
     title: $t('business.priority'),
     key: 'priority',
-    width: 100,
+    width: 90,
     render: row =>
       h(NInputNumber, {
         value: row.priority,
@@ -91,7 +91,7 @@ const columns = computed<DataTableColumns<CandidateDraft>>(() => [
   {
     title: $t('business.weight'),
     key: 'weight',
-    width: 90,
+    width: 85,
     render: row =>
       h(NInputNumber, {
         value: row.weight,
@@ -103,7 +103,7 @@ const columns = computed<DataTableColumns<CandidateDraft>>(() => [
   {
     title: $t('business.input-price-million'),
     key: 'input_cost_per_million',
-    width: 170,
+    width: 130,
     render: row =>
       h(NInputNumber, {
         value: row.input_cost_per_million,
@@ -115,7 +115,7 @@ const columns = computed<DataTableColumns<CandidateDraft>>(() => [
   {
     title: $t('business.output-price-million'),
     key: 'output_cost_per_million',
-    width: 170,
+    width: 130,
     render: row =>
       h(NInputNumber, {
         value: row.output_cost_per_million,
@@ -127,7 +127,7 @@ const columns = computed<DataTableColumns<CandidateDraft>>(() => [
   {
     title: $t('business.quality-score'),
     key: 'quality_score',
-    width: 105,
+    width: 100,
     render: row =>
       h(NInputNumber, {
         value: row.quality_score,
@@ -141,7 +141,7 @@ const columns = computed<DataTableColumns<CandidateDraft>>(() => [
   {
     title: $t('business.settlement-currency'),
     key: 'cost_currency',
-    width: 140,
+    width: 160,
     render: row =>
       h(NSelect, {
         value: row.cost_currency,
@@ -153,7 +153,7 @@ const columns = computed<DataTableColumns<CandidateDraft>>(() => [
   {
     title: $t('business.status'),
     key: 'status',
-    width: 95,
+    width: 90,
     render: row =>
       h(NSelect, {
         value: row.status,
@@ -165,7 +165,9 @@ const columns = computed<DataTableColumns<CandidateDraft>>(() => [
   {
     title: '',
     key: 'actions',
-    width: 65,
+    width: 72,
+    // 窄屏下表格需要横向滚动时,删除按钮固定在右侧,保证始终可见。
+    fixed: 'right',
     render: row =>
       h(
         NButton,
@@ -286,7 +288,7 @@ function selectModel(row: CandidateDraft, modelID: string) {
     :data="props.candidates"
     size="small"
     :bordered="false"
-    :scroll-x="1200"
+    :scroll-x="1207"
     :max-height="420"
     :row-key="row => `${row.provider_account_id}-${row.upstream_model}-${props.candidates.indexOf(row)}`"
   />

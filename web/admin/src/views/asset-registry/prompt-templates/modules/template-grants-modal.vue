@@ -11,6 +11,7 @@ import {
   fetchUpsertAssetGrant
 } from '@/service/api';
 import { $t } from '@/locales';
+import { usePermission } from '@/hooks/common/permission';
 
 const props = defineProps<{
   show: boolean;
@@ -21,6 +22,8 @@ const emit = defineEmits<{
   'update:show': [value: boolean];
   saved: [];
 }>();
+// 只读角色也能查看授权范围(审计直达会打开本弹窗),但不提供保存与移除入口;后端同样要求 project_admin。
+const { canManage } = usePermission();
 
 const loading = ref(false);
 const saving = ref(false);
@@ -58,7 +61,7 @@ const subjectOptions = computed(() => {
   return projects.value.map(item => ({ label: item.name, value: item.id }));
 });
 
-const columns = computed<DataTableColumns<Api.Management.AssetGrant>>(() => [
+const baseColumns = computed<DataTableColumns<Api.Management.AssetGrant>>(() => [
   {
     title: $t('business.access-scope'),
     key: 'subject_name',
@@ -90,6 +93,10 @@ const columns = computed<DataTableColumns<Api.Management.AssetGrant>>(() => [
         }
       )
   },
+]);
+
+// 移除入口只给可管理角色;只读角色只能查看已授权范围。
+const manageColumns = computed<DataTableColumns<Api.Management.AssetGrant>>(() => [
   {
     title: $t('business.actions'),
     key: 'actions',
@@ -115,6 +122,10 @@ const columns = computed<DataTableColumns<Api.Management.AssetGrant>>(() => [
       )
   }
 ]);
+
+const columns = computed<DataTableColumns<Api.Management.AssetGrant>>(() =>
+  canManage.value ? [...baseColumns.value, ...manageColumns.value] : baseColumns.value
+);
 
 watch(
   () => props.show,
@@ -191,7 +202,7 @@ async function revoke(grantID: string) {
   <NModal
     :show="props.show"
     preset="card"
-    :title="$t('business.access-grants')"
+    :title="$t('business.asset-access-title', { name: props.asset?.name ?? $t('business.access-grants') })"
     class="w-800px"
     @update:show="value => emit('update:show', value)"
   >
@@ -199,7 +210,7 @@ async function revoke(grantID: string) {
       <NAlert type="info" :bordered="false" class="mb-16px">
         {{ $t('business.grantIntroduction', { asset: assetNoun }) }}
       </NAlert>
-      <NForm label-placement="left" label-width="90">
+      <NForm v-if="canManage" label-placement="left" label-width="auto">
         <NGrid cols="1 640:2" :x-gap="16">
           <NFormItemGi :label="$t('business.scope-type')">
             <NSelect
