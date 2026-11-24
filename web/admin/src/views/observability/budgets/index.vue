@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { h, onMounted, reactive, ref, computed } from 'vue';
-import { NButton, NDatePicker, NPopconfirm, NSpace, NTag } from 'naive-ui';
+import { useRoute } from 'vue-router';
+import { NButton, NDatePicker, NPopconfirm, NProgress, NSpace, NTag } from 'naive-ui';
 import type { DataTableColumns, FormInst, FormRules } from 'naive-ui';
 import { formatTime } from '@/utils/admin-status';
 import {
@@ -20,9 +21,17 @@ defineOptions({
 });
 
 const { canManage } = usePermission();
+const route = useRoute();
 
 const loading = ref(true);
 const list = ref<Api.Management.Budget[]>([]);
+const budgetFilter = ref<'all' | 'expiring' | 'nearLimit' | 'exceeded'>('all');
+const budgetFilterOptions = computed(() => [
+  { label: $t('business.budgetFilterAll'), value: 'all' },
+  { label: $t('business.budgetFilterExpiring'), value: 'expiring' },
+  { label: $t('business.budgetFilterNearLimit'), value: 'nearLimit' },
+  { label: $t('business.budgetFilterExceeded'), value: 'exceeded' }
+]);
 const projects = ref<Api.Management.Project[]>([]);
 const applications = ref<Api.Management.Application[]>([]);
 const apiKeys = ref<Api.Management.ApiKey[]>([]);
@@ -30,6 +39,7 @@ const apiKeys = ref<Api.Management.ApiKey[]>([]);
 const showCreate = ref(false);
 const showEdit = ref(false);
 const submitting = ref(false);
+const renewingID = ref<string | null>(null);
 const formRef = ref<FormInst | null>(null);
 const editFormRef = ref<FormInst | null>(null);
 const formModel = reactive({
@@ -119,6 +129,38 @@ function scopeTypeText(t: string) {
   return scopeTypeOptions.value.find(item => item.value === t)?.label ?? t;
 }
 
+function isActiveWindow(row: Api.Management.Budget) {
+  const now = Date.now();
+  return now >= new Date(row.window_start).getTime() && now < new Date(row.window_end).getTime();
+}
+
+function remainingDays(row: Api.Management.Budget) {
+  return Math.ceil((new Date(row.window_end).getTime() - Date.now()) / 86400000);
+}
+
+const expiringBudgets = computed(() =>
+  list.value.filter(row => isActiveWindow(row) && remainingDays(row) >= 0 && remainingDays(row) <= 7)
+);
+
+const nearLimitBudgets = computed(() =>
+  list.value.filter(
+    row => !row.exceeded && Number(row.limit_amount) > 0 && Number(row.spent_amount) / Number(row.limit_amount) >= 0.8
+  )
+);
+
+const filteredBudgets = computed(() => {
+  switch (budgetFilter.value) {
+    case 'expiring':
+      return expiringBudgets.value;
+    case 'nearLimit':
+      return nearLimitBudgets.value;
+    case 'exceeded':
+      return list.value.filter(row => row.exceeded);
+    default:
+      return list.value;
+  }
+});
+
 function windowState(row: Api.Management.Budget) {
   const now = Date.now();
   const start = new Date(row.window_start).getTime();
@@ -132,6 +174,7 @@ function formatAmount(value: string) {
   return value;
 }
 
+// 列顺序把状态、健康等关键信息排在前面:列多于一屏宽度时,这些列在常见窗口下仍然可见,其余列横向滚动查看。
 const columns = computed<DataTableColumns<Api.Management.Budget>>(() => [
   {
     title: $t('business.scope'),
@@ -139,24 +182,51 @@ const columns = computed<DataTableColumns<Api.Management.Budget>>(() => [
     width: 90,
     render: row => scopeTypeText(row.scope_type)
   },
-  { title: $t('business.subject'), key: 'scope_name', width: 140 },
+  { title: $t('business.subject'), key: 'scope_name', ellipsis: { tooltip: true }, width: 140 },
   {
-    title: $t('business.start-time'),
-    key: 'window_start',
-    width: 170,
-    render: row => formatTime(row.window_start)
+    title: $t('business.window-status'),
+    key: 'window_state',
+    width: 90,
+    render: row => windowState(row)
   },
   {
-    title: $t('business.end-time'),
-    key: 'window_end',
-    width: 170,
-    render: row => formatTime(row.window_end)
+    title: $t('business.remainingDays'),
+    key: 'remaining_days',
+    width: 120,
+    render(row) {
+      if (!isActiveWindow(row)) return '-';
+      const days = remainingDays(row);
+      return h(
+        NTag,
+        { type: days <= 3 ? 'error' : days <= 7 ? 'warning' : 'default', size: 'small', round: true },
+        { default: () => $t('business.remainingDaysValue', { days }) }
+      );
+    }
   },
   {
     title: $t('business.limit'),
     key: 'limit_amount',
     width: 120,
     render: row => `${row.currency} ${formatAmount(row.limit_amount)}`
+  },
+  {
+    title: $t('business.usageProgress'),
+    key: 'progress',
+    width: 150,
+    render(row) {
+      const limit = Number(row.limit_amount);
+      const spent = Number(row.spent_amount);
+      const percentage = limit > 0 ? Math.min(100, Math.round((spent / limit) * 100)) : 0;
+      return h('div', { class: 'w-140px' }, [
+        h(NProgress, {
+          type: 'line',
+          percentage,
+          showIndicator: false,
+          status: row.exceeded ? 'error' : percentage >= 80 ? 'warning' : 'success'
+        }),
+        h('span', { class: 'text-12px text-#6b7280' }, `${percentage}%`)
+      ]);
+    }
   },
   {
     title: $t('business.used'),
@@ -172,15 +242,23 @@ const columns = computed<DataTableColumns<Api.Management.Budget>>(() => [
     }
   },
   {
-    title: $t('business.window-status'),
-    key: 'window_state',
-    width: 90,
-    render: row => windowState(row)
+    title: $t('business.start-time'),
+    key: 'window_start',
+    width: 170,
+    render: row => formatTime(row.window_start)
+  },
+  {
+    title: $t('business.end-time'),
+    key: 'window_end',
+    width: 170,
+    render: row => formatTime(row.window_end)
   },
   {
     title: $t('business.actions'),
     key: 'actions',
-    width: 150,
+    width: 280,
+    // 操作列固定在右侧:列多于一屏宽度时,行内操作不用横向滚动也能点到。
+    fixed: 'right',
     render(row) {
       if (!canManage.value) return '';
       return h(
@@ -188,6 +266,34 @@ const columns = computed<DataTableColumns<Api.Management.Budget>>(() => [
         { size: 4 },
         {
           default: () => [
+            h(
+              NButton,
+              {
+                size: 'small',
+                quaternary: true,
+                type: 'primary',
+                onClick: () => openCopy(row)
+              },
+              { default: () => $t('business.copy') }
+            ),
+            h(
+              NPopconfirm,
+              { onPositiveClick: () => renewBudget(row) },
+              {
+                trigger: () =>
+                  h(
+                    NButton,
+                    {
+                      size: 'small',
+                      quaternary: true,
+                      type: 'primary',
+                      loading: renewingID.value === row.id
+                    },
+                    { default: () => $t('business.renew') }
+                  ),
+                default: () => $t('business.renewBudgetConfirm')
+              }
+            ),
             h(
               NButton,
               {
@@ -286,6 +392,18 @@ async function handleCreate() {
   }
 }
 
+function openCopy(row: Api.Management.Budget) {
+  formModel.scope_type = row.scope_type;
+  formModel.scope_id = row.scope_id;
+  formModel.currency = row.currency;
+  formModel.limit_amount = Number(row.limit_amount);
+  const start = new Date(row.window_end).getTime();
+  const duration = new Date(row.window_end).getTime() - new Date(row.window_start).getTime();
+  formModel.window_range = [start, start + duration];
+  reloadScopeOptions();
+  showCreate.value = true;
+}
+
 async function handleUpdate() {
   await editFormRef.value?.validate();
   submitting.value = true;
@@ -301,6 +419,28 @@ async function handleUpdate() {
   }
 }
 
+async function renewBudget(row: Api.Management.Budget) {
+  const start = new Date(row.window_end).getTime();
+  const duration = new Date(row.window_end).getTime() - new Date(row.window_start).getTime();
+  renewingID.value = row.id;
+  try {
+    const { error } = await fetchCreateBudget({
+      scope_type: row.scope_type,
+      scope_id: row.scope_id,
+      window_start: new Date(start).toISOString(),
+      window_end: new Date(start + duration).toISOString(),
+      limit_amount: row.limit_amount,
+      currency: row.currency
+    });
+    if (!error) {
+      window.$message?.success($t('business.budgetRenewed'));
+      await loadData();
+    }
+  } finally {
+    renewingID.value = null;
+  }
+}
+
 async function handleDelete(id: string) {
   const { error } = await fetchDeleteBudget(id);
   if (!error) {
@@ -309,8 +449,13 @@ async function handleDelete(id: string) {
   }
 }
 
-onMounted(() => {
-  void loadData();
+onMounted(async () => {
+  await loadData();
+  const budgetID = typeof route.query.budget === 'string' ? route.query.budget : '';
+  if (budgetID) {
+    const budget = list.value.find(item => item.id === budgetID);
+    if (budget) openEdit(budget);
+  }
 });
 </script>
 
@@ -324,9 +469,21 @@ onMounted(() => {
         </NSpace>
       </template>
       <NAlert type="info" :bordered="false" class="mb-12px">
-        {{ $t('business.budgets-set-window-limits-by') }}ceeded)。
+        {{ $t('business.budgets-set-window-limits-by') }}
       </NAlert>
-      <NDataTable :columns="columns" :data="list" :loading="loading" :bordered="false" :scroll-x="1100" />
+      <NAlert v-if="expiringBudgets.length" type="warning" :bordered="false" class="mb-12px">
+        {{ $t('business.budgetExpiringSoon', { count: expiringBudgets.length }) }}
+      </NAlert>
+      <NAlert v-if="nearLimitBudgets.length" type="warning" :bordered="false" class="mb-12px">
+        {{ $t('business.budgetNearLimitSoon', { count: nearLimitBudgets.length }) }}
+      </NAlert>
+      <NSpace align="center" class="mb-12px">
+        <NSelect v-model:value="budgetFilter" :options="budgetFilterOptions" class="w-180px" />
+        <NText depth="3">
+          {{ $t('business.budgetFilterCount', { count: filteredBudgets.length, total: list.length }) }}
+        </NText>
+      </NSpace>
+      <NDataTable :columns="columns" :data="filteredBudgets" :loading="loading" :bordered="false" :scroll-x="1100" />
     </NCard>
 
     <NModal v-model:show="showCreate" preset="card" :title="$t('business.create-budget')" class="w-560px">

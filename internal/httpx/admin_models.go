@@ -391,6 +391,35 @@ func (d ServerDeps) DeleteModelService(w http.ResponseWriter, r *http.Request) {
 	adminOK(w, nil)
 }
 
+// ModelCandidateLookup 返回候选所属的模型服务,供审计资源跳转使用。
+func (d ServerDeps) ModelCandidateLookup(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok || d.requireViewer(w, principal) != nil {
+		return
+	}
+	candidateID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		adminError(w, http.StatusBadRequest, "CANDIDATE_ID_INVALID", "invalid-candidate-model-id", nil)
+		return
+	}
+	var serviceID uuid.UUID
+	err = d.Pool.QueryRow(r.Context(), `
+		SELECT model_service_id FROM model_candidates
+		WHERE id = $1 AND model_service_id IN (
+			SELECT id FROM model_services WHERE organization_id = $2
+		)
+	`, candidateID, principal.OrganizationID).Scan(&serviceID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		adminError(w, http.StatusNotFound, "CANDIDATE_NOT_FOUND", "candidate-model-does-not-exist-or", nil)
+		return
+	}
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "CANDIDATE_LOOKUP_FAILED", "failed-to-query-model-candidates", nil)
+		return
+	}
+	adminOK(w, map[string]string{"model_service_id": serviceID.String()})
+}
+
 // UpdateModelService 更新服务名称/绑定策略,并按稳定业务键 upsert 候选。
 // 已不再提交的候选只标记 retired,保留 ID 让历史 usage 继续关联。
 func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {

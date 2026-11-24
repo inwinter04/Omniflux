@@ -168,25 +168,56 @@ export function fetchDeleteApiKey(id: string) {
 }
 
 /** Get usage summary of recent days */
-export function fetchUsageSummary(days: number) {
+export function fetchUsageSummary(days: number, filters: Api.Management.UsageRecordFilters = {}) {
   return request<Api.Management.UsageSummary>({
-    url: `/usage/summary?days=${days}`
+    url: `/usage/summary?days=${days}`,
+    params: filters
+  });
+}
+
+/** Get daily usage trend by dimension. */
+export function fetchUsageTrend(
+  filters: Api.Management.UsageRecordFilters,
+  dimension: string,
+  days = 7
+) {
+  return request<{ items: Api.Management.UsageTrendPoint[] }>({
+    url: '/usage/trend',
+    params: { ...filters, dimension, days }
   });
 }
 
 /** Get paged usage records */
-export function fetchUsageRecords(page: number, pageSize: number) {
+export function fetchUsageRecords(page: number, pageSize: number, filters: Api.Management.UsageRecordFilters = {}) {
   return request<Api.Management.Paged<Api.Management.UsageRecord>>({
     url: '/usage/records',
-    params: { page, page_size: pageSize }
+    params: { page, page_size: pageSize, ...filters }
   });
 }
 
+/** Export filtered usage records as CSV. */
+export async function exportUsageRecords(filters: Api.Management.UsageRecordFilters = {}) {
+  const baseURL = import.meta.env.DEV && import.meta.env.VITE_HTTP_PROXY === 'Y' ? '/proxy-default' : import.meta.env.VITE_SERVICE_BASE_URL;
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') params.set(key, String(value));
+  });
+  const response = await fetch(`${baseURL}/usage/records/export?${params.toString()}`, { credentials: 'include' });
+  if (!response.ok) throw new Error('export failed');
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = 'usage-records.csv';
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 /** Get paged audit events */
-export function fetchAuditEvents(page: number, pageSize: number) {
+export function fetchAuditEvents(page: number, pageSize: number, filters: Api.Management.AuditEventFilters = {}) {
   return request<Api.Management.Paged<Api.Management.AuditEvent>>({
     url: '/audit-events',
-    params: { page, page_size: pageSize }
+    params: { page, page_size: pageSize, ...filters }
   });
 }
 
@@ -642,6 +673,12 @@ export function fetchUpdateModelServiceStatus(id: string, status: 'active' | 'di
     url: `/model-services/${id}/status`,
     method: 'patch',
     data: { status }
+  });
+}
+
+export function fetchModelCandidate(id: string) {
+  return request<{ model_service_id: string }>({
+    url: `/model-candidates/${id}`
   });
 }
 

@@ -122,21 +122,42 @@ const actionTextKeyMap: Record<string, App.I18n.I18nKey> = {
   'project.created': 'business.create-project-argjkk',
   'project.updated': 'business.update-project',
   'project.deleted': 'business.delete-project',
+  'project.status_changed': 'business.change-project-status',
   'application.created': 'business.create-application-ar6opf',
   'application.updated': 'business.update-application',
   'application.deleted': 'business.delete-application',
+  'application.status_changed': 'business.change-application-status',
+  'department.created': 'business.audit-create-department',
+  'department.updated': 'business.update-department',
+  'department.deleted': 'business.delete-department',
+  'organization.created': 'business.audit-create-organization',
+  'organization.updated': 'business.update-organization',
   'provider_account.created': 'business.create-provider-account-1fmjpgf',
   'provider_account.updated': 'business.update-provider-account',
   'provider_account.deleted': 'business.delete-provider-account',
+  'provider_account.status_changed': 'business.change-provider-account-status',
   'route_policy.created': 'business.create-route-policy-167s75c',
   'route_policy.updated': 'business.update-route-policy',
   'route_policy.deleted': 'business.delete-route-policy',
+  'route_policy.status_changed': 'business.change-route-policy-status',
   'model_service.created': 'business.create-model-service-11kri7x',
   'model_service.updated': 'business.update-model-service',
   'model_service.deleted': 'business.delete-model-service',
-  'api_key.created': 'business.create-api-key',
+  'model_service.status_changed': 'business.change-model-service-status',
+  'model_service.access_denied': 'business.model-service-access-denied',
+  'model_candidate.status_changed': 'business.change-model-candidate-status',
+  'api_key.created': 'business.audit-create-api-key',
   'api_key.status_changed': 'business.change-api-key-status',
   'api_key.deleted': 'business.delete-api-key',
+  'api_key.updated': 'business.update-api-key',
+  'budget.created': 'business.audit-create-budget',
+  'budget.updated': 'business.update-budget',
+  'budget.deleted': 'business.delete-budget',
+  'user.created': 'business.audit-create-user',
+  'user.updated': 'business.update-user',
+  'evaluation_set.created': 'business.audit-create-evaluation-set',
+  'evaluation_set.updated': 'business.update-evaluation-set',
+  'evaluation_set.deleted': 'business.delete-evaluation-set',
   'asset.created': 'business.create-asset',
   'asset.draft_created': 'business.save-asset-draft',
   'asset.published': 'business.publish-asset',
@@ -144,8 +165,13 @@ const actionTextKeyMap: Record<string, App.I18n.I18nKey> = {
   'asset.status_changed': 'business.change-asset-status',
   'asset_grant.upserted': 'business.save-asset-grant',
   'asset_grant.revoked': 'business.revoke-asset-grant',
+  'model_service_grant.upserted': 'business.save-model-service-grant',
+  'model_service_grant.revoked': 'business.revoke-model-service-grant',
   'prompt_template.previewed': 'business.preview-prompttemplate',
-  'prompt_template.invoked': 'business.invoke-prompttemplate'
+  'prompt_template.invoked': 'business.invoke-prompttemplate',
+  'prompt_run.executed': 'business.execute-prompt-run',
+  'prompt_evaluation.executed': 'business.run-evaluation',
+  'agent.executed': 'business.execute-agent'
 };
 
 export function auditActionText(action: string) {
@@ -163,12 +189,171 @@ const resourceTextKeyMap: Record<string, App.I18n.I18nKey> = {
   user: 'business.user',
   session: 'business.session',
   asset: 'business.enterprise-asset',
-  asset_grant: 'business.asset-grant'
+  asset_grant: 'business.asset-grant',
+  model_service_grant: 'business.model-service-grant',
+  model_candidate: 'business.model-candidate',
+  evaluation_set: 'business.evaluation-set',
+  budget: 'business.budget',
+  organization: 'business.organization',
+  department: 'business.department'
 };
 
 export function auditResourceText(resourceType: string) {
   const key = resourceTextKeyMap[resourceType];
   return key ? $t(key) : resourceType;
+}
+
+/** 审计筛选下拉的候选,与上面的文案映射共用同一份清单。 */
+export const auditActions = Object.keys(actionTextKeyMap).sort();
+
+export const auditResourceTypes = Object.keys(resourceTextKeyMap).sort();
+
+/** 审计快照字段的展示名称;未登记的字段原样显示字段名。 */
+const snapshotFieldKeyMap: Record<string, App.I18n.I18nKey> = {
+  actions: 'business.allowed-actions',
+  application_id: 'business.application',
+  asset_id: 'business.enterprise-asset',
+  asset_type: 'business.asset-type',
+  base_url: 'business.api-endpoint',
+  billing_currency: 'business.currency',
+  candidates: 'business.candidates',
+  cases: 'business.case-count',
+  constraints: 'business.hard-constraints',
+  credentials_rotated: 'business.credentials-rotated',
+  currency: 'business.currency',
+  description: 'business.description',
+  email: 'business.email',
+  evaluation_set_id: 'business.evaluation-set',
+  expires_at: 'business.expires-at',
+  fallback_limit: 'business.failover-limit',
+  first_token_timeout_ms: 'business.first-token-timeout-ms',
+  group_id: 'business.run-group',
+  kind: 'business.run-kind',
+  limit_amount: 'business.limit',
+  model_service_id: 'business.model-service',
+  name: 'business.name',
+  password_reset: 'business.reset-password',
+  project_id: 'business.project',
+  provider: 'business.provider',
+  provider_timeout_ms: 'business.upstream-timeout-ms',
+  rate_limit_per_min: 'business.rate-limit-minute',
+  region: 'business.region',
+  run_id: 'business.run-id',
+  runs: 'business.run-count',
+  role: 'business.role',
+  route_policy_id: 'business.route-policy',
+  scope_id: 'business.budget-subject',
+  scope_name: 'business.subject',
+  scope_type: 'business.scope-type',
+  session_id: 'business.session',
+  slug: 'business.organization-slug',
+  source_version: 'business.source-version',
+  status: 'business.status',
+  strategy: 'business.strategy',
+  summary: 'business.summary',
+  subject_id: 'business.access-scope',
+  subject_type: 'business.scope-type',
+  version: 'business.version',
+  version_id: 'business.version-id',
+  current_version_id: 'business.version-id',
+  weights: 'business.weight'
+};
+
+/** 不同资源的 status 取值含义不同,沿用各列表页的状态文案。 */
+const snapshotStatusResource: Record<string, StatusResource> = {
+  model_service: 'service',
+  model_candidate: 'candidate',
+  route_policy: 'policy',
+  api_key: 'api_key',
+  provider_account: 'account'
+};
+
+/** 范围 / 授权对象类型的取值:预算的 scope_type 与授权的 subject_type 共用一套。 */
+const scopeTypeLabels: Record<string, App.I18n.I18nKey> = {
+  organization: 'business.organization',
+  department: 'business.department',
+  project: 'business.project',
+  application: 'business.application',
+  api_key: 'business.api-key'
+};
+
+/** 快照里取值是固定枚举的字段,统一翻译成文案。 */
+const snapshotEnumLabels: Record<string, Record<string, App.I18n.I18nKey>> = {
+  asset_type: { agent: 'business.agent', prompt_template: 'business.prompt-template' },
+  kind: {
+    single: 'business.run-single',
+    compare: 'business.run-compare',
+    evaluation: 'business.run-evaluation'
+  },
+  provider: { openai_compatible: 'business.custom-openai-compatible' },
+  role: {
+    platform_admin: 'business.platform-admin',
+    org_owner: 'business.organization-owner',
+    org_admin: 'business.organization-admin',
+    project_admin: 'business.project-admin',
+    developer: 'business.developer',
+    viewer: 'business.viewer'
+  },
+  scope_type: scopeTypeLabels,
+  subject_type: scopeTypeLabels,
+  strategy: {
+    cost_first: 'business.cost-first',
+    quality_first: 'business.quality-first',
+    balanced: 'business.balanced'
+  }
+};
+
+/** 把审计快照里的一个值转成可读文本;资源 ID 解析得到名称时显示名称。 */
+function snapshotValueText(key: string, value: unknown, resourceType: string, names: Record<string, string>): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'boolean') return $t(value ? 'common.yesOrNo.yes' : 'common.yesOrNo.no');
+  const text = String(value);
+  if (key === 'status') return statusText(text, snapshotStatusResource[resourceType]);
+  // 预算限额以字符串保存(如 "20.00000000"),去掉无意义的尾零。
+  if (key === 'limit_amount') {
+    const amount = Number(text);
+    return Number.isFinite(amount) ? String(amount) : text;
+  }
+  if (key === 'actions' && Array.isArray(value)) {
+    const separator = getLocale() === 'zh-CN' ? '、' : ', ';
+    return value.map(action => (action === 'read' ? $t('business.view') : $t('business.use'))).join(separator);
+  }
+  const enumKey = snapshotEnumLabels[key]?.[text];
+  if (enumKey) return $t(enumKey);
+  if (typeof value === 'string') return names[text] ?? text;
+  if (typeof value === 'number') return text;
+  return JSON.stringify(value);
+}
+
+export interface AuditSnapshotRow {
+  key: string;
+  label: string;
+  before: string;
+  after: string;
+  changed: boolean;
+}
+
+/** 审计详情的“变更内容”:按字段列出变更前 / 变更后,字段顺序沿用变更后快照。 */
+export function auditSnapshotRows(detail: Api.Management.AuditEventDetail): AuditSnapshotRow[] {
+  const before = (detail.before_state ?? {}) as Record<string, unknown>;
+  const after = (detail.after_state ?? {}) as Record<string, unknown>;
+  const names = detail.snapshot_names ?? {};
+  // 只在变更前出现的字段排在后面;预算的“预算对象”已能显示名称时,不重复列出“对象名称”。
+  const keys = [
+    ...Object.keys(after),
+    ...Object.keys(before).filter(key => !(key in after))
+  ].filter(key => !(key === 'scope_name' && names[String(after.scope_id ?? before.scope_id ?? '')]));
+  return keys.map(key => {
+    const text = (value: unknown) => snapshotValueText(key, value, detail.resource_type, names);
+    const fieldKey = snapshotFieldKeyMap[key];
+    return {
+      key,
+      label: fieldKey ? $t(fieldKey) : key,
+      before: text(before[key] ?? null),
+      after: text(after[key] ?? null),
+      changed: JSON.stringify(before[key] ?? null) !== JSON.stringify(after[key] ?? null)
+    };
+  });
 }
 
 export function auditResultText(result: string) {

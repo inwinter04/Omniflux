@@ -51,24 +51,24 @@ func TestIntegrationMultiCurrencyUsageReporting(t *testing.T) {
 	})
 	assertAssetStatus(t, code, body, http.StatusOK)
 	cnyServiceID := assetDataMap(t, body)["id"].(string)
+	code, body = doJSON(t, admin, http.MethodGet, "/api/v1/organizations", nil)
+	assertAssetStatus(t, code, body, http.StatusOK)
+	organizationID := body["data"].([]any)[0].(map[string]any)["id"].(string)
+	// 组织级预算的 scope_id 可省略或传任意值,服务端一律使用当前组织 ID,不能借它把预算挂到别的范围上。
 	code, body = doJSON(t, admin, http.MethodPost, "/api/v1/budgets", map[string]any{
 		"scope_type": "organization", "scope_id": "00000000-0000-0000-0000-000000000000",
 		"window_start": time.Now().Add(-time.Hour).Format(time.RFC3339), "window_end": time.Now().Add(time.Hour).Format(time.RFC3339),
 		"limit_amount": "100", "currency": "CNY",
 	})
-	if code != http.StatusBadRequest {
-		t.Fatalf("invalid budget scope status = %d, want 400", code)
-	}
-	code, body = doJSON(t, admin, http.MethodGet, "/api/v1/organizations", nil)
-	assertAssetStatus(t, code, body, http.StatusOK)
-	organizationID := body["data"].([]any)[0].(map[string]any)["id"].(string)
-	code, body = doJSON(t, admin, http.MethodPost, "/api/v1/budgets", map[string]any{
-		"scope_type": "organization", "scope_id": organizationID,
-		"window_start": time.Now().Add(-time.Hour).Format(time.RFC3339), "window_end": time.Now().Add(time.Hour).Format(time.RFC3339),
-		"limit_amount": "100", "currency": "CNY",
-	})
 	assertAssetStatus(t, code, body, http.StatusOK)
 	budgetID := assetDataMap(t, body)["id"].(string)
+	var budgetScopeID string
+	if err := env.pool.QueryRow(t.Context(), `SELECT scope_id FROM budget_windows WHERE id = $1`, uuid.MustParse(budgetID)).Scan(&budgetScopeID); err != nil {
+		t.Fatal(err)
+	}
+	if budgetScopeID != organizationID {
+		t.Fatalf("organization budget scope = %s, want %s", budgetScopeID, organizationID)
+	}
 
 	code, body = doJSON(t, admin, http.MethodPost, "/api/v1/assets", map[string]any{
 		"name": "Currency Prompt", "spec": map[string]any{"template": "Say ok", "variables": []any{}, "model_service_id": cnyServiceID},

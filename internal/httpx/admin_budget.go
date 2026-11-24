@@ -130,12 +130,19 @@ func (d ServerDeps) CreateBudget(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusBadRequest, "BUDGET_SCOPE_UNSUPPORTED", "unsupported-budget-scope-type", nil)
 		return
 	}
-	scopeID, err := uuid.Parse(body.ScopeID)
-	if err != nil {
-		adminError(w, http.StatusBadRequest, "BUDGET_SCOPE_INVALID", "invalid-scope-id", nil)
-		return
+	var scopeID uuid.UUID
+	if body.ScopeType == "organization" {
+		scopeID = principal.OrganizationID
+	} else {
+		parsed, err := uuid.Parse(body.ScopeID)
+		if err != nil {
+			adminError(w, http.StatusBadRequest, "BUDGET_SCOPE_INVALID", "invalid-scope-id", nil)
+			return
+		}
+		scopeID = parsed
 	}
-	if _, err := d.resolveBudgetScope(r.Context(), body.ScopeType, scopeID, principal.OrganizationID); err != nil {
+	scopeName, err := d.resolveBudgetScope(r.Context(), body.ScopeType, scopeID, principal.OrganizationID)
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			adminError(w, http.StatusBadRequest, "BUDGET_SCOPE_NOT_FOUND", "budget-subject-does-not-exist-or", nil)
 			return
@@ -155,13 +162,23 @@ func (d ServerDeps) CreateBudget(w http.ResponseWriter, r *http.Request) {
 		body.Currency = "USD"
 	}
 	budgetID := uuid.New()
-	if _, err := d.Pool.Exec(r.Context(), `
-		INSERT INTO budget_windows(
-			id, organization_id, scope_type, scope_id,
-			window_start, window_end, limit_amount, currency
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-	`, budgetID, principal.OrganizationID, body.ScopeType, scopeID,
-		body.WindowStart, body.WindowEnd, body.LimitAmount, body.Currency); err != nil {
+	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(r.Context(), `
+			INSERT INTO budget_windows(
+				id, organization_id, scope_type, scope_id,
+				window_start, window_end, limit_amount, currency
+			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		`, budgetID, principal.OrganizationID, body.ScopeType, scopeID,
+			body.WindowStart, body.WindowEnd, body.LimitAmount, body.Currency); err != nil {
+			return err
+		}
+		return writeAuditEvent(r.Context(), tx, principal.OrganizationID, principal.UserID,
+			"budget.created", "budget", budgetID.String(), nil, map[string]any{
+				"scope_type": body.ScopeType, "scope_id": scopeID.String(), "scope_name": scopeName,
+				"limit_amount": body.LimitAmount,
+			})
+	})
+	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && strings.Contains(pgErr.ConstraintName, "budget_windows_scope_type_scope_id_window_start_key") {
 			adminError(w, http.StatusConflict, "BUDGET_WINDOW_EXISTS", "a-budget-already-exists-for-the", nil)
@@ -170,11 +187,6 @@ func (d ServerDeps) CreateBudget(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusInternalServerError, "BUDGET_CREATE_FAILED", "failed-to-create-the-budget", nil)
 		return
 	}
-	_, _ = d.Pool.Exec(r.Context(), `
-		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, after_state)
-		VALUES ($1,$2,'user','budget.created','budget',$3,$4)
-	`, principal.OrganizationID, principal.UserID, budgetID.String(),
-		auditJSON(map[string]any{"scope_type": body.ScopeType, "scope_id": body.ScopeID, "limit_amount": body.LimitAmount}))
 	adminOK(w, map[string]string{"id": budgetID.String()})
 }
 
@@ -209,17 +221,20 @@ func (d ServerDeps) UpdateBudget(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusInternalServerError, "BUDGET_UPDATE_FAILED", "failed-to-update-the-budget", nil)
 		return
 	}
-	if _, err := d.Pool.Exec(r.Context(), `
-		UPDATE budget_windows SET limit_amount = $3, updated_at = now() WHERE id = $1 AND organization_id = $2
-	`, budgetID, principal.OrganizationID, body.LimitAmount); err != nil {
+	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(r.Context(), `
+			UPDATE budget_windows SET limit_amount = $3, updated_at = now() WHERE id = $1 AND organization_id = $2
+		`, budgetID, principal.OrganizationID, body.LimitAmount); err != nil {
+			return err
+		}
+		return writeAuditEvent(r.Context(), tx, principal.OrganizationID, principal.UserID,
+			"budget.updated", "budget", budgetID.String(),
+			map[string]any{"limit_amount": oldLimit}, map[string]any{"limit_amount": body.LimitAmount})
+	})
+	if err != nil {
 		adminError(w, http.StatusInternalServerError, "BUDGET_UPDATE_FAILED", "failed-to-update-the-budget", nil)
 		return
 	}
-	_, _ = d.Pool.Exec(r.Context(), `
-		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, before_state, after_state)
-		VALUES ($1,$2,'user','budget.updated','budget',$3,$4,$5)
-	`, principal.OrganizationID, principal.UserID, budgetID.String(),
-		auditJSON(map[string]any{"limit_amount": oldLimit}), auditJSON(map[string]any{"limit_amount": body.LimitAmount}))
 	adminOK(w, nil)
 }
 
@@ -257,13 +272,30 @@ func (d ServerDeps) DeleteBudget(w http.ResponseWriter, r *http.Request) {
 			"budget-delete-has-settlements", nil)
 		return
 	}
-	if _, err := d.Pool.Exec(r.Context(), `DELETE FROM budget_windows WHERE id = $1`, budgetID); err != nil {
+	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
+		// 预算没有自己的名称,删除后审计靠快照里的所属范围与额度识别“删的是哪条预算”。
+		var scopeType, scopeName, limitAmount string
+		var scopeID uuid.UUID
+		if err := tx.QueryRow(r.Context(), `
+			DELETE FROM budget_windows WHERE id = $1
+			RETURNING scope_type, scope_id, limit_amount::text, COALESCE(CASE scope_type
+				WHEN 'organization' THEN (SELECT name FROM organizations WHERE id = budget_windows.scope_id)
+				WHEN 'project' THEN (SELECT name FROM projects WHERE id = budget_windows.scope_id)
+				WHEN 'application' THEN (SELECT name FROM applications WHERE id = budget_windows.scope_id)
+				WHEN 'api_key' THEN (SELECT name FROM api_keys WHERE id = budget_windows.scope_id)
+			END, '')
+		`, budgetID).Scan(&scopeType, &scopeID, &limitAmount, &scopeName); err != nil {
+			return err
+		}
+		return writeAuditEvent(r.Context(), tx, principal.OrganizationID, principal.UserID,
+			"budget.deleted", "budget", budgetID.String(), map[string]any{
+				"scope_type": scopeType, "scope_id": scopeID.String(), "scope_name": scopeName,
+				"limit_amount": limitAmount,
+			}, nil)
+	})
+	if err != nil {
 		adminError(w, http.StatusInternalServerError, "BUDGET_DELETE_FAILED", "failed-to-delete-the-budget", nil)
 		return
 	}
-	_, _ = d.Pool.Exec(r.Context(), `
-		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id)
-		VALUES ($1,$2,'user','budget.deleted','budget',$3)
-	`, principal.OrganizationID, principal.UserID, budgetID.String())
 	adminOK(w, nil)
 }

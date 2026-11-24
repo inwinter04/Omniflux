@@ -528,6 +528,21 @@ declare namespace Api {
       requests: number;
     }
 
+    interface UsageTrendPoint {
+      day: string;
+      name: string;
+      requests: number;
+    }
+
+    interface UsageScopeSummary {
+      name: string;
+      requests: number;
+      input_tokens: number;
+      output_tokens: number;
+      cost: string;
+      cost_currency: string;
+    }
+
     interface UsageSummary {
       costs: { currency: string; total: string }[];
       total_requests: number;
@@ -538,26 +553,54 @@ declare namespace Api {
       total_cost: string;
       cost_currency: string;
       by_model: UsageModelSummary[];
+      by_project: UsageScopeSummary[];
+      by_application: UsageScopeSummary[];
+      by_api_key: UsageScopeSummary[];
+      by_department: UsageScopeSummary[];
+      by_model_service: UsageScopeSummary[];
+      by_state: UsageScopeSummary[];
+      by_source: UsageScopeSummary[];
+      by_provider: UsageScopeSummary[];
+      by_route_policy: UsageScopeSummary[];
+      by_error_type: UsageScopeSummary[];
       by_day: UsageDaySummary[];
     }
 
     interface UsageRecord {
       id: string;
+      request_id: string;
       created_at: string;
       project_name: string | null;
       application_name: string | null;
       key_name: string | null;
       model_service: string;
+      route_policy_id: string | null;
       state: string;
       status_code: number | null;
       provider: string | null;
       upstream_model: string | null;
       input_tokens: number;
       output_tokens: number;
+      cached_tokens: number;
+      reasoning_tokens: number;
+      first_token_ms: number | null;
+      total_ms: number | null;
       cost: string;
       cost_currency: string;
       source: 'api' | 'prompt_debug' | 'agent_debug';
-      total_ms: number | null;
+      error_type: string | null;
+      error_message: string | null;
+    }
+
+    interface UsageRecordFilters {
+      project_id?: string;
+      application_id?: string;
+      api_key_id?: string;
+      model_service_id?: string;
+      state?: string;
+      source?: string;
+      start_time?: string;
+      end_time?: string;
     }
 
     interface CreateDepartmentParams {
@@ -630,9 +673,20 @@ declare namespace Api {
       status_code?: number;
     }
 
+    interface AuditEventFilters {
+      actor_type?: string;
+      action?: string;
+      resource_type?: string;
+      resource_id?: string;
+      result?: string;
+      start_time?: string;
+      end_time?: string;
+    }
+
     interface AuditEventDetail extends AuditEvent {
       before_state: unknown;
       after_state: unknown;
+      snapshot_names: Record<string, string>;
       ip_address: string | null;
       user_agent: string | null;
     }
@@ -645,6 +699,9 @@ declare namespace Api {
       action: string;
       resource_type: string;
       resource_id: string | null;
+      resource_name: string;
+      /** 受影响资源是否仍然存在;已删除时不提供直达入口 */
+      resource_exists: boolean;
       result: string;
     }
   }

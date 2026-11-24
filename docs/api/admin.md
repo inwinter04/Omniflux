@@ -76,6 +76,8 @@
 | `PATCH /api/v1/budgets/{id}` | 调整预算限额 |
 | `DELETE /api/v1/budgets/{id}` | 删除预算窗口 |
 
+组织级预算的 `scope_id` 可省略或传 `organization`，服务端使用当前组织 ID。
+
 ## 模型接入
 
 ### 供应商账号
@@ -113,6 +115,7 @@
 | `PATCH /api/v1/model-services/{id}` | 更新模型服务(候选按稳定键 upsert,移除候选保留历史) |
 | `PATCH /api/v1/model-services/{id}/status` | 启用或停用模型服务 |
 | `PATCH /api/v1/model-candidates/{id}/status` | 启用或停用单个候选模型 |
+| `GET /api/v1/model-candidates/{id}` | 查询候选所属模型服务,用于审计资源跳转 |
 | `GET /api/v1/model-services/{id}/grants` | 查询模型服务组织/部门/项目授权 |
 | `POST /api/v1/model-services/{id}/grants` | 新增或更新授权,支持 `read` 与 `invoke` |
 | `DELETE /api/v1/model-services/{id}/grants/{grantID}` | 撤销授权 |
@@ -178,10 +181,14 @@ Agent 配置包含 `prompt_template_id`、`prompt_version_id`、`model_service_i
 
 | 接口 | 说明 |
 | --- | --- |
-| `GET /api/v1/usage/summary` | 用量汇总 |
-| `GET /api/v1/usage/records` | 用量明细分页 |
-| `GET /api/v1/audit-events` | 审计事件分页 |
+| `GET /api/v1/usage/summary` | 用量汇总,支持与明细相同的筛选条件,并按模型/模型服务/供应商/路由策略/错误类型/项目/应用/API Key/部门/状态/来源汇总 |
+| `GET /api/v1/usage/records` | 用量明细分页,支持项目/应用/Key/模型/状态/来源/时间筛选 |
+| `GET /api/v1/usage/trend` | 按天聚合趋势,支持总览/模型/模型服务/项目/项目+应用/项目+模型服务/项目+模型服务+应用/部门+项目/部门+项目+应用/部门+项目+模型服务/部门+项目+模型服务+应用/应用/API Key/供应商/部门/状态/来源/路由策略/错误类型维度 |
+| `GET /api/v1/usage/records/export` | 按当前筛选条件导出用量明细 CSV |
+| `GET /api/v1/audit-events` | 审计事件分页,支持身份/动作/资源类型(精确匹配)/结果/时间筛选,附带受影响资源的名称与是否仍然存在(`resource_exists`);`action` 为包含匹配 |
 | `GET /api/v1/audit-events/{id}` | 审计事件详情 |
+
+审计列表为每条事件返回 `resource_name`(受影响资源的名称)与 `resource_exists`(资源是否仍然存在,软删除的 API Key 视为不存在):资源仍存在时取当前名称,已删除时取审计快照里记录的名称;授权类事件以所属模型服务 / 资产是否仍在为准。删除类操作会把被删资源的名称写入变更前快照(预算记录所属范围与额度),授权类变更记录所属模型服务或资产。
 
 ## 错误格式
 

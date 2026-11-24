@@ -13,3 +13,8 @@ html {
   overflow-x: hidden;
   color: rgb(var(--base-text-color));
 }
+
+/* 悬停提示里的长文本(例如表格里被省略的名称)限制宽度后换行,避免超出窗口 */
+.n-tooltip {
+  max-width: min(480px, 80vw);
+}
