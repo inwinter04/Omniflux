@@ -62,6 +62,8 @@ export function createThemeToken(
   const darkThemeTokens: App.Theme.ThemeTokenCSSVars = {
     colors: {
       ...themeTokens.colors,
+      // 暗色背景下换用提亮后的主色,text-primary 这类文字才看得清
+      primary: getDarkPrimaryColor(colors.primary, recommended),
       ...dark?.colors
     },
     boxShadow: {
@@ -233,23 +235,115 @@ function getNaiveThemeColors(colors: App.Theme.ThemeColor, recommended = false) 
   return themeColors;
 }
 
+/** Naive UI 暗色主题的弹层底色,是暗色模式下最亮的承载面(下拉选项、菜单里的主色文字落在它上面) */
+const NAIVE_DARK_POPOVER_COLOR = 'rgb(72, 72, 78)';
+
+/** 文字与背景的最低对比度(WCAG AA,正文文字) */
+const MIN_TEXT_CONTRAST = 4.5;
+
+/** Get the contrast ratio of two colors */
+function getContrastRatio(colorA: ReturnType<typeof getRgb>, colorB: ReturnType<typeof getRgb>) {
+  function getLuminance({ r, g, b }: ReturnType<typeof getRgb>) {
+    const channel = (value: number) => {
+      const normalized = value / 255;
+
+      return normalized <= 0.03928 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+    };
+
+    return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+  }
+
+  const luminanceA = getLuminance(colorA);
+  const luminanceB = getLuminance(colorB);
+
+  return (Math.max(luminanceA, luminanceB) + 0.05) / (Math.min(luminanceA, luminanceB) + 0.05);
+}
+
+/**
+ * Get the palette number of the primary color for dark mode
+ *
+ * 暗色模式下主色会作为文字色落在深色背景上(文字按钮、菜单选中项、下拉选项等),原色太暗看不清。
+ * 从原色开始逐级取更浅的色阶,取第一个在 Naive UI 暗色弹层底色上对比度达标的色阶。
+ *
+ * @param color The primary color
+ * @param [recommended=false] Use recommended color palette. Default is `false`
+ */
+function getDarkPrimaryPaletteNumber(color: string, recommended = false) {
+  const paletteNumbers: App.Theme.ColorPaletteNumber[] = [500, 400, 300, 200, 100];
+  const popoverColor = getRgb(NAIVE_DARK_POPOVER_COLOR);
+
+  for (const number of paletteNumbers) {
+    const paletteColor = getRgb(getPaletteColorByNumber(color, number, recommended));
+
+    if (getContrastRatio(paletteColor, popoverColor) >= MIN_TEXT_CONTRAST) return number;
+  }
+
+  return 50;
+}
+
+/**
+ * Get the primary color for dark mode
+ *
+ * @param color The primary color
+ * @param [recommended=false] Use recommended color palette. Default is `false`
+ */
+export function getDarkPrimaryColor(color: string, recommended = false) {
+  return getPaletteColorByNumber(color, getDarkPrimaryPaletteNumber(color, recommended), recommended);
+}
+
+/**
+ * Get the NaiveUI primary colors for dark mode
+ *
+ * 暗色模式下主色(“信息色跟随主色”开启时连同信息色)换成提亮后的色阶:
+ * 悬停色与基准色相同、按下时深两档,与浅色模式下的深浅关系一致。
+ *
+ * @param colors Theme colors
+ * @param [recommended=false] Use recommended color palette. Default is `false`
+ */
+function getNaiveDarkPrimaryColors(colors: App.Theme.ThemeColor, recommended = false) {
+  const { primary, info } = colors;
+  const number = getDarkPrimaryPaletteNumber(primary, recommended);
+  const pressedNumber = (number + 200) as App.Theme.ColorPaletteNumber;
+
+  // “信息色跟随主色”开启时,信息色与主色相同,需要一并提亮
+  const colorTypes: App.Theme.ThemeColorKey[] = info === primary ? ['primary', 'info'] : ['primary'];
+
+  const themeColors: NaiveThemeColor = {};
+
+  colorTypes.forEach(colorType => {
+    const color = colors[colorType];
+    const baseColor = getPaletteColorByNumber(color, number, recommended);
+
+    themeColors[`${colorType}Color`] = baseColor;
+    themeColors[`${colorType}ColorSuppl`] = baseColor;
+    themeColors[`${colorType}ColorHover`] = baseColor;
+    themeColors[`${colorType}ColorPressed`] = getPaletteColorByNumber(color, pressedNumber, recommended);
+    themeColors[`${colorType}ColorActive`] = addColorAlpha(baseColor, 0.1);
+  });
+
+  return themeColors;
+}
+
 /**
  * Get naive theme
  *
  * @param colors Theme colors
  * @param settings Theme settings object
  * @param overrides Optional manual overrides from preset
+ * @param [dark=false] Dark mode. Default is `false`
  */
 export function getNaiveTheme(
   colors: App.Theme.ThemeColor,
   settings: App.Theme.ThemeSetting,
-  overrides?: GlobalThemeOverrides
+  overrides?: GlobalThemeOverrides,
+  dark = false
 ) {
   const { primary: colorLoading } = colors;
 
   const theme: GlobalThemeOverrides = {
     common: {
       ...getNaiveThemeColors(colors, settings.recommendColor),
+      ...(dark ? getNaiveDarkPrimaryColors(colors, settings.recommendColor) : {}),
       borderRadius: `${settings.themeRadius}px`
     },
     LoadingBar: {

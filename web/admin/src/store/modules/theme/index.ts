@@ -9,6 +9,7 @@ import { useAuthStore } from '../auth';
 import {
   addThemeVarsToGlobal,
   createThemeToken,
+  getDarkPrimaryColor,
   getNaiveTheme,
   initThemeSettings,
   toggleAuxiliaryColorModes,
@@ -55,8 +56,17 @@ export const useThemeStore = defineStore(SetupStoreId.Theme, () => {
     return colors;
   });
 
+  /** 当前模式下的主色:暗色模式下是提亮后的色阶,供页签等直接取主色的地方使用 */
+  const primaryColor = computed(() =>
+    darkMode.value
+      ? getDarkPrimaryColor(settings.value.themeColor, settings.value.recommendColor)
+      : settings.value.themeColor
+  );
+
   /** Naive theme */
-  const naiveTheme = computed(() => getNaiveTheme(themeColors.value, settings.value, naiveThemeOverrides.value));
+  const naiveTheme = computed(() =>
+    getNaiveTheme(themeColors.value, settings.value, naiveThemeOverrides.value, darkMode.value)
+  );
 
   /**
    * Settings json
@@ -285,6 +295,7 @@ export const useThemeStore = defineStore(SetupStoreId.Theme, () => {
     ...toRefs(settings.value),
     darkMode,
     themeColors,
+    primaryColor,
     naiveTheme,
     settingsJson,
     watermarkContent,

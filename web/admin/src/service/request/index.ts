@@ -4,12 +4,44 @@ import { getServiceBaseURL } from '@/utils/service';
 import { localStg } from '@/utils/storage';
 import { $t } from '@/locales';
 import { useAuthStore } from '@/store/modules/auth';
+import { clearAuthStorage, getToken } from '@/store/modules/auth/shared';
 import { getAuthorization, handleExpiredRequest, showErrorMsg } from './shared';
 import { translateBackendError } from './backend-error';
 import type { RequestInstanceState } from './type';
 
 const isHttpProxy = import.meta.env.DEV && import.meta.env.VITE_HTTP_PROXY === 'Y';
 const { baseURL, otherBaseURL } = getServiceBaseURL(import.meta.env, isHttpProxy);
+
+/** 环境变量里的错误码以逗号分隔;未配置时要得到空数组,而不是只含空字符串的数组 */
+function getErrorCodes(codes?: string) {
+  return (codes || '').split(',').filter(Boolean);
+}
+
+/**
+ * Handle the invalid session
+ *
+ * 会话已失效(登录过期,或在别处退出了登录):清掉本地登录状态并回到登录页,重新登录后会回到当前页面。
+ */
+function handleSessionExpired() {
+  // 只处理“本地仍是登录态”的情况,同一次失效里的其它请求不再重复提示
+  if (!getToken()) {
+    return;
+  }
+
+  // 会话已经失效,退出登录接口同样会被拒绝,所以这里不再调用它
+  clearAuthStorage();
+
+  const notice = $t('backendError.authentication-required');
+
+  // 直接打开页面时会话校验先于应用挂载完成,这时还没有消息容器,先记下来,挂载后补显示
+  if (window.$message) {
+    window.$message.warning(notice, { duration: 5000 });
+  } else {
+    request.state.pendingNotice = notice;
+  }
+
+  useAuthStore().resetStore();
+}
 
 export const request = createFlatRequest(
   {
@@ -19,6 +51,7 @@ export const request = createFlatRequest(
   {
     defaultState: {
       errMsgStack: [],
+      pendingNotice: '',
       refreshTokenPromise: null
     } as RequestInstanceState,
     transform(response: AxiosResponse<App.Service.Response<any>>) {
@@ -52,14 +85,14 @@ export const request = createFlatRequest(
       }
 
       // when the backend response code is in `logoutCodes`, it means the user will be logged out and redirected to login page
-      const logoutCodes = import.meta.env.VITE_SERVICE_LOGOUT_CODES?.split(',') || [];
+      const logoutCodes = getErrorCodes(import.meta.env.VITE_SERVICE_LOGOUT_CODES);
       if (logoutCodes.includes(responseCode)) {
         handleLogout();
         return null;
       }
 
       // when the backend response code is in `modalLogoutCodes`, it means the user will be logged out by displaying a modal
-      const modalLogoutCodes = import.meta.env.VITE_SERVICE_MODAL_LOGOUT_CODES?.split(',') || [];
+      const modalLogoutCodes = getErrorCodes(import.meta.env.VITE_SERVICE_MODAL_LOGOUT_CODES);
       if (modalLogoutCodes.includes(responseCode) && !request.state.errMsgStack?.includes(backendMessage)) {
         request.state.errMsgStack = [...(request.state.errMsgStack || []), backendMessage];
 
@@ -85,7 +118,7 @@ export const request = createFlatRequest(
 
       // when the backend response code is in `expiredTokenCodes`, it means the token is expired, and refresh token
       // the api `refreshToken` can not return error code in `expiredTokenCodes`, otherwise it will be a dead loop, should return `logoutCodes` or `modalLogoutCodes`
-      const expiredTokenCodes = import.meta.env.VITE_SERVICE_EXPIRED_TOKEN_CODES?.split(',') || [];
+      const expiredTokenCodes = getErrorCodes(import.meta.env.VITE_SERVICE_EXPIRED_TOKEN_CODES);
       if (expiredTokenCodes.includes(responseCode)) {
         const success = await handleExpiredRequest(request.state);
         if (success) {
@@ -105,27 +138,34 @@ export const request = createFlatRequest(
         return;
       }
 
-      let message = error.message;
+      // the session is no longer valid: clear the local sign-in state and go back to the login page
+      if (error.response?.status === 401) {
+        handleSessionExpired();
+        return;
+      }
+
+      const backendError = error.response?.data;
+
+      let message: string;
       let backendErrorCode = '';
 
       // get backend error message and code
-      if (error.code === BACKEND_ERROR_CODE) {
-        backendErrorCode = String(error.response?.data?.code || '');
-        message = translateBackendError(
-          error.response?.data?.reason,
-          error.response?.data?.params,
-          error.response?.data?.detail
-        );
+      if (error.code === BACKEND_ERROR_CODE || backendError?.reason) {
+        backendErrorCode = String(backendError?.code || '');
+        message = translateBackendError(backendError?.reason, backendError?.params, backendError?.detail);
+      } else {
+        // responses without the backend error structure: network errors, timeouts and gateway errors
+        message = `${$t('backendError.requestFailed')}${error.response?.status ? ` (HTTP ${error.response.status})` : ''}`;
       }
 
       // the error message is displayed in the modal
-      const modalLogoutCodes = import.meta.env.VITE_SERVICE_MODAL_LOGOUT_CODES?.split(',') || [];
+      const modalLogoutCodes = getErrorCodes(import.meta.env.VITE_SERVICE_MODAL_LOGOUT_CODES);
       if (modalLogoutCodes.includes(backendErrorCode)) {
         return;
       }
 
       // when the token is expired, refresh token and retry request, so no need to show error message
-      const expiredTokenCodes = import.meta.env.VITE_SERVICE_EXPIRED_TOKEN_CODES?.split(',') || [];
+      const expiredTokenCodes = getErrorCodes(import.meta.env.VITE_SERVICE_EXPIRED_TOKEN_CODES);
       if (expiredTokenCodes.includes(backendErrorCode)) {
         return;
       }

@@ -384,11 +384,13 @@ func parseAgentChatIDs(body agentChatRequest) (uuid.UUID, uuid.UUID, error) {
 func writeAgentRuntimeError(w http.ResponseWriter, err error) {
 	var inputErr *dataplane.AgentInputError
 	if errors.As(err, &inputErr) {
+		// 数据面的 code 是小写 snake_case,说明是英文句子;管理面统一为大写 code 加 kebab-case 的 reason,英文句子只作为 detail。
+		code := strings.ToUpper(inputErr.Code)
 		status := http.StatusBadRequest
-		if inputErr.Code == "AGENT_SESSION_NOT_FOUND" || inputErr.Code == "AGENT_VERSION_NOT_FOUND" {
+		if code == "AGENT_SESSION_NOT_FOUND" || code == "AGENT_VERSION_NOT_FOUND" {
 			status = http.StatusNotFound
 		}
-		adminError(w, status, inputErr.Code, inputErr.Message, nil)
+		adminError(w, status, code, strings.ReplaceAll(inputErr.Code, "_", "-"), nil, inputErr.Message)
 		return
 	}
 	adminError(w, http.StatusInternalServerError, "AGENT_RUN_FAILED", "failed-to-start-the-agent-run", nil)

@@ -29,7 +29,7 @@ declare module "@elegant-router/types" {
     "asset-registry_prompt-templates": "/asset-registry/prompt-templates";
     "home": "/home";
     "iframe-page": "/iframe-page/:url";
-    "login": "/login/:module(pwd-login|code-login|register|reset-pwd|bind-wechat)?";
+    "login": "/login";
     "model-management": "/model-management";
     "model-management_model-services": "/model-management/model-services";
     "model-management_providers": "/model-management/providers";

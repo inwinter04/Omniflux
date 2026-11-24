@@ -60,7 +60,8 @@ export const useAuthStore = defineStore(SetupStoreId.Auth, () => {
 
     authStore.$reset();
 
-    if (!route.meta.constant) {
+    // 首次进入页面时路由还在解析,守卫发现未登录后会带上回跳地址自己跳到登录页
+    if (!route.meta.constant && route.name) {
       await toLogin();
     }
 
@@ -68,6 +69,7 @@ export const useAuthStore = defineStore(SetupStoreId.Auth, () => {
     routeStore.resetStore();
   }
 
+  /** 记录最近一次登录的用户,下次登录时据此判断是否换了人 */
   function recordUserId() {
     if (!userInfo.userId) {
       return;
@@ -83,15 +85,14 @@ export const useAuthStore = defineStore(SetupStoreId.Auth, () => {
 
     const lastLoginUserId = localStg.get('lastLoginUserId');
 
+    // 换了人或第一次登录时,清空上一个用户留下的标签页
     if (!lastLoginUserId || lastLoginUserId !== userInfo.userId) {
       localStg.remove('globalTabs');
       tabStore.clearTabs();
 
-      localStg.remove('lastLoginUserId');
       return true;
     }
 
-    localStg.remove('lastLoginUserId');
     return false;
   }
 
@@ -105,6 +106,9 @@ export const useAuthStore = defineStore(SetupStoreId.Auth, () => {
 
       if (pass) {
         const isClear = checkTabClear();
+
+        recordUserId();
+
         let needRedirect = redirect;
 
         if (isClear) {

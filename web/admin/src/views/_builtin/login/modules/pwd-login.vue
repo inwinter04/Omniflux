@@ -3,7 +3,7 @@ import { computed, reactive } from 'vue';
 import { useMessage } from 'naive-ui';
 import { $t } from '@/locales';
 import { useAuthStore } from '@/store/modules/auth';
-import { useFormRules, useNaiveForm } from '@/hooks/common/form';
+import { useNaiveForm } from '@/hooks/common/form';
 
 defineOptions({
   name: 'PwdLogin'
@@ -24,20 +24,19 @@ const model: FormModel = reactive({
 });
 
 const rules = computed<Record<keyof FormModel, App.Global.FormRule[]>>(() => {
-  const { formRules } = useFormRules();
-
   return {
     email: [
-      { required: true, message: $t('page.login.common.userNamePlaceholder') },
+      { required: true, message: $t('form.email.required') },
       {
-        validator: (_rule: unknown, value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value || ''),
+        // 未填写时只提示必填,不再同时报格式错误
+        validator: (_rule: unknown, value: string) => !value || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value),
         message: $t('business.enter-a-valid-email-address')
       }
     ],
     password: [
       { required: true, message: $t('business.please-enter-a-password') },
       {
-        validator: (_rule: unknown, value: string) => (value || '').length >= 16,
+        validator: (_rule: unknown, value: string) => !value || value.length >= 16,
         message: $t('business.password-must-be-at-least')
       }
     ]
@@ -57,14 +56,18 @@ async function handleSubmit() {
 <template>
   <NForm ref="formRef" :model="model" :rules="rules" size="large" :show-label="false" @keyup.enter="handleSubmit">
     <NFormItem path="email">
-      <NInput v-model:value="model.email" autocomplete="username" :placeholder="$t('business.email')" />
+      <NInput
+        v-model:value="model.email"
+        :input-props="{ autocomplete: 'username' }"
+        :placeholder="$t('business.email')"
+      />
     </NFormItem>
     <NFormItem path="password">
       <NInput
         v-model:value="model.password"
         type="password"
         show-password-on="click"
-        autocomplete="current-password"
+        :input-props="{ autocomplete: 'current-password' }"
         :placeholder="$t('business.password')"
       />
     </NFormItem>

@@ -110,6 +110,18 @@ func TestIntegrationAgentDebugRuntime(t *testing.T) {
 		"session_id": sessionID, "message": "changed vars", "variables": map[string]any{"name": "Grace"},
 	})
 	assertAssetStatus(t, code, body, http.StatusBadRequest)
+	// 管理面错误只返回机器字段:code 为大写错误码,reason 为 kebab-case 标识,英文说明只放在 detail。
+	if body["code"] != "AGENT_SESSION_VARIABLES_IMMUTABLE" || body["reason"] != "agent-session-variables-immutable" || body["detail"] != "Existing sessions cannot change initial variables. Create a new session." {
+		t.Fatalf("input error = %#v", body)
+	}
+
+	code, body = doJSON(t, admin, http.MethodPost, "/api/v1/assets/"+agentID+"/agent/chat", map[string]any{
+		"session_id": uuid.NewString(), "message": "missing session",
+	})
+	assertAssetStatus(t, code, body, http.StatusNotFound)
+	if body["code"] != "AGENT_SESSION_NOT_FOUND" || body["reason"] != "agent-session-not-found" {
+		t.Fatalf("missing session error = %#v", body)
+	}
 
 	code, body = doJSON(t, admin, http.MethodGet, "/api/v1/assets/"+agentID+"/agent/sessions/"+sessionID, nil)
 	assertAssetStatus(t, code, body, http.StatusOK)

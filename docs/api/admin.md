@@ -152,7 +152,7 @@
 | `POST /api/v1/assets/{id}/run` | 运行真实模型;单模型支持 SSE 流式,多模型执行对比 |
 | `GET /api/v1/assets/{id}/runs` | 查询最近 100 条提示词模型运行记录 |
 | `GET /api/v1/assets/{id}/agent/sessions` | 查询当前管理员的 Agent 调试会话 |
-| `POST /api/v1/assets/{id}/agent/chat` | 发送 Agent 消息,支持非流式与 `started/delta/result/error` SSE 事件 |
+| `POST /api/v1/assets/{id}/agent/chat` | 发送 Agent 消息,支持非流式与 `started/delta/result/error` SSE 事件;入参不合法返回 400(会话或版本不存在返回 404),`code` 为大写错误码,`reason` 为 kebab-case 标识,英文说明放在 `detail` |
 | `GET /api/v1/assets/{id}/agent/runs` | 查询最近 100 条 Agent 运行记录 |
 | `GET /api/v1/assets/{id}/agent/sessions/{sessionID}` | 查询会话配置与完整消息历史 |
 | `DELETE /api/v1/assets/{id}/agent/sessions/{sessionID}` | 删除当前管理员的调试会话及消息 |

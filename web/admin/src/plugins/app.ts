@@ -1,7 +1,25 @@
 import { h } from 'vue';
 import type { App } from 'vue';
-import { NButton } from 'naive-ui';
+import { NButton, NSelect } from 'naive-ui';
 import { $t } from '@/locales';
+
+/**
+ * Setup the default props of NaiveUI components
+ *
+ * 下拉选项比菜单宽时只显示省略号,认不出是哪一项。Ant Design、TDesign 的做法是菜单保持与输入框等宽,
+ * 给每个选项加上原生 title,悬停就能看到完整名称。这里通过 node-props 的默认值对所有下拉统一生效,
+ * 单个下拉自己传了 node-props 时不受影响。需要在应用挂载前执行。
+ */
+export function setupNaiveComponentDefaults() {
+  const selectProps = (NSelect as unknown as { props: { nodeProps: unknown } }).props;
+
+  // Naive UI 把这一项写成简写形式(nodeProps: Function),Vue 第一次用到时会复制成新的定义,
+  // 所以要在应用挂载前把这一项整个替换掉。只有文字类型的选项才加 title,自定义渲染的选项由使用方自己决定。
+  selectProps.nodeProps = {
+    type: Function,
+    default: (option: { label?: unknown }) => (typeof option.label === 'string' ? { title: option.label } : {})
+  };
+}
 
 export function setupAppErrorHandle(app: App) {
   app.config.errorHandler = (err, vm, info) => {
