@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -23,8 +24,10 @@ type apiKeyResponse struct {
 	RateLimitPerMin *int       `json:"rate_limit_per_min"`
 	Status          string     `json:"status"`
 	ExpiresAt       *time.Time `json:"expires_at"`
-	LastUsedAt      *time.Time `json:"last_used_at"`
-	CreatedAt       time.Time  `json:"created_at"`
+	// Expired 表示启用中但已过有效期;数据面会拒绝这类 Key,管理台不能继续显示为“有效”。
+	Expired    bool       `json:"expired"`
+	LastUsedAt *time.Time `json:"last_used_at"`
+	CreatedAt  time.Time  `json:"created_at"`
 }
 
 type createAPIKeyRequest struct {
@@ -137,6 +140,7 @@ func (d ServerDeps) APIKeys(w http.ResponseWriter, r *http.Request) {
 		item.ID = id.String()
 		item.ProjectID = projectID.String()
 		item.ApplicationID = applicationID.String()
+		item.Expired = item.Status == "active" && item.ExpiresAt != nil && !item.ExpiresAt.After(time.Now())
 		list = append(list, item)
 	}
 	adminOK(w, list)
@@ -196,18 +200,24 @@ func (d ServerDeps) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	}
 	secretHash := apikeys.Hash(d.APIKeyPepper, generated.Full)
 	keyID := uuid.New()
-	if _, err := d.Pool.Exec(r.Context(), `
-		INSERT INTO api_keys(id, organization_id, project_id, application_id, created_by, name, key_prefix, secret_hash, expires_at, rate_limit_per_min)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-	`, keyID, principal.OrganizationID, projectID, applicationID, principal.UserID,
-		body.Name, generated.Prefix, secretHash, body.ExpiresAt, body.RateLimitPerMin); err != nil {
+	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(r.Context(), `
+			INSERT INTO api_keys(id, organization_id, project_id, application_id, created_by, name, key_prefix, secret_hash, expires_at, rate_limit_per_min)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		`, keyID, principal.OrganizationID, projectID, applicationID, principal.UserID,
+			body.Name, generated.Prefix, secretHash, body.ExpiresAt, body.RateLimitPerMin); err != nil {
+			return err
+		}
+		return writeAuditEvent(r.Context(), tx, principal.OrganizationID, principal.UserID,
+			"api_key.created", "api_key", keyID.String(), nil, map[string]any{
+				"name": body.Name, "project_id": projectID.String(), "application_id": applicationID.String(),
+				"expires_at": body.ExpiresAt, "rate_limit_per_min": body.RateLimitPerMin,
+			})
+	})
+	if err != nil {
 		adminError(w, http.StatusInternalServerError, "APIKEY_CREATE_FAILED", "failed-to-create-the-api-key", nil)
 		return
 	}
-	_, _ = d.Pool.Exec(r.Context(), `
-		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id)
-		VALUES ($1,$2,'user','api_key.created','api_key',$3)
-	`, principal.OrganizationID, principal.UserID, keyID.String())
 	adminOK(w, map[string]string{
 		"id":  keyID.String(),
 		"key": generated.Full,
@@ -215,11 +225,15 @@ func (d ServerDeps) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateAPIKeyRequest struct {
-	Status          *string `json:"status"`
-	RateLimitPerMin *int    `json:"rate_limit_per_min"`
+	Status *string `json:"status"`
+
+	// RateLimitPerMin 用 RawMessage 接收,才能区分“未传(保持不变)”与“传 null(清除限流)”。
+	RateLimitPerMin json.RawMessage `json:"rate_limit_per_min"`
 }
 
 // UpdateAPIKeyStatus 更新 API Key 的状态与限流阈值;禁用立即停止认证通过。
+// UpdateAPIKeyStatus 更新 API Key 的状态与 Key 级限流。
+// 两个字段都是“传了才改”:未传保持原值,rate_limit_per_min 传 null 表示清除限流。
 func (d ServerDeps) UpdateAPIKeyStatus(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
 	if !ok || d.requireProjectAdmin(w, principal) != nil {
@@ -233,11 +247,17 @@ func (d ServerDeps) UpdateAPIKeyStatus(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusBadRequest, "APIKEY_STATUS_INVALID", "status-supports-only-active-or-disabled", nil)
 		return
 	}
-	if body.RateLimitPerMin != nil && *body.RateLimitPerMin <= 0 {
-		adminError(w, http.StatusBadRequest, "APIKEY_RATE_LIMIT_INVALID", "rate-limit-per-min-must-be", nil)
-		return
+	rateLimitProvided := len(body.RateLimitPerMin) > 0
+	var requestedRateLimit *int
+	if rateLimitProvided && string(body.RateLimitPerMin) != "null" {
+		var parsed int
+		if err := json.Unmarshal(body.RateLimitPerMin, &parsed); err != nil || parsed <= 0 {
+			adminError(w, http.StatusBadRequest, "APIKEY_RATE_LIMIT_INVALID", "rate-limit-per-min-must-be", nil)
+			return
+		}
+		requestedRateLimit = &parsed
 	}
-	if body.Status == nil && body.RateLimitPerMin == nil {
+	if body.Status == nil && !rateLimitProvided {
 		adminError(w, http.StatusBadRequest, "APIKEY_NOTHING_TO_UPDATE", "provide-at-least-status-or-rate", nil)
 		return
 	}
@@ -259,30 +279,44 @@ func (d ServerDeps) UpdateAPIKeyStatus(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusInternalServerError, "APIKEY_STATUS_FAILED", "failed-to-update-the-api-key", nil)
 		return
 	}
-	if body.Status != nil && currentStatus == *body.Status &&
-		(body.RateLimitPerMin == nil || (currentRateLimit != nil && *currentRateLimit == *body.RateLimitPerMin)) {
-		adminOK(w, map[string]string{"status": currentStatus})
+	// 生效后的值:未传的字段沿用原值;审计快照记录生效值,而不是请求里的空值。
+	newStatus := currentStatus
+	if body.Status != nil {
+		newStatus = *body.Status
+	}
+	newRateLimit := currentRateLimit
+	if rateLimitProvided {
+		newRateLimit = requestedRateLimit
+	}
+	if newStatus == currentStatus && optionalIntEqual(newRateLimit, currentRateLimit) {
+		adminOK(w, map[string]string{"status": newStatus})
 		return
 	}
-	tag, err := d.Pool.Exec(r.Context(), `
-		UPDATE api_keys SET status = COALESCE($3, status), rate_limit_per_min = $4, updated_at = now()
-		WHERE id = $1 AND organization_id = $2
-	`, keyID, principal.OrganizationID, body.Status, nullableIntPtr(body.RateLimitPerMin))
+	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(r.Context(), `
+			UPDATE api_keys SET status = $3, rate_limit_per_min = $4, updated_at = now()
+			WHERE id = $1 AND organization_id = $2
+		`, keyID, principal.OrganizationID, newStatus, nullableIntPtr(newRateLimit))
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return pgx.ErrNoRows
+		}
+		return writeAuditEvent(r.Context(), tx, principal.OrganizationID, principal.UserID,
+			"api_key.updated", "api_key", keyID.String(),
+			map[string]any{"status": currentStatus, "rate_limit_per_min": currentRateLimit},
+			map[string]any{"status": newStatus, "rate_limit_per_min": newRateLimit})
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		adminError(w, http.StatusNotFound, "APIKEY_NOT_FOUND", "api-key-does-not-exist", nil)
+		return
+	}
 	if err != nil {
 		adminError(w, http.StatusInternalServerError, "APIKEY_STATUS_FAILED", "failed-to-update-the-api-key", nil)
 		return
 	}
-	if tag.RowsAffected() == 0 {
-		adminError(w, http.StatusNotFound, "APIKEY_NOT_FOUND", "api-key-does-not-exist", nil)
-		return
-	}
-	_, _ = d.Pool.Exec(r.Context(), `
-		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, before_state, after_state)
-		VALUES ($1,$2,'user','api_key.updated','api_key',$3,$4,$5)
-	`, principal.OrganizationID, principal.UserID, keyID.String(),
-		auditJSON(map[string]any{"status": currentStatus, "rate_limit_per_min": currentRateLimit}),
-		auditJSON(map[string]any{"status": body.Status, "rate_limit_per_min": body.RateLimitPerMin}))
-	adminOK(w, map[string]string{"status": currentStatus})
+	adminOK(w, map[string]string{"status": newStatus})
 }
 
 // DeleteAPIKey 软删除 API Key,立即停止认证通过且不再出现在列表中。
@@ -296,21 +330,26 @@ func (d ServerDeps) DeleteAPIKey(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusBadRequest, "APIKEY_INVALID_ID", "invalid-api-key-id", nil)
 		return
 	}
-	tag, err := d.Pool.Exec(r.Context(), `
-		UPDATE api_keys SET deleted_at = now(), updated_at = now()
-		WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
-	`, keyID, principal.OrganizationID)
+	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
+		// 软删除后名称仍可查到,但保持与其它删除一致:审计里记下被删 Key 的名称。
+		var name string
+		if err := tx.QueryRow(r.Context(), `
+			UPDATE api_keys SET deleted_at = now(), updated_at = now()
+			WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
+			RETURNING name
+		`, keyID, principal.OrganizationID).Scan(&name); err != nil {
+			return err
+		}
+		return writeAuditEvent(r.Context(), tx, principal.OrganizationID, principal.UserID,
+			"api_key.deleted", "api_key", keyID.String(), map[string]any{"name": name}, nil)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		adminError(w, http.StatusNotFound, "APIKEY_NOT_FOUND", "api-key-does-not-exist", nil)
+		return
+	}
 	if err != nil {
 		adminError(w, http.StatusInternalServerError, "APIKEY_DELETE_FAILED", "failed-to-delete-the-api-key", nil)
 		return
 	}
-	if tag.RowsAffected() == 0 {
-		adminError(w, http.StatusNotFound, "APIKEY_NOT_FOUND", "api-key-does-not-exist", nil)
-		return
-	}
-	_, _ = d.Pool.Exec(r.Context(), `
-		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id)
-		VALUES ($1,$2,'user','api_key.deleted','api_key',$3)
-	`, principal.OrganizationID, principal.UserID, keyID.String())
 	adminOK(w, nil)
 }

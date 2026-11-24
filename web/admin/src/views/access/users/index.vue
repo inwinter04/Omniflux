@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, h, onMounted, reactive, ref } from 'vue';
+import { useRoute } from 'vue-router';
 import { NButton, NModal, NPopconfirm, NSpace, NTag } from 'naive-ui';
 import type { DataTableColumns, FormInst, FormRules } from 'naive-ui';
 import { formatTime, statusTagType, statusText } from '@/utils/admin-status';
@@ -21,6 +22,7 @@ const roleText = computed<Record<string, string>>(() => ({
 }));
 
 const authStore = useAuthStore();
+const route = useRoute();
 const isPlatformAdmin = computed(() => authStore.userInfo.roles.includes('platform_admin'));
 const orgOptions = ref<{ label: string; value: string }[]>([]);
 const filterOrgId = ref<string | null>(null);
@@ -37,6 +39,8 @@ const list = ref<Api.Management.User[]>([]);
 const currentUserId = ref('');
 
 const showCreate = ref(false);
+const showDetail = ref(false);
+const detailUser = ref<Api.Management.User | null>(null);
 const showEdit = ref(false);
 const submitting = ref(false);
 const formRef = ref<FormInst | null>(null);
@@ -89,7 +93,7 @@ const editRules = computed<FormRules>(() => ({
 }));
 
 const columns = computed<DataTableColumns<Api.Management.User>>(() => [
-  { title: $t('business.email'), key: 'email', width: 220 },
+  { title: $t('business.email'), key: 'email', ellipsis: { tooltip: true }, width: 220 },
   {
     title: $t('business.role'),
     key: 'role',
@@ -123,10 +127,22 @@ const columns = computed<DataTableColumns<Api.Management.User>>(() => [
   {
     title: $t('business.actions'),
     key: 'actions',
-    width: 150,
+    width: 210,
+    // 操作列固定在右侧:列多于一屏宽度时,行内操作不用横向滚动也能点到。
+    fixed: 'right',
     render(row) {
       if (row.role === 'org_owner' && !isPlatformAdmin.value) return '-';
       const actions = [
+        h(
+          NButton,
+          {
+            size: 'small',
+            quaternary: true,
+            type: 'primary',
+            onClick: () => openDetail(row)
+          },
+          { default: () => $t('business.details') }
+        ),
         h(
           NButton,
           {
@@ -252,6 +268,11 @@ async function handleMove() {
   }
 }
 
+function openDetail(row: Api.Management.User) {
+  detailUser.value = row;
+  showDetail.value = true;
+}
+
 function openEdit(row: Api.Management.User) {
   editModel.id = row.id;
   editModel.email = row.email;
@@ -306,9 +327,13 @@ async function handleToggleStatus(row: Api.Management.User, status: 'active' | '
   }
 }
 
-onMounted(() => {
-  void loadData();
-  void loadOrganizations();
+onMounted(async () => {
+  await Promise.all([loadData(), loadOrganizations()]);
+  const userID = typeof route.query.user === 'string' ? route.query.user : '';
+  if (userID) {
+    const user = list.value.find(item => item.id === userID);
+    if (user) openDetail(user);
+  }
 });
 </script>
 
@@ -412,6 +437,43 @@ onMounted(() => {
         </NSpace>
       </template>
     </NModal>
+
+    <NDrawer v-model:show="showDetail" :width="520" placement="right">
+      <NDrawerContent :title="$t('business.userDetail')" closable>
+        <NDescriptions v-if="detailUser" :column="1" bordered size="small" label-placement="left">
+          <NDescriptionsItem :label="$t('business.email')">{{ detailUser.email }}</NDescriptionsItem>
+          <NDescriptionsItem :label="$t('business.role')">
+            {{ roleText[detailUser.role] ?? detailUser.role }}
+          </NDescriptionsItem>
+          <NDescriptionsItem :label="$t('business.status')">
+            <NTag :type="statusTagType(detailUser.status)" size="small" round>
+              {{ statusText(detailUser.status) }}
+            </NTag>
+          </NDescriptionsItem>
+          <NDescriptionsItem :label="$t('business.last-login')">
+            {{ formatTime(detailUser.last_login_at) }}
+          </NDescriptionsItem>
+          <NDescriptionsItem :label="$t('business.created-at')">
+            {{ formatTime(detailUser.created_at) }}
+          </NDescriptionsItem>
+        </NDescriptions>
+        <template #footer>
+          <NSpace justify="end">
+            <NButton @click="showDetail = false">{{ $t('business.close') }}</NButton>
+            <NButton
+              v-if="detailUser && !(detailUser.role === 'org_owner' && !isPlatformAdmin)"
+              type="primary"
+              @click="detailUser && openEdit(detailUser)"
+            >
+              {{ $t('business.reset-password') }}
+            </NButton>
+            <NButton v-if="isPlatformAdmin && detailUser" type="warning" @click="detailUser && openMove(detailUser)">
+              {{ $t('business.move-organization') }}
+            </NButton>
+          </NSpace>
+        </template>
+      </NDrawerContent>
+    </NDrawer>
   </div>
 </template>
 

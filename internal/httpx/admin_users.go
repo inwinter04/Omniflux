@@ -170,17 +170,16 @@ func (d ServerDeps) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userID := uuid.New()
-	if _, err := d.Pool.Exec(r.Context(), `
+	err = d.execWithAudit(r.Context(), `
 		INSERT INTO users(id, organization_id, email, password_hash, role)
 		VALUES ($1,$2,$3,$4,$5)
-	`, userID, targetOrgID, email, hash, body.Role); err != nil {
+	`, []any{userID, targetOrgID, email, hash, body.Role},
+		targetOrgID, principal.UserID, "user.created", "user", userID.String(),
+		nil, map[string]any{"email": email, "role": body.Role})
+	if err != nil {
 		adminError(w, http.StatusInternalServerError, "USER_CREATE_FAILED", "failed-to-create-the-user", nil)
 		return
 	}
-	_, _ = d.Pool.Exec(r.Context(), `
-		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, after_state)
-		VALUES ($1,$2,'user','user.created','user',$3,$4)
-	`, targetOrgID, principal.UserID, userID.String(), auditJSON(map[string]any{"email": email, "role": body.Role}))
 	adminOK(w, map[string]string{"id": userID.String()})
 }
 
@@ -283,6 +282,14 @@ func (d ServerDeps) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	if targetOrgID != nil {
 		auditOrgID = *targetOrgID
 	}
+	// 审计快照记录生效后的值:未传的字段沿用原值,而不是请求里的空值。
+	newRole, newStatus := current.Role, current.Status
+	if body.Role != nil {
+		newRole = *body.Role
+	}
+	if body.Status != nil {
+		newStatus = *body.Status
+	}
 	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
 		var execErr error
 		if isPlatformAdmin(principal) {
@@ -320,8 +327,8 @@ func (d ServerDeps) UpdateUser(w http.ResponseWriter, r *http.Request) {
 			INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, before_state, after_state)
 			VALUES ($1,$2,'user','user.updated','user',$3,$4,$5)
 		`, auditOrgID, principal.UserID, userID.String(),
-			auditJSON(map[string]any{"role": current.Role, "status": current.Status}),
-			auditJSON(map[string]any{"role": body.Role, "status": body.Status, "password_reset": body.Password != nil}))
+			auditJSON(map[string]any{"role": current.Role, "status": current.Status, "password_reset": false}),
+			auditJSON(map[string]any{"role": newRole, "status": newStatus, "password_reset": body.Password != nil}))
 		return err
 	})
 	if err != nil {

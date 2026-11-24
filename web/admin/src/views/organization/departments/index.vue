@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { h, onMounted, reactive, ref, computed } from 'vue';
+import { useRoute } from 'vue-router';
 import { NButton, NPopconfirm, NSpace, NTag } from 'naive-ui';
 import type { DataTableColumns, FormInst, FormRules } from 'naive-ui';
 import { fetchCreateDepartment, fetchDeleteDepartment, fetchDepartments, fetchUpdateDepartment } from '@/service/api';
@@ -11,6 +12,7 @@ defineOptions({
 });
 
 const { canManage } = usePermission();
+const route = useRoute();
 
 const loading = ref(true);
 const list = ref<Api.Management.Department[]>([]);
@@ -32,7 +34,7 @@ const formRules = computed<FormRules>(() => ({
 }));
 
 const columns = computed<DataTableColumns<Api.Management.Department>>(() => [
-  { title: $t('business.name'), key: 'name' },
+  { title: $t('business.name'), key: 'name', ellipsis: { tooltip: true } },
   {
     title: $t('business.actions'),
     key: 'actions',
@@ -139,8 +141,13 @@ async function handleDelete(id: string) {
   }
 }
 
-onMounted(() => {
-  void loadData();
+onMounted(async () => {
+  await loadData();
+  const departmentID = typeof route.query.department === 'string' ? route.query.department : '';
+  if (departmentID) {
+    const department = list.value.find(item => item.id === departmentID);
+    if (department) openEdit(department);
+  }
 });
 </script>
 

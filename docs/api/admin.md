@@ -46,7 +46,7 @@
 | `GET /api/v1/projects` | 项目列表 |
 | `POST /api/v1/projects` | 创建项目 |
 | `PATCH /api/v1/projects/{id}` | 更新项目 |
-| `PATCH /api/v1/projects/{id}/status` | 启用或停用项目 |
+| `PATCH /api/v1/projects/{id}/status` | 启用或停用项目;停用后名下 API Key 立即停止调用 |
 | `DELETE /api/v1/projects/{id}` | 删除项目(存在应用/Key/用量时拒绝) |
 
 ### 应用
@@ -56,7 +56,7 @@
 | `GET /api/v1/applications` | 应用列表 |
 | `POST /api/v1/applications` | 创建应用 |
 | `PATCH /api/v1/applications/{id}` | 更新应用 |
-| `PATCH /api/v1/applications/{id}/status` | 启用或停用应用 |
+| `PATCH /api/v1/applications/{id}/status` | 启用或停用应用;停用后名下 API Key 立即停止调用 |
 | `DELETE /api/v1/applications/{id}` | 删除应用(存在 Key/用量时拒绝) |
 
 ## 用户
@@ -131,9 +131,9 @@
 
 | 接口 | 说明 |
 | --- | --- |
-| `GET /api/v1/api-keys` | API Key 列表 |
+| `GET /api/v1/api-keys` | API Key 列表,`expired` 表示启用中但已过有效期(数据面会拒绝这类 Key) |
 | `POST /api/v1/api-keys` | 创建 API Key(明文仅返回一次,可设置 Key 级限流) |
-| `PATCH /api/v1/api-keys/{id}` | 更新状态与 Key 级限流 |
+| `PATCH /api/v1/api-keys/{id}` | 更新状态与 Key 级限流;未传的字段保持不变,`rate_limit_per_min` 传 `null` 表示清除限流 |
 | `DELETE /api/v1/api-keys/{id}` | 软删除 API Key |
 
 ## 企业资产

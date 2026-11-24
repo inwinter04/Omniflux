@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, h, onMounted, reactive, ref } from 'vue';
+import { useRoute } from 'vue-router';
 import { NButton, NPopconfirm, NSpace, NTag } from 'naive-ui';
 import type { DataTableColumns, FormInst, FormRules } from 'naive-ui';
 import { formatTime, statusTagType, statusText } from '@/utils/admin-status';
@@ -19,6 +20,7 @@ defineOptions({
 });
 
 const { canManage } = usePermission();
+const route = useRoute();
 
 const loading = ref(true);
 const list = ref<Api.Management.ApiKey[]>([]);
@@ -80,18 +82,57 @@ function applicationName(id: string) {
   return applications.value.find(item => item.id === id)?.name ?? '-';
 }
 
+// Key 是否可用不只取决于自身状态:已过期,或所属项目 / 应用被停用时,数据面都会拒绝。
+function keyStatus(row: Api.Management.ApiKey): {
+  type: ReturnType<typeof statusTagType>;
+  text: string;
+} {
+  if (row.expired) return { type: 'warning', text: $t('business.key-expired') };
+  if (row.status === 'active') {
+    if (projects.value.find(item => item.id === row.project_id)?.status === 'disabled') {
+      return { type: 'warning', text: $t('business.project-disabled') };
+    }
+    if (applications.value.find(item => item.id === row.application_id)?.status === 'disabled') {
+      return { type: 'warning', text: $t('business.application-disabled') };
+    }
+  }
+  return { type: statusTagType(row.status), text: statusText(row.status, 'api_key') };
+}
+
+function keyStatusTag(row: Api.Management.ApiKey) {
+  const status = keyStatus(row);
+  return h(NTag, { type: status.type, size: 'small', round: true }, { default: () => status.text });
+}
+
+const showDetail = ref(false);
+const detailKey = ref<Api.Management.ApiKey | null>(null);
+
+function openDetail(row: Api.Management.ApiKey) {
+  detailKey.value = row;
+  showDetail.value = true;
+}
+
+function adjustRateLimitFromDetail() {
+  if (!detailKey.value) return;
+  const key = detailKey.value;
+  showDetail.value = false;
+  openRateLimit(key);
+}
+
+// 列顺序把状态、健康等关键信息排在前面:列多于一屏宽度时,这些列在常见窗口下仍然可见,其余列横向滚动查看。
 const columns = computed<DataTableColumns<Api.Management.ApiKey>>(() => [
-  { title: $t('business.name'), key: 'name', width: 160 },
-  { title: $t('business.prefix'), key: 'key_prefix', width: 120 },
+  { title: $t('business.name'), key: 'name', ellipsis: { tooltip: true }, width: 160 },
   {
     title: $t('business.project'),
     key: 'project_id',
+    ellipsis: { tooltip: true },
     width: 140,
     render: row => projectName(row.project_id)
   },
   {
     title: $t('business.application'),
     key: 'application_id',
+    ellipsis: { tooltip: true },
     width: 140,
     render: row => applicationName(row.application_id)
   },
@@ -99,13 +140,13 @@ const columns = computed<DataTableColumns<Api.Management.ApiKey>>(() => [
     title: $t('business.status'),
     key: 'status',
     width: 100,
-    render(row) {
-      return h(
-        NTag,
-        { type: statusTagType(row.status), size: 'small', round: true },
-        { default: () => statusText(row.status, 'api_key') }
-      );
-    }
+    render: row => keyStatusTag(row)
+  },
+  {
+    title: $t('business.expires-at'),
+    key: 'expires_at',
+    width: 170,
+    render: row => (row.expires_at ? formatTime(row.expires_at) : '-')
   },
   {
     title: $t('business.last-used'),
@@ -113,6 +154,13 @@ const columns = computed<DataTableColumns<Api.Management.ApiKey>>(() => [
     width: 180,
     render: row => formatTime(row.last_used_at)
   },
+  {
+    title: $t('business.rate-limit-minute'),
+    key: 'rate_limit_per_min',
+    width: 130,
+    render: row => (row.rate_limit_per_min != null ? String(row.rate_limit_per_min) : '-')
+  },
+  { title: $t('business.prefix'), key: 'key_prefix', ellipsis: { tooltip: true }, width: 120 },
   {
     title: $t('business.created-at'),
     key: 'created_at',
@@ -122,10 +170,20 @@ const columns = computed<DataTableColumns<Api.Management.ApiKey>>(() => [
   {
     title: $t('business.actions'),
     key: 'actions',
-    width: 150,
+    // 四个按钮在中文下排成一行需要约 230px。
+    width: 240,
+    // 操作列固定在右侧:列多于一屏宽度时,行内操作不用横向滚动也能点到。
+    fixed: 'right',
     render(row) {
-      if (!canManage.value) return [];
-      const buttons: ReturnType<typeof h>[] = [];
+      // 详情对所有角色开放;限流、启停、删除只给可管理角色。
+      const buttons: ReturnType<typeof h>[] = [
+        h(
+          NButton,
+          { size: 'small', quaternary: true, type: 'primary', onClick: () => openDetail(row) },
+          { default: () => $t('business.details') }
+        )
+      ];
+      if (!canManage.value) return h(NSpace, { size: 4 }, { default: () => buttons });
       buttons.push(
         h(
           NButton,
@@ -210,6 +268,7 @@ function openCreate() {
   formModel.name = '';
   formModel.project_id = null;
   formModel.application_id = null;
+  formModel.expires_at = null;
   formModel.rate_limit_per_min = null;
   showCreate.value = true;
 }
@@ -226,7 +285,7 @@ async function handleSaveRateLimit() {
   submittingRateLimit.value = true;
   try {
     const { error } = await fetchUpdateApiKey(rateLimitModel.id, {
-      rate_limit_per_min: rateLimitModel.rate_limit_per_min ?? undefined
+      rate_limit_per_min: rateLimitModel.rate_limit_per_min ?? null
     });
     if (!error) {
       window.$message?.success($t('business.rate-limit-threshold-updated'));
@@ -287,8 +346,13 @@ async function handleDelete(id: string) {
   }
 }
 
-onMounted(() => {
-  void loadData();
+onMounted(async () => {
+  await loadData();
+  const keyID = typeof route.query.key === 'string' ? route.query.key : '';
+  if (keyID) {
+    const key = list.value.find(item => item.id === keyID);
+    if (key) openDetail(key);
+  }
 });
 </script>
 
@@ -404,6 +468,40 @@ onMounted(() => {
         </NSpace>
       </template>
     </NModal>
+
+    <NDrawer v-model:show="showDetail" :width="520" placement="right">
+      <NDrawerContent :title="$t('business.api-key-detail')" closable>
+        <NDescriptions v-if="detailKey" :column="1" bordered size="small" label-placement="left">
+          <NDescriptionsItem :label="$t('business.name')">{{ detailKey.name }}</NDescriptionsItem>
+          <NDescriptionsItem :label="$t('business.prefix')">{{ detailKey.key_prefix }}</NDescriptionsItem>
+          <NDescriptionsItem :label="$t('business.project')">
+            {{ projectName(detailKey.project_id) }}
+          </NDescriptionsItem>
+          <NDescriptionsItem :label="$t('business.application')">
+            {{ applicationName(detailKey.application_id) }}
+          </NDescriptionsItem>
+          <NDescriptionsItem :label="$t('business.status')">
+            <NTag :type="keyStatus(detailKey).type" size="small" round>{{ keyStatus(detailKey).text }}</NTag>
+          </NDescriptionsItem>
+          <NDescriptionsItem :label="$t('business.expires-at')">
+            {{ detailKey.expires_at ? formatTime(detailKey.expires_at) : $t('business.never-expires') }}
+          </NDescriptionsItem>
+          <NDescriptionsItem :label="$t('business.rate-limit-minute')">
+            {{ detailKey.rate_limit_per_min != null ? detailKey.rate_limit_per_min : $t('business.use-global-default') }}
+          </NDescriptionsItem>
+          <NDescriptionsItem :label="$t('business.last-used')">{{ formatTime(detailKey.last_used_at) }}</NDescriptionsItem>
+          <NDescriptionsItem :label="$t('business.created-at')">{{ formatTime(detailKey.created_at) }}</NDescriptionsItem>
+        </NDescriptions>
+        <template #footer>
+          <NSpace justify="end">
+            <NButton @click="showDetail = false">{{ $t('business.close') }}</NButton>
+            <NButton v-if="canManage && detailKey" type="primary" @click="adjustRateLimitFromDetail">
+              {{ $t('business.adjust-rate-limit') }}
+            </NButton>
+          </NSpace>
+        </template>
+      </NDrawerContent>
+    </NDrawer>
   </div>
 </template>
 

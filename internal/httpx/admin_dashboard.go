@@ -8,17 +8,20 @@ import (
 )
 
 type dashboardResponse struct {
-	ActiveServices  int64                `json:"active_services"`
-	ActiveProviders int64                `json:"active_providers"`
-	ActiveAPIKeys   int64                `json:"active_api_keys"`
-	UserCount       int64                `json:"user_count"`
-	Requests7d      int64                `json:"requests_7d"`
-	SuccessRate7d   string               `json:"success_rate_7d"`
-	Cost7d          string               `json:"cost_7d"`
-	CostCurrency    string               `json:"cost_currency"`
-	Costs           []usageCurrencyTotal `json:"costs"`
-	ActiveBudgets   int64                `json:"active_budgets"`
-	ExceededBudgets int64                `json:"exceeded_budgets"`
+	ActiveServices   int64                `json:"active_services"`
+	ActiveProviders  int64                `json:"active_providers"`
+	ActiveAPIKeys    int64                `json:"active_api_keys"`
+	UserCount        int64                `json:"user_count"`
+	DepartmentCount  int64                `json:"department_count"`
+	ProjectCount     int64                `json:"project_count"`
+	ApplicationCount int64                `json:"application_count"`
+	Requests7d       int64                `json:"requests_7d"`
+	SuccessRate7d    string               `json:"success_rate_7d"`
+	Cost7d           string               `json:"cost_7d"`
+	CostCurrency     string               `json:"cost_currency"`
+	Costs            []usageCurrencyTotal `json:"costs"`
+	ActiveBudgets    int64                `json:"active_budgets"`
+	ExceededBudgets  int64                `json:"exceeded_budgets"`
 }
 
 // Dashboard 返回首页概览统计:资源规模、近 7 天用量与预算状态。
@@ -32,8 +35,14 @@ func (d ServerDeps) Dashboard(w http.ResponseWriter, r *http.Request) {
 		SELECT
 			(SELECT count(*) FROM model_services WHERE organization_id = $1 AND status = 'active'),
 			(SELECT count(*) FROM provider_accounts WHERE organization_id = $1 AND status = 'active'),
-			(SELECT count(*) FROM api_keys WHERE organization_id = $1 AND status = 'active' AND deleted_at IS NULL),
+			(SELECT count(*) FROM api_keys k WHERE k.organization_id = $1 AND k.status = 'active' AND k.deleted_at IS NULL
+			AND (k.expires_at IS NULL OR k.expires_at > now())
+			AND EXISTS (SELECT 1 FROM projects p WHERE p.id = k.project_id AND p.status = 'active')
+			AND EXISTS (SELECT 1 FROM applications a WHERE a.id = k.application_id AND a.status = 'active')),
 			(SELECT count(*) FROM users WHERE organization_id = $1 AND status = 'active'),
+			(SELECT count(*) FROM departments WHERE organization_id = $1),
+			(SELECT count(*) FROM projects WHERE organization_id = $1),
+			(SELECT count(*) FROM applications WHERE organization_id = $1),
 			(SELECT count(*) FROM usage_records WHERE organization_id = $1 AND created_at >= now() - interval '7 days'),
 			(SELECT CASE WHEN count(*) = 0 THEN '-' ELSE (count(*) FILTER (WHERE state = 'success') * 100 / count(*))::text || '%' END
 				FROM usage_records WHERE organization_id = $1 AND created_at >= now() - interval '7 days'),
@@ -41,6 +50,7 @@ func (d ServerDeps) Dashboard(w http.ResponseWriter, r *http.Request) {
 			(SELECT count(*) FROM budget_windows WHERE organization_id = $1 AND now() >= window_start AND now() < window_end AND spent_amount >= limit_amount)
 	`, principal.OrganizationID).Scan(
 		&res.ActiveServices, &res.ActiveProviders, &res.ActiveAPIKeys, &res.UserCount,
+		&res.DepartmentCount, &res.ProjectCount, &res.ApplicationCount,
 		&res.Requests7d, &res.SuccessRate7d, &res.ActiveBudgets, &res.ExceededBudgets,
 	)
 	if err != nil {

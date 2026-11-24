@@ -10,6 +10,8 @@ Authorization: Bearer <API Key>
 
 API Key 在管理台"访问控制 → API Keys"中签发,明文仅创建时返回一次。模型服务通过组织、部门或项目授权控制可见与可调用范围:`read` 决定 `GET /v1/models`,`invoke` 决定聊天、向量化和智能体执行。未授权调用返回 `model_access_denied`,不会进入上游模型。
 
+Key 被停用或已过期时返回 `401`(`api_key_disabled` / `api_key_expired`);Key 所属项目或应用被停用时返回 `403`(`project_disabled` / `application_disabled`),在管理台重新启用后立即恢复。这些请求不会进入上游模型,也不会计入用量。
+
 ## 端点
 
 | 接口 | 说明 |

@@ -97,6 +97,40 @@ function statCards() {
   ];
 }
 
+const onboardingSteps = computed(() => [
+  {
+    title: $t('business.setupDepartment'),
+    route: '/organization/departments',
+    done: (dash.value?.department_count ?? 0) > 0
+  },
+  {
+    title: $t('business.setupProject'),
+    route: '/organization/projects',
+    done: (dash.value?.project_count ?? 0) > 0
+  },
+  {
+    title: $t('business.setupApplication'),
+    route: '/organization/applications',
+    done: (dash.value?.application_count ?? 0) > 0
+  },
+  {
+    title: $t('business.setupProvider'),
+    route: '/model-management/providers',
+    done: (dash.value?.active_providers ?? 0) > 0
+  },
+  {
+    title: $t('business.setupModelService'),
+    route: '/model-management/model-services',
+    done: (dash.value?.active_services ?? 0) > 0
+  },
+  {
+    title: $t('business.setupApiKey'),
+    route: '/access/api-keys',
+    done: (dash.value?.active_api_keys ?? 0) > 0
+  }
+]);
+const onboardingDone = computed(() => onboardingSteps.value.every(step => step.done));
+
 function usageCards() {
   return [
     {
@@ -169,6 +203,28 @@ onMounted(() => {
           </div>
         </NGi>
       </NGrid>
+    </NCard>
+
+    <NCard :title="$t('business.initializationChecklist')" :bordered="false" class="card-wrapper">
+      <template #header-extra>
+        <NTag :type="onboardingDone ? 'success' : 'info'" round>
+          {{ onboardingDone ? $t('business.completed') : $t('business.inProgress') }}
+        </NTag>
+      </template>
+      <NSpace vertical :size="10">
+        <div v-for="step in onboardingSteps" :key="step.title" class="flex items-center justify-between gap-12px">
+          <NSpace align="center" :size="8">
+            <SvgIcon
+              :icon="step.done ? 'mdi:check-circle' : 'mdi:circle-outline'"
+              :class="step.done ? 'text-#18a058' : 'text-#9ca3af'"
+            />
+            <span>{{ step.title }}</span>
+          </NSpace>
+          <NButton text type="primary" @click="go(step.route)">
+            {{ step.done ? $t('business.view') : $t('business.goSetup') }}
+          </NButton>
+        </div>
+      </NSpace>
     </NCard>
 
     <NCard :title="$t('business.resource-overview')" :bordered="false" class="card-wrapper">

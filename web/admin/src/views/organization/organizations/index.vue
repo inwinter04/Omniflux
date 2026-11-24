@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, h, onMounted, reactive, ref } from 'vue';
+import { useRoute } from 'vue-router';
 import { NButton } from 'naive-ui';
 import type { DataTableColumns, FormInst, FormRules } from 'naive-ui';
 import { formatTime } from '@/utils/admin-status';
@@ -12,6 +13,7 @@ defineOptions({
 });
 
 const { canManage, isPlatformAdmin } = usePermission();
+const route = useRoute();
 
 const loading = ref(true);
 const list = ref<Api.Management.Organization[]>([]);
@@ -50,8 +52,8 @@ const editRules = computed<FormRules>(() => ({
 }));
 
 const columns = computed<DataTableColumns<Api.Management.Organization>>(() => [
-  { title: $t('business.name'), key: 'name' },
-  { title: $t('business.organization-slug'), key: 'slug' },
+  { title: $t('business.name'), key: 'name', ellipsis: { tooltip: true } },
+  { title: $t('business.organization-slug'), key: 'slug', ellipsis: { tooltip: true } },
   {
     title: $t('business.created-at'),
     key: 'created_at',
@@ -144,8 +146,13 @@ async function handleUpdate() {
   }
 }
 
-onMounted(() => {
-  void loadData();
+onMounted(async () => {
+  await loadData();
+  const organizationID = typeof route.query.organization === 'string' ? route.query.organization : '';
+  if (organizationID) {
+    const organization = list.value.find(item => item.id === organizationID);
+    if (organization) openEdit(organization);
+  }
 });
 </script>
 

@@ -216,6 +216,8 @@ declare namespace Api {
       rate_limit_per_min: number | null;
       status: string;
       expires_at: string | null;
+      /** 启用中但已过有效期;数据面会拒绝这类 Key */
+      expired: boolean;
       last_used_at: string | null;
       created_at: string;
     }
@@ -230,7 +232,8 @@ declare namespace Api {
 
     interface UpdateApiKeyParams {
       status?: 'active' | 'disabled';
-      rate_limit_per_min?: number;
+      /** 不传表示保持不变,传 null 表示清除 Key 级限流 */
+      rate_limit_per_min?: number | null;
     }
 
     /** 明文 key 仅在创建响应中出现一次 */
@@ -635,6 +638,9 @@ declare namespace Api {
       active_providers: number;
       active_api_keys: number;
       user_count: number;
+      department_count: number;
+      project_count: number;
+      application_count: number;
       requests_7d: number;
       success_rate_7d: string;
       cost_7d: string;

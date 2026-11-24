@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { h, onMounted, reactive, ref, computed } from 'vue';
+import { useRoute } from 'vue-router';
 import { NButton, NPopconfirm, NSpace, NTag } from 'naive-ui';
 import type { DataTableColumns, FormInst, FormRules } from 'naive-ui';
 import { formatTime, statusTagType, statusText } from '@/utils/admin-status';
@@ -19,6 +20,7 @@ defineOptions({
 });
 
 const { canManage } = usePermission();
+const route = useRoute();
 
 const loading = ref(true);
 const list = ref<Api.Management.Project[]>([]);
@@ -65,10 +67,11 @@ function departmentName(id: string) {
 }
 
 const columns = computed<DataTableColumns<Api.Management.Project>>(() => [
-  { title: $t('business.name'), key: 'name' },
+  { title: $t('business.name'), key: 'name', ellipsis: { tooltip: true } },
   {
     title: $t('business.department'),
     key: 'department_id',
+    ellipsis: { tooltip: true },
     render: row => departmentName(row.department_id)
   },
   {
@@ -104,18 +107,27 @@ const columns = computed<DataTableColumns<Api.Management.Project>>(() => [
               },
               { default: () => $t('business.edit') }
             ),
-            h(
-              NButton,
-              {
-                size: 'small',
-                quaternary: true,
-                type: row.status === 'active' ? 'warning' : 'success',
-                onClick: () => toggleStatus(row)
-              },
-              {
-                default: () => (row.status === 'active' ? $t('business.disabled') : $t('business.enable'))
-              }
-            ),
+            // 停用会立即生效:名下 API Key 全部停止调用,所以停用前需要确认,启用则直接执行。
+            row.status === 'active'
+              ? h(
+                  NPopconfirm,
+                  { onPositiveClick: () => toggleStatus(row) },
+                  {
+                    trigger: () =>
+                      h(NButton, { size: 'small', quaternary: true, type: 'warning' }, { default: () => $t('business.disabled') }),
+                    default: () => $t('business.project-disable-confirm')
+                  }
+                )
+              : h(
+                  NButton,
+                  {
+                    size: 'small',
+                    quaternary: true,
+                    type: 'success',
+                    onClick: () => toggleStatus(row)
+                  },
+                  { default: () => $t('business.enable') }
+                ),
             h(
               NPopconfirm,
               { onPositiveClick: () => handleDelete(row.id) },
@@ -219,8 +231,13 @@ async function handleDelete(id: string) {
   }
 }
 
-onMounted(() => {
-  void loadData();
+onMounted(async () => {
+  await loadData();
+  const projectID = typeof route.query.project === 'string' ? route.query.project : '';
+  if (projectID) {
+    const project = list.value.find(item => item.id === projectID);
+    if (project) openEdit(project);
+  }
 });
 </script>
 

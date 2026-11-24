@@ -91,10 +91,13 @@ func (d ServerDeps) CreateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	projectID := uuid.New()
-	if _, err := d.Pool.Exec(r.Context(), `
+	err = d.execWithAudit(r.Context(), `
 		INSERT INTO projects(id, organization_id, department_id, name)
 		VALUES ($1,$2,$3,$4)
-	`, projectID, principal.OrganizationID, departmentID, body.Name); err != nil {
+	`, []any{projectID, principal.OrganizationID, departmentID, body.Name},
+		principal.OrganizationID, principal.UserID, "project.created", "project", projectID.String(),
+		nil, map[string]any{"name": body.Name})
+	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.ConstraintName == "projects_organization_id_name_key" {
 			adminError(w, http.StatusConflict, "PROJECT_NAME_EXISTS", "a-project-with-the-same-name", nil)
@@ -103,10 +106,6 @@ func (d ServerDeps) CreateProject(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusInternalServerError, "PROJECT_CREATE_FAILED", "failed-to-create-the-project", nil)
 		return
 	}
-	_, _ = d.Pool.Exec(r.Context(), `
-		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, after_state)
-		VALUES ($1,$2,'user','project.created','project',$3,$4)
-	`, principal.OrganizationID, principal.UserID, projectID.String(), auditJSON(map[string]any{"name": body.Name}))
 	adminOK(w, map[string]string{"id": projectID.String()})
 }
 
@@ -168,14 +167,19 @@ func (d ServerDeps) DeleteProject(w http.ResponseWriter, r *http.Request) {
 			"project-has-usage", nil)
 		return
 	}
-	if _, err := d.Pool.Exec(r.Context(), `DELETE FROM projects WHERE id = $1`, projectID); err != nil {
+	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
+		// 资源删除后已查不到名称,审计里记下它,审计列表才能显示“删的是什么”。
+		var name string
+		if err := tx.QueryRow(r.Context(), `DELETE FROM projects WHERE id = $1 RETURNING name`, projectID).Scan(&name); err != nil {
+			return err
+		}
+		return writeAuditEvent(r.Context(), tx, principal.OrganizationID, principal.UserID,
+			"project.deleted", "project", projectID.String(), map[string]any{"name": name}, nil)
+	})
+	if err != nil {
 		adminError(w, http.StatusInternalServerError, "PROJECT_DELETE_FAILED", "failed-to-delete-the-project", nil)
 		return
 	}
-	_, _ = d.Pool.Exec(r.Context(), `
-		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id)
-		VALUES ($1,$2,'user','project.deleted','project',$3)
-	`, principal.OrganizationID, principal.UserID, projectID.String())
 	adminOK(w, nil)
 }
 
@@ -211,10 +215,13 @@ func (d ServerDeps) CreateApplication(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	applicationID := uuid.New()
-	if _, err := d.Pool.Exec(r.Context(), `
+	err = d.execWithAudit(r.Context(), `
 		INSERT INTO applications(id, organization_id, project_id, name)
 		VALUES ($1,$2,$3,$4)
-	`, applicationID, principal.OrganizationID, projectID, body.Name); err != nil {
+	`, []any{applicationID, principal.OrganizationID, projectID, body.Name},
+		principal.OrganizationID, principal.UserID, "application.created", "application", applicationID.String(),
+		nil, map[string]any{"name": body.Name})
+	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.ConstraintName == "applications_project_id_name_key" {
 			adminError(w, http.StatusConflict, "APPLICATION_NAME_EXISTS", "an-application-with-the-same-name", nil)
@@ -223,10 +230,6 @@ func (d ServerDeps) CreateApplication(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusInternalServerError, "APPLICATION_CREATE_FAILED", "failed-to-create-the-application", nil)
 		return
 	}
-	_, _ = d.Pool.Exec(r.Context(), `
-		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, after_state)
-		VALUES ($1,$2,'user','application.created','application',$3,$4)
-	`, principal.OrganizationID, principal.UserID, applicationID.String(), auditJSON(map[string]any{"name": body.Name}))
 	adminOK(w, map[string]string{"id": applicationID.String()})
 }
 
@@ -280,14 +283,19 @@ func (d ServerDeps) DeleteApplication(w http.ResponseWriter, r *http.Request) {
 			"application-has-usage", nil)
 		return
 	}
-	if _, err := d.Pool.Exec(r.Context(), `DELETE FROM applications WHERE id = $1`, applicationID); err != nil {
+	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
+		// 资源删除后已查不到名称,审计里记下它,审计列表才能显示“删的是什么”。
+		var name string
+		if err := tx.QueryRow(r.Context(), `DELETE FROM applications WHERE id = $1 RETURNING name`, applicationID).Scan(&name); err != nil {
+			return err
+		}
+		return writeAuditEvent(r.Context(), tx, principal.OrganizationID, principal.UserID,
+			"application.deleted", "application", applicationID.String(), map[string]any{"name": name}, nil)
+	})
+	if err != nil {
 		adminError(w, http.StatusInternalServerError, "APPLICATION_DELETE_FAILED", "failed-to-delete-the-application", nil)
 		return
 	}
-	_, _ = d.Pool.Exec(r.Context(), `
-		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id)
-		VALUES ($1,$2,'user','application.deleted','application',$3)
-	`, principal.OrganizationID, principal.UserID, applicationID.String())
 	adminOK(w, nil)
 }
 
@@ -327,9 +335,12 @@ func (d ServerDeps) UpdateProject(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusInternalServerError, "PROJECT_UPDATE_FAILED", "failed-to-update-the-project", nil)
 		return
 	}
-	if _, err := d.Pool.Exec(r.Context(), `
+	err = d.execWithAudit(r.Context(), `
 		UPDATE projects SET name = $3, updated_at = now() WHERE id = $1 AND organization_id = $2
-	`, projectID, principal.OrganizationID, body.Name); err != nil {
+	`, []any{projectID, principal.OrganizationID, body.Name},
+		principal.OrganizationID, principal.UserID, "project.updated", "project", projectID.String(),
+		map[string]any{"name": oldName}, map[string]any{"name": body.Name})
+	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.ConstraintName == "projects_organization_id_name_key" {
 			adminError(w, http.StatusConflict, "PROJECT_NAME_EXISTS", "a-project-with-the-same-name", nil)
@@ -338,10 +349,6 @@ func (d ServerDeps) UpdateProject(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusInternalServerError, "PROJECT_UPDATE_FAILED", "failed-to-update-the-project", nil)
 		return
 	}
-	_, _ = d.Pool.Exec(r.Context(), `
-		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, before_state, after_state)
-		VALUES ($1,$2,'user','project.updated','project',$3,$4,$5)
-	`, principal.OrganizationID, principal.UserID, projectID.String(), auditJSON(map[string]any{"name": oldName}), auditJSON(map[string]any{"name": body.Name}))
 	adminOK(w, nil)
 }
 
@@ -383,9 +390,12 @@ func (d ServerDeps) UpdateApplication(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusInternalServerError, "APPLICATION_UPDATE_FAILED", "failed-to-update-the-application", nil)
 		return
 	}
-	if _, err := d.Pool.Exec(r.Context(), `
+	err = d.execWithAudit(r.Context(), `
 		UPDATE applications SET name = $2, updated_at = now() WHERE id = $1
-	`, applicationID, body.Name); err != nil {
+	`, []any{applicationID, body.Name},
+		principal.OrganizationID, principal.UserID, "application.updated", "application", applicationID.String(),
+		map[string]any{"name": oldName}, map[string]any{"name": body.Name})
+	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.ConstraintName == "applications_project_id_name_key" {
 			adminError(w, http.StatusConflict, "APPLICATION_NAME_EXISTS", "an-application-with-the-same-name", nil)
@@ -394,10 +404,6 @@ func (d ServerDeps) UpdateApplication(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusInternalServerError, "APPLICATION_UPDATE_FAILED", "failed-to-update-the-application", nil)
 		return
 	}
-	_, _ = d.Pool.Exec(r.Context(), `
-		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, before_state, after_state)
-		VALUES ($1,$2,'user','application.updated','application',$3,$4,$5)
-	`, principal.OrganizationID, principal.UserID, applicationID.String(), auditJSON(map[string]any{"name": oldName}), auditJSON(map[string]any{"name": body.Name}))
 	adminOK(w, nil)
 }
 
@@ -423,9 +429,12 @@ func (d ServerDeps) CreateDepartment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	departmentID := uuid.New()
-	if _, err := d.Pool.Exec(r.Context(), `
+	err := d.execWithAudit(r.Context(), `
 		INSERT INTO departments(id, organization_id, name) VALUES ($1,$2,$3)
-	`, departmentID, principal.OrganizationID, body.Name); err != nil {
+	`, []any{departmentID, principal.OrganizationID, body.Name},
+		principal.OrganizationID, principal.UserID, "department.created", "department", departmentID.String(),
+		nil, map[string]any{"name": body.Name})
+	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.ConstraintName == "departments_organization_id_name_key" {
 			adminError(w, http.StatusConflict, "DEPARTMENT_NAME_EXISTS", "a-department-with-the-same-name", nil)
@@ -434,10 +443,6 @@ func (d ServerDeps) CreateDepartment(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusInternalServerError, "DEPARTMENT_CREATE_FAILED", "failed-to-create-the-department", nil)
 		return
 	}
-	_, _ = d.Pool.Exec(r.Context(), `
-		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, after_state)
-		VALUES ($1,$2,'user','department.created','department',$3,$4)
-	`, principal.OrganizationID, principal.UserID, departmentID.String(), auditJSON(map[string]any{"name": body.Name}))
 	adminOK(w, map[string]string{"id": departmentID.String()})
 }
 
@@ -473,9 +478,12 @@ func (d ServerDeps) UpdateDepartment(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusInternalServerError, "DEPARTMENT_UPDATE_FAILED", "failed-to-update-the-department", nil)
 		return
 	}
-	if _, err := d.Pool.Exec(r.Context(), `
+	err = d.execWithAudit(r.Context(), `
 		UPDATE departments SET name = $3 WHERE id = $1 AND organization_id = $2
-	`, departmentID, principal.OrganizationID, body.Name); err != nil {
+	`, []any{departmentID, principal.OrganizationID, body.Name},
+		principal.OrganizationID, principal.UserID, "department.updated", "department", departmentID.String(),
+		map[string]any{"name": oldName}, map[string]any{"name": body.Name})
+	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.ConstraintName == "departments_organization_id_name_key" {
 			adminError(w, http.StatusConflict, "DEPARTMENT_NAME_EXISTS", "a-department-with-the-same-name", nil)
@@ -484,11 +492,6 @@ func (d ServerDeps) UpdateDepartment(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusInternalServerError, "DEPARTMENT_UPDATE_FAILED", "failed-to-update-the-department", nil)
 		return
 	}
-	_, _ = d.Pool.Exec(r.Context(), `
-		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, before_state, after_state)
-		VALUES ($1,$2,'user','department.updated','department',$3,$4,$5)
-	`, principal.OrganizationID, principal.UserID, departmentID.String(),
-		auditJSON(map[string]any{"name": oldName}), auditJSON(map[string]any{"name": body.Name}))
 	adminOK(w, nil)
 }
 
@@ -526,14 +529,19 @@ func (d ServerDeps) DeleteDepartment(w http.ResponseWriter, r *http.Request) {
 			"department-has-projects", nil)
 		return
 	}
-	if _, err := d.Pool.Exec(r.Context(), `DELETE FROM departments WHERE id = $1`, departmentID); err != nil {
+	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
+		// 资源删除后已查不到名称,审计里记下它,审计列表才能显示“删的是什么”。
+		var name string
+		if err := tx.QueryRow(r.Context(), `DELETE FROM departments WHERE id = $1 RETURNING name`, departmentID).Scan(&name); err != nil {
+			return err
+		}
+		return writeAuditEvent(r.Context(), tx, principal.OrganizationID, principal.UserID,
+			"department.deleted", "department", departmentID.String(), map[string]any{"name": name}, nil)
+	})
+	if err != nil {
 		adminError(w, http.StatusInternalServerError, "DEPARTMENT_DELETE_FAILED", "failed-to-delete-the-department", nil)
 		return
 	}
-	_, _ = d.Pool.Exec(r.Context(), `
-		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id)
-		VALUES ($1,$2,'user','department.deleted','department',$3)
-	`, principal.OrganizationID, principal.UserID, departmentID.String())
 	adminOK(w, nil)
 }
 
@@ -623,9 +631,12 @@ func (d ServerDeps) CreateOrganization(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	orgID := uuid.New()
-	if _, err := d.Pool.Exec(r.Context(), `
+	err := d.execWithAudit(r.Context(), `
 		INSERT INTO organizations(id, name, slug) VALUES ($1,$2,$3)
-	`, orgID, body.Name, body.Slug); err != nil {
+	`, []any{orgID, body.Name, body.Slug},
+		principal.OrganizationID, principal.UserID, "organization.created", "organization", orgID.String(),
+		nil, map[string]any{"name": body.Name, "slug": body.Slug})
+	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.ConstraintName == "organizations_slug_key" {
 			adminError(w, http.StatusConflict, "ORG_SLUG_EXISTS", "this-slug-is-already-in-use", nil)
@@ -634,12 +645,6 @@ func (d ServerDeps) CreateOrganization(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusInternalServerError, "ORG_CREATE_FAILED", "failed-to-create-the-organization", nil)
 		return
 	}
-	// 审计挂在发起者的组织下,记录被操作的目标组织。
-	_, _ = d.Pool.Exec(r.Context(), `
-		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, after_state)
-		VALUES ($1,$2,'user','organization.created','organization',$3,$4)
-	`, principal.OrganizationID, principal.UserID, orgID.String(),
-		auditJSON(map[string]any{"name": body.Name, "slug": body.Slug}))
 	adminOK(w, map[string]string{"id": orgID.String()})
 }
 
@@ -684,17 +689,14 @@ func (d ServerDeps) UpdateOrganization(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusInternalServerError, "ORG_UPDATE_FAILED", "failed-to-update-the-organization", nil)
 		return
 	}
-	if _, err := d.Pool.Exec(r.Context(), `
+	err = d.execWithAudit(r.Context(), `
 		UPDATE organizations SET name = $2 WHERE id = $1
-	`, orgID, name); err != nil {
+	`, []any{orgID, name},
+		principal.OrganizationID, principal.UserID, "organization.updated", "organization", orgID.String(),
+		map[string]any{"name": oldName}, map[string]any{"name": name})
+	if err != nil {
 		adminError(w, http.StatusInternalServerError, "ORG_UPDATE_FAILED", "failed-to-update-the-organization", nil)
 		return
 	}
-	_, _ = d.Pool.Exec(r.Context(), `
-		INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, before_state, after_state)
-		VALUES ($1,$2,'user','organization.updated','organization',$3,$4,$5)
-	`, principal.OrganizationID, principal.UserID, orgID.String(),
-		auditJSON(map[string]any{"name": oldName}),
-		auditJSON(map[string]any{"name": name}))
 	adminOK(w, nil)
 }
