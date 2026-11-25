@@ -61,11 +61,13 @@ const formRules = computed<FormRules>(() => ({
     trigger: 'change'
   },
   window_range: {
+    type: 'array',
     required: true,
     message: $t('business.select-a-time-window'),
     trigger: 'change'
   },
   limit_amount: {
+    type: 'number',
     required: true,
     message: $t('business.enter-a-budget-limit'),
     trigger: 'blur'
@@ -73,6 +75,7 @@ const formRules = computed<FormRules>(() => ({
 }));
 const editRules = computed<FormRules>(() => ({
   limit_amount: {
+    type: 'number',
     required: true,
     message: $t('business.enter-a-budget-limit'),
     trigger: 'blur'

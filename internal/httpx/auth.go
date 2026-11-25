@@ -63,9 +63,23 @@ func (d ServerDeps) Login(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusInternalServerError, "AUTH_INTERNAL_ERROR", "login-service-is-temporarily-unavailable", nil)
 		return
 	}
+	valid, verifyErr := auth.VerifyPassword(record.PasswordHash, body.Password)
+	if verifyErr != nil || !valid {
+		if _, updateErr := d.Pool.Exec(r.Context(), `UPDATE users SET failed_login_count=failed_login_count+1, locked_until=CASE WHEN failed_login_count+1 >= 5 THEN now()+interval '15 minutes' ELSE locked_until END, updated_at=now() WHERE id=$1`, record.UserID); updateErr != nil {
+			adminError(w, http.StatusInternalServerError, "AUTH_INTERNAL_ERROR", "login-service-is-temporarily-unavailable", nil)
+			return
+		}
+		d.recordLogin(r.Context(), &record.OrganizationID, &record.UserID, email, ip, agent, "failure")
+		adminError(w, http.StatusUnauthorized, "AUTH_INVALID_CREDENTIALS", "incorrect-email-or-password", nil)
+		return
+	}
 	now := time.Now()
 	if record.Status != "active" || (record.LockedUntil != nil && record.LockedUntil.After(now)) {
 		d.recordLogin(r.Context(), &record.OrganizationID, &record.UserID, email, ip, agent, "failure")
+		if record.Status == "pending_email_verification" {
+			adminError(w, http.StatusForbidden, "AUTH_EMAIL_NOT_VERIFIED", "verify-your-email-before-signing", nil)
+			return
+		}
 		if record.Status != "active" {
 			adminError(w, http.StatusForbidden, "AUTH_ACCOUNT_DISABLED", "account-is-unavailable", nil)
 			return
@@ -77,20 +91,14 @@ func (d ServerDeps) Login(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusTooManyRequests, "AUTH_ACCOUNT_LOCKED", "too-many-login-attempts-the-account", map[string]any{"retry_after_seconds": retryAfter})
 		return
 	}
-	valid, verifyErr := auth.VerifyPassword(record.PasswordHash, body.Password)
-	if verifyErr != nil || !valid {
-		if _, updateErr := d.Pool.Exec(r.Context(), `UPDATE users SET failed_login_count=failed_login_count+1, locked_until=CASE WHEN failed_login_count+1 >= 5 THEN now()+interval '15 minutes' ELSE locked_until END, updated_at=now() WHERE id=$1`, record.UserID); updateErr != nil {
-			adminError(w, http.StatusInternalServerError, "AUTH_INTERNAL_ERROR", "login-service-is-temporarily-unavailable", nil)
-			return
-		}
-		d.recordLogin(r.Context(), &record.OrganizationID, &record.UserID, email, ip, agent, "failure")
-		adminError(w, http.StatusUnauthorized, "AUTH_INVALID_CREDENTIALS", "incorrect-email-or-password", nil)
-		return
-	}
 	var sessionSecret string
 	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(r.Context(), `UPDATE users SET failed_login_count=0,locked_until=NULL,last_login_at=now(),updated_at=now() WHERE id=$1`, record.UserID); err != nil {
+		tag, err := tx.Exec(r.Context(), `UPDATE users SET failed_login_count=0,locked_until=NULL,last_login_at=now(),updated_at=now() WHERE id=$1 AND password_hash=$2 AND status='active' AND (locked_until IS NULL OR locked_until <= now())`, record.UserID, record.PasswordHash)
+		if err != nil {
 			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return errPasswordChangedDuringLogin
 		}
 		created, err := d.Auth.CreateWithTx(r.Context(), tx, record.UserID, ip, agent)
 		if err != nil {
@@ -100,6 +108,10 @@ func (d ServerDeps) Login(w http.ResponseWriter, r *http.Request) {
 		_, err = tx.Exec(r.Context(), `INSERT INTO audit_events(organization_id,actor_user_id,actor_type,action,resource_type,resource_id,ip_address,user_agent) VALUES($1,$2,'user','auth.login','session',$3,$4,$5)`, record.OrganizationID, record.UserID, record.UserID.String(), nullableInet(ip), agent)
 		return err
 	})
+	if errors.Is(err, errPasswordChangedDuringLogin) {
+		adminError(w, http.StatusUnauthorized, "AUTH_INVALID_CREDENTIALS", "incorrect-email-or-password", nil)
+		return
+	}
 	if err != nil {
 		adminError(w, http.StatusInternalServerError, "AUTH_INTERNAL_ERROR", "login-service-is-temporarily-unavailable", nil)
 		return
@@ -221,3 +233,5 @@ func adminRoles(role string) []string {
 	}
 	return []string{role}
 }
+
+var errPasswordChangedDuringLogin = errors.New("password changed during login")

@@ -164,7 +164,7 @@ func (d ServerDeps) RenderAssetPreview(w http.ResponseWriter, r *http.Request) {
 	}
 	rendered, err := asset.RenderPrompt(spec, body.Variables)
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "PROMPT_RENDER_INVALID", "promptRenderInvalid", nil)
+		adminError(w, http.StatusBadRequest, "PROMPT_RENDER_INVALID", "prompt-render-invalid", nil)
 		return
 	}
 	if _, err := d.Pool.Exec(r.Context(), `

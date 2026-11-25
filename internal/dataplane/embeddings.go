@@ -122,6 +122,7 @@ func (d Deps) Embeddings(w http.ResponseWriter, r *http.Request) {
 
 	timeout := time.Duration(svc.Policy.ProviderTimeoutMS) * time.Millisecond
 	bctx := schemas.NewBifrostContext(r.Context(), time.Now().Add(timeout))
+	bctx.SetValue(schemas.BifrostContextKeyAPIKeyID, primary.AccountID)
 	req := &schemas.BifrostEmbeddingRequest{
 		Provider:  provider,
 		Model:     primary.UpstreamModel,
@@ -131,14 +132,14 @@ func (d Deps) Embeddings(w http.ResponseWriter, r *http.Request) {
 
 	resp, bifrostErr := d.Engine.Client().EmbeddingRequest(bctx, req)
 	if bifrostErr != nil {
-		d.recordFailure(r.Context(), requestID, chain, bctx, bifrostErr, start, nil, usageSnapshot{})
+		d.recordFailure(r.Context(), keyCtx, requestID, chain, bctx, bifrostErr, start, nil, usageSnapshot{})
 		writeBifrostError(w, bifrostErr)
 		return
 	}
 
 	servedProvider := string(resp.ExtraFields.RoutingInfo.Provider)
 	servedModel := resp.ExtraFields.RoutingInfo.Model
-	served, lookupErr := chain.findCandidate(servedProvider, servedModel)
+	served, lookupErr := chain.findCandidate(servedProvider, servedModel, resp.ExtraFields.RoutingInfo.Key)
 
 	usage := usageFromBifrost(resp.Usage)
 	inputTokens, outputTokens, _, _ := usage.tokens()

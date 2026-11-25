@@ -34,6 +34,7 @@ interface CaseDraft {
 
 const loading = ref(true);
 const detailLoading = ref(false);
+let selectionGeneration = 0;
 const pageMode = ref<'list' | 'detail' | 'edit'>('list');
 const route = useRoute();
 const saving = ref(false);
@@ -272,9 +273,12 @@ onMounted(async () => {
 });
 
 async function selectSet(id: string) {
+  const generation = ++selectionGeneration;
   pageMode.value = 'detail';
   selectedID.value = id;
   selectedDetail.value = null;
+  versionOptions.value = [];
+  selectedVersionID.value = null;
   detailLoading.value = true;
   editing.value = false;
   creating.value = false;
@@ -287,6 +291,7 @@ async function selectSet(id: string) {
       fetchPromptEvaluationSets(current.asset_id),
       fetchAssetDetail(current.asset_id)
     ]);
+    if (generation !== selectionGeneration || selectedID.value !== id) return;
     if (!detailRes.error && detailRes.data) {
       const detail = detailRes.data.find(item => item.id === id);
       if (detail) selectedDetail.value = detail;
@@ -306,7 +311,7 @@ async function selectSet(id: string) {
         null;
     }
   } finally {
-    detailLoading.value = false;
+    if (generation === selectionGeneration) detailLoading.value = false;
   }
 }
 
@@ -330,6 +335,8 @@ function newCase(): CaseDraft {
 }
 
 function startCreate() {
+  selectionGeneration++;
+  detailLoading.value = false;
   pageMode.value = 'edit';
   selectedID.value = null;
   selectedDetail.value = null;
@@ -348,6 +355,7 @@ function startCreate() {
 }
 
 function startEdit() {
+  if (detailLoading.value || !selectedDetail.value) return;
   creating.value = false;
   editing.value = true;
   pageMode.value = 'edit';
@@ -372,6 +380,7 @@ async function deleteOverview(row: Api.Management.EvaluationSetOverview) {
 }
 
 async function save() {
+  if (saving.value) return;
   if (!form.value.asset_id || !form.value.name.trim()) {
     window.$message?.warning($t('business.select-a-template-and-enter'));
     return;
@@ -401,6 +410,10 @@ async function save() {
     window.$message?.warning($t('business.keep-at-least-one-test'));
     return;
   }
+  const generation = selectionGeneration;
+  const assetId = form.value.asset_id;
+  const selectedId = selectedID.value;
+  const wasCreating = creating.value;
   saving.value = true;
   try {
     const params = {
@@ -408,16 +421,18 @@ async function save() {
       description: form.value.description.trim(),
       cases
     };
-    if (creating.value) {
-      const { data, error } = await fetchCreatePromptEvaluationSet(form.value.asset_id, params);
-      if (error || !data) return;
+    if (wasCreating) {
+      const { data, error } = await fetchCreatePromptEvaluationSet(assetId, params);
+      if (error || !data || generation !== selectionGeneration) return;
       await reloadList();
+      if (generation !== selectionGeneration) return;
       await selectSet(data.id);
-    } else if (selectedID.value) {
-      const { error } = await fetchUpdatePromptEvaluationSet(form.value.asset_id, selectedID.value, params);
-      if (error) return;
+    } else if (selectedId) {
+      const { error } = await fetchUpdatePromptEvaluationSet(assetId, selectedId, params);
+      if (error || generation !== selectionGeneration) return;
       await reloadList();
-      await selectSet(selectedID.value);
+      if (generation !== selectionGeneration) return;
+      await selectSet(selectedId);
     }
     editing.value = false;
     creating.value = false;

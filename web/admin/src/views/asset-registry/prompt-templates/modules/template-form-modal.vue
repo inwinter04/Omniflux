@@ -29,6 +29,7 @@ const currentStep = ref(1);
 const loading = ref(false);
 const saving = ref(false);
 const dirty = ref(false);
+let editGeneration = 0;
 const closeConfirm = ref(false);
 const detail = ref<Api.Management.AssetDetail | null>(null);
 const models = ref<Api.Management.ModelService[]>([]);
@@ -174,9 +175,12 @@ const variableColumns = computed<DataTableColumns<VariableDraft>>(() => [
 ]);
 
 watch(
-  () => props.show,
-  visible => {
+  [() => props.show, () => props.assetId],
+  ([visible]) => {
+    editGeneration++;
+    saving.value = false;
     if (visible) void initialize();
+    else loading.value = false;
   }
 );
 
@@ -196,23 +200,26 @@ watch(
 );
 
 async function initialize() {
+  const generation = ++editGeneration;
+  const assetId = props.assetId;
   currentStep.value = 1;
   detail.value = null;
   closeConfirm.value = false;
   resetForm();
-  loading.value = Boolean(props.assetId);
+  loading.value = Boolean(assetId);
   try {
     const [modelRes, detailRes] = await Promise.all([
       fetchModelServices(),
-      props.assetId ? fetchAssetDetail(props.assetId) : Promise.resolve(null)
+      assetId ? fetchAssetDetail(assetId) : Promise.resolve(null)
     ]);
+    if (generation !== editGeneration || assetId !== props.assetId) return;
     if (!modelRes.error && modelRes.data) models.value = modelRes.data;
     if (detailRes && !detailRes.error && detailRes.data) {
       detail.value = detailRes.data;
       applyDetail(detailRes.data);
     }
   } finally {
-    loading.value = false;
+    if (generation === editGeneration) loading.value = false;
   }
 }
 
@@ -319,36 +326,43 @@ function buildParams(): Api.Management.CreateAssetParams {
 }
 
 async function save(openTest: boolean) {
+  if (saving.value || loading.value || (props.assetId && !detail.value)) return;
   if (!validateStep(1) || !validateStep(2) || !validateStep(3)) return;
+  const generation = editGeneration;
+  const assetId = props.assetId;
+  const expectedVersion = detail.value?.latest_version;
+  const params = buildParams();
   saving.value = true;
   try {
-    let id = props.assetId;
+    let id = assetId;
     let version = 1;
-    if (id && detail.value) {
+    if (id && expectedVersion !== undefined) {
       const { data, error } = await fetchUpdateAsset(id, {
-        ...buildParams(),
-        expected_version: detail.value.latest_version
+        ...params,
+        expected_version: expectedVersion
       });
       if (error || !data) return;
       version = data.version;
     } else {
-      const { data, error } = await fetchCreateAsset(buildParams());
+      const { data, error } = await fetchCreateAsset(params);
       if (error || !data) return;
       id = data.id;
     }
+    if (generation !== editGeneration) return;
     dirty.value = false;
     emit('saved');
     emit('update:show', false);
     window.$message?.success(
-      props.assetId ? $t('business.savedVersionEnable', { version }) : $t('business.template-created-you-can-continue')
+      assetId ? $t('business.savedVersionEnable', { version }) : $t('business.template-created-you-can-continue')
     );
     if (openTest && id) emit('test', id);
   } finally {
-    saving.value = false;
+    if (generation === editGeneration) saving.value = false;
   }
 }
 
 function requestClose() {
+  if (saving.value) return;
   if (dirty.value) closeConfirm.value = true;
   else emit('update:show', false);
 }
@@ -462,8 +476,8 @@ function discardAndClose() {
           <NButton v-if="currentStep > 1" @click="currentStep -= 1">{{ $t('business.previous') }}</NButton>
           <NButton v-if="currentStep < 3" type="primary" @click="nextStep">{{ $t('business.next') }}</NButton>
           <template v-else-if="detail?.status !== 'archived'">
-            <NButton :loading="saving" @click="save(true)">{{ $t('business.save-and-test') }}</NButton>
-            <NButton type="primary" :loading="saving" @click="save(false)">
+            <NButton :loading="saving" :disabled="loading || saving || Boolean(props.assetId && !detail)" @click="save(true)">{{ $t('business.save-and-test') }}</NButton>
+            <NButton type="primary" :loading="saving" :disabled="loading || saving || Boolean(props.assetId && !detail)" @click="save(false)">
               {{ props.assetId ? $t('business.save-as-new-version') : $t('business.createTemplate') }}
             </NButton>
           </template>

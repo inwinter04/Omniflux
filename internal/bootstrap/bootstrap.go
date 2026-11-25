@@ -47,6 +47,10 @@ func Seed(ctx context.Context, logger *slog.Logger, pool *pgxpool.Pool, cfg conf
 		if _, err := tx.Exec(ctx, `INSERT INTO users(id,organization_id,email,password_hash,role) VALUES($1,$2,$3,$4,'platform_admin')`, userID, orgID, cfg.BootstrapEmail, hash); err != nil {
 			return err
 		}
+		// 公开注册默认关闭;预填种子组织让管理员只需要确认默认角色并打开开关。
+		if _, err := tx.Exec(ctx, `UPDATE system_settings SET registration_organization_id=$1 WHERE singleton`, orgID); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, `INSERT INTO audit_events(organization_id,actor_user_id,actor_type,action,resource_type,resource_id) VALUES($1,$2,'system','bootstrap.created','user',$3)`, orgID, userID, userID.String()); err != nil {
 			return err
 		}

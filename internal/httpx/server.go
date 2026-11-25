@@ -17,6 +17,7 @@ import (
 	"github.com/inwinter04/omniflux/internal/console"
 	"github.com/inwinter04/omniflux/internal/dataplane"
 	"github.com/inwinter04/omniflux/internal/infra"
+	"github.com/inwinter04/omniflux/internal/mail"
 )
 
 type ServerDeps struct {
@@ -28,6 +29,7 @@ type ServerDeps struct {
 	Env             string
 	MasterKey       []byte
 	APIKeyPepper    string
+	Mailer          mail.Sender
 	ReloadEngine    func(context.Context) error
 	RateLimitPerMin int
 }
@@ -60,8 +62,8 @@ func New(deps ServerDeps) http.Handler {
 		JSON(w, http.StatusOK, map[string]string{"status": "ready"})
 	})
 	r.Handle("/metrics", promhttp.Handler())
-	r.Get("/admin", func(w http.ResponseWriter, _ *http.Request) {
-		http.Redirect(w, nil, "/admin/", http.StatusMovedPermanently)
+	r.Get("/admin", func(w http.ResponseWriter, req *http.Request) {
+		http.Redirect(w, req, "/admin/", http.StatusMovedPermanently)
 	})
 	r.Handle("/admin/*", console.Handler())
 
@@ -90,6 +92,13 @@ func New(deps ServerDeps) http.Handler {
 	// 管理 API:服务端会话认证,组织隔离。
 	r.Route("/api/v1/auth", func(r chi.Router) {
 		r.Post("/login", deps.Login)
+		r.Get("/registration-options", deps.RegistrationOptions)
+		r.Post("/register", deps.Register)
+		r.Post("/resend-verification", deps.ResendEmailVerification)
+		r.Post("/verify-email", deps.VerifyEmail)
+		r.Post("/forgot-password", deps.ForgotPassword)
+		r.Post("/reset-password", deps.ResetPassword)
+		r.Post("/accept-invitation", deps.AcceptInvitation)
 		r.Group(func(r chi.Router) {
 			r.Use(func(next http.Handler) http.Handler { return RequireSession(deps, next) })
 			r.Get("/me", deps.Me)
@@ -100,6 +109,11 @@ func New(deps ServerDeps) http.Handler {
 		r.Group(func(r chi.Router) {
 			r.Use(func(next http.Handler) http.Handler { return RequireSession(deps, next) })
 			r.Get("/dashboard", deps.Dashboard)
+			r.Get("/system/settings", deps.SystemSettings)
+			r.Patch("/system/settings", deps.UpdateSystemSettings)
+			r.Get("/system/email/settings", deps.EmailSettings)
+			r.Patch("/system/email/settings", deps.UpdateEmailSettings)
+			r.Post("/system/email/test", deps.TestEmailSettings)
 			r.Get("/organizations", deps.Organizations)
 			r.Post("/organizations", deps.CreateOrganization)
 			r.Patch("/organizations/{id}", deps.UpdateOrganization)
@@ -181,6 +195,10 @@ func New(deps ServerDeps) http.Handler {
 			r.Get("/users", deps.Users)
 			r.Post("/users", deps.CreateUser)
 			r.Patch("/users/{id}", deps.UpdateUser)
+			r.Get("/users/invite-options", deps.InviteOptions)
+			r.Post("/users/invite", deps.InviteUser)
+			r.Post("/users/{id}/invitation/resend", deps.ResendUserInvitation)
+			r.Delete("/users/{id}/invitation", deps.RevokeUserInvitation)
 			r.Post("/api-keys", deps.CreateAPIKey)
 			r.Patch("/api-keys/{id}", deps.UpdateAPIKeyStatus)
 			r.Delete("/api-keys/{id}", deps.DeleteAPIKey)

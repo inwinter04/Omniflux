@@ -53,7 +53,7 @@ func (d Deps) handleStreamObserved(bctx *schemas.BifrostContext, streamCtx conte
 				apiErrorOptions{Reason: "first_token_timeout"})
 			return
 		}
-		d.recordFailure(r.Context(), requestID, chain, bctx, bifrostErr, start, nil, usageSnapshot{})
+		d.recordFailure(r.Context(), keyCtx, requestID, chain, bctx, bifrostErr, start, nil, usageSnapshot{})
 		if observer != nil {
 			observer.onComplete("failed", DebugResult{TotalMS: int(time.Since(start).Milliseconds())}, errors.New(errorMessageOf(bifrostErr)))
 		}
@@ -77,7 +77,7 @@ func (d Deps) handleStreamObserved(bctx *schemas.BifrostContext, streamCtx conte
 
 	var snapshot usageSnapshot
 	var firstTokenMS *int
-	var servedProvider, servedModel, chunkID string
+	var servedProvider, servedModel, servedAccountID, chunkID string
 	var chunkCreated int
 	var streamErr *schemas.BifrostError
 	interrupted := false
@@ -88,7 +88,7 @@ func (d Deps) handleStreamObserved(bctx *schemas.BifrostContext, streamCtx conte
 		}
 		cost := 0.0
 		currency := currencyOf(chain[0])
-		if served, lookupErr := chain.findCandidate(servedProvider, servedModel); lookupErr == nil {
+		if served, lookupErr := chain.findCandidate(servedProvider, servedModel, servedAccountID); lookupErr == nil {
 			cost = served.costUSD(snapshot.InputTokens, snapshot.OutputTokens)
 			currency = currencyOf(served)
 		}
@@ -131,6 +131,7 @@ streamLoop:
 				chunkCreated = resp.Created
 				servedProvider = string(resp.ExtraFields.RoutingInfo.Provider)
 				servedModel = resp.ExtraFields.RoutingInfo.Model
+				servedAccountID = resp.ExtraFields.RoutingInfo.Key
 			}
 			if u := usageFromBifrost(resp.Usage); u.hasTokens() {
 				// 用量在最终 chunk 上以累计值出现,这里直接覆盖为最新值。
@@ -190,7 +191,7 @@ streamLoop:
 		_ = writeEvent(errorPayload)
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 		flusher.Flush()
-		d.recordFailure(r.Context(), requestID, chain, bctx, streamErr, start, firstTokenMS, snapshot)
+		d.recordFailure(r.Context(), keyCtx, requestID, chain, bctx, streamErr, start, firstTokenMS, snapshot)
 		finishObserver("failed", errors.New(errorMessageOf(streamErr)))
 		return
 	}
@@ -213,7 +214,7 @@ streamLoop:
 	_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	flusher.Flush()
 
-	d.recordStreamSuccess(r.Context(), requestID, keyCtx, chain, servedProvider, servedModel, start, firstTokenMS, snapshot, routingEngineLogs(bctx))
+	d.recordStreamSuccess(r.Context(), requestID, keyCtx, chain, servedProvider, servedModel, servedAccountID, start, firstTokenMS, snapshot, routingEngineLogs(bctx))
 	finishObserver("success", nil)
 }
 
@@ -238,10 +239,10 @@ func (d Deps) recordFirstTokenTimeout(ctx context.Context, requestID uuid.UUID, 
 
 // recordStreamSuccess 定稿一次成功的流式请求。
 func (d Deps) recordStreamSuccess(ctx context.Context, requestID uuid.UUID, keyCtx apiKeyContext, chain routeChain,
-	servedProvider, servedModel string, start time.Time, firstTokenMS *int, snapshot usageSnapshot,
+	servedProvider, servedModel, servedAccountID string, start time.Time, firstTokenMS *int, snapshot usageSnapshot,
 	logs []schemas.RoutingEngineLogEntry) {
 	total := int(time.Since(start).Milliseconds())
-	served, lookupErr := chain.findCandidate(servedProvider, servedModel)
+	served, lookupErr := chain.findCandidate(servedProvider, servedModel, servedAccountID)
 	if lookupErr != nil {
 		// 上游返回的 provider/model 与候选不匹配时,不猜候选,候选与成本记空。
 		d.Logger.Warn("served candidate not found in chain", "request_id", requestID,

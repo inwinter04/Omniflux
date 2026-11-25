@@ -278,7 +278,7 @@ function getDarkPrimaryPaletteNumber(color: string, recommended = false) {
     if (getContrastRatio(paletteColor, popoverColor) >= MIN_TEXT_CONTRAST) return number;
   }
 
-  return 50;
+  return 100;
 }
 
 /**

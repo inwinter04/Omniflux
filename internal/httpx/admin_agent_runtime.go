@@ -299,7 +299,11 @@ func (d ServerDeps) streamAgentRun(w http.ResponseWriter, r *http.Request, plane
 		status = "failed"
 		runErr = errAgentEmptyResponse
 	}
-	_ = plane.FinishAgentRun(r.Context(), run, status, result, runErr)
+	if err := plane.FinishAgentRun(r.Context(), run, status, result, runErr); err != nil {
+		d.Logger.Error("finish agent run failed", "run_id", run.RunID, "error", err)
+		writeEvent("error", map[string]string{"error": "failed to persist agent run"})
+		return
+	}
 	writeEvent("result", agentResponseFromResult(run, status, result, runErr))
 }
 

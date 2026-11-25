@@ -74,6 +74,16 @@ func TestRenderRejectsInvalidInput(t *testing.T) {
 	}
 }
 
+func TestPrintfOutputLimit(t *testing.T) {
+	_, err := ParsePromptSpec(json.RawMessage(`{
+		"template":"{{ $s := printf \"%1000000000s\" \"\" }}{{ $s }}",
+		"variables":[]
+	}`))
+	if err == nil {
+		t.Fatal("expected oversized printf allocation to fail")
+	}
+}
+
 func TestRenderOutputLimit(t *testing.T) {
 	spec, err := ParsePromptSpec(json.RawMessage(`{
 		"template":"{{ .name }}",

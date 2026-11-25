@@ -133,10 +133,12 @@ export const useRouteStore = defineStore(SetupStoreId.Route, () => {
 
   /** Reset store */
   async function resetStore() {
-    const routeStore = useRouteStore();
-
-    routeStore.$reset();
-
+    authRoutes.value = [];
+    menus.value = [];
+    cacheRoutes.value = [];
+    excludeCacheRoutes.value = [];
+    setIsInitAuthRoute(false);
+    setIsInitConstantRoute(false);
     resetVueRoutes();
 
     // after reset store, need to re-init constant route
@@ -177,18 +179,20 @@ export const useRouteStore = defineStore(SetupStoreId.Route, () => {
 
   /** Init auth route */
   async function initAuthRoute() {
+    const generation = authStore.getSessionGeneration();
     // check if user info is initialized
     if (!authStore.userInfo.userId) {
-      await authStore.initUserInfo();
+      const initialized = await authStore.initUserInfo();
+      if (!initialized || !authStore.isSessionCurrent(generation)) return;
     }
 
     if (authRouteMode.value === 'static') {
       initStaticAuthRoute();
     } else {
-      await initDynamicAuthRoute();
+      await initDynamicAuthRoute(generation);
     }
 
-    tabStore.initHomeTab();
+    if (authStore.isSessionCurrent(generation) && isInitAuthRoute.value) tabStore.initHomeTab();
   }
 
   /** Init static auth route */
@@ -209,8 +213,9 @@ export const useRouteStore = defineStore(SetupStoreId.Route, () => {
   }
 
   /** Init dynamic auth route */
-  async function initDynamicAuthRoute() {
+  async function initDynamicAuthRoute(generation: number) {
     const { data, error } = await fetchGetUserRoutes();
+    if (!authStore.isSessionCurrent(generation)) return;
 
     if (!error) {
       const { routes, home } = data;
@@ -224,9 +229,9 @@ export const useRouteStore = defineStore(SetupStoreId.Route, () => {
       handleUpdateRootRouteRedirect(home);
 
       setIsInitAuthRoute(true);
-    } else {
+    } else if (authStore.isSessionCurrent(generation)) {
       // if fetch user routes failed, reset store
-      authStore.resetStore();
+      void authStore.resetStore();
     }
   }
 

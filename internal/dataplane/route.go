@@ -263,13 +263,13 @@ func (c candidate) costUSD(inputTokens, outputTokens int64) float64 {
 
 // findCandidate 按 provider + upstream model 在链中定位实际服务请求的候选。
 // Bifrost 返回的是映射后的 provider 名(如 openai),候选存的是数据库标识(如 openai_compatible),需先转换再比较。
-func (chain routeChain) findCandidate(provider, model string) (candidate, error) {
+func (chain routeChain) findCandidate(provider, model, accountID string) (candidate, error) {
 	for _, c := range chain {
 		mapped, err := bifrostx.MapProvider(c.Provider)
 		if err != nil {
 			continue
 		}
-		if string(mapped) == provider && c.UpstreamModel == model {
+		if string(mapped) == provider && c.UpstreamModel == model && (accountID == "" || c.AccountID == accountID) {
 			return c, nil
 		}
 	}

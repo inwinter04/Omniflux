@@ -79,6 +79,8 @@ go run ./cmd/omniflux
 
 Open the admin console at `http://127.0.0.1:8080/admin/` and sign in with the bootstrap credentials. An empty database is seeded with a platform administrator on first start; never use the sample values in production.
 
+A platform administrator can enable public registration under **System → System Settings** and select its destination organization and default role. Public registration is disabled by default. Admin-created accounts support server-generated initial passwords with one-time display and copying, email invitations, public-registration verification, and password resets. SMTP passwords are encrypted at rest.
+
 ## Data plane API
 
 Business systems call OpenAI-compatible endpoints with an API key (`Authorization: Bearer`):

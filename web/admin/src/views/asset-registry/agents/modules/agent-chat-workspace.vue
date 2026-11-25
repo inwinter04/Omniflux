@@ -42,6 +42,7 @@ const variableError = ref('');
 const input = ref('');
 const messageScroller = ref<InstanceType<typeof NScrollbar> | null>(null);
 let abortController: AbortController | null = null;
+let sessionGeneration = 0;
 
 const runMap = computed(() => new Map(runs.value.map(item => [item.id, item])));
 const hasVariableForm = computed(() => !sessionID.value && Boolean(promptSpec.value?.variables.length));
@@ -149,21 +150,24 @@ async function loadRuns() {
 
 async function selectSession(id: string, force = false) {
   if (running.value && !force) return;
+  const generation = ++sessionGeneration;
   sessionLoading.value = true;
   try {
     const { data, error } = await fetchAgentSession(props.asset.id, id);
-    if (error || !data) return;
+    if (generation !== sessionGeneration || error || !data) return;
     sessionID.value = id;
     currentSession.value = data.session;
     messages.value = data.messages;
     await scrollToLatest();
   } finally {
-    sessionLoading.value = false;
+    if (generation === sessionGeneration) sessionLoading.value = false;
   }
 }
 
 function newSession() {
   if (running.value) return;
+  sessionGeneration++;
+  sessionLoading.value = false;
   sessionID.value = null;
   currentSession.value = null;
   messages.value = [];
@@ -201,7 +205,7 @@ function validateVariables() {
 
 async function send() {
   const text = input.value.trim();
-  if (!text || running.value) return;
+  if (!text || running.value || sessionLoading.value) return;
   if (!sessionID.value && !validateVariables()) return;
   activeTab.value = 'chat';
   input.value = '';

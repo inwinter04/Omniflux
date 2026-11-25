@@ -53,6 +53,8 @@ const columns = computed<DataTableColumns<CandidateDraft>>(() => [
         'onUpdate:value': (value: string) => {
           row.provider_account_id = value;
           row.upstream_model = '';
+          row.input_cost_per_million = 0;
+          row.output_cost_per_million = 0;
           row.cost_currency = props.accountOptions.find(item => item.value === value)?.currency ?? 'USD';
           void loadModels(value);
         }
@@ -249,6 +251,8 @@ async function loadModels(accountID: string, force = false) {
 
 function selectModel(row: CandidateDraft, modelID: string) {
   row.upstream_model = modelID;
+  row.input_cost_per_million = 0;
+  row.output_cost_per_million = 0;
   const model = (modelCache[row.provider_account_id ?? ''] ?? []).find(item => item.id === modelID);
   if (
     row.cost_currency === 'USD' &&

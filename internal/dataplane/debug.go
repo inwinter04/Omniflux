@@ -58,7 +58,7 @@ func (d Deps) DebugConversation(ctx context.Context, organizationID, serviceID u
 	result.UpstreamModel = response.ExtraFields.RoutingInfo.Model
 	usage := usageFromBifrost(response.Usage)
 	result.InputTokens, result.OutputTokens, result.CachedTokens, result.ReasoningTokens = usage.tokens()
-	if served, err := chain.findCandidate(result.Provider, result.UpstreamModel); err == nil {
+	if served, err := chain.findCandidate(result.Provider, result.UpstreamModel, response.ExtraFields.RoutingInfo.Key); err == nil {
 		result.Cost = served.costUSD(result.InputTokens, result.OutputTokens)
 		result.Currency = currencyOf(served)
 	}
@@ -86,6 +86,7 @@ func (d Deps) DebugConversationStream(ctx context.Context, organizationID, servi
 		result := DebugResult{}
 		var content strings.Builder
 		var snapshot usageSnapshot
+		var servedAccountID string
 		for chunk := range stream {
 			if chunk.BifrostError != nil {
 				sendDebugStreamEvent(ctx, events, DebugStreamEvent{Err: errors.New(errorMessageOf(chunk.BifrostError))})
@@ -98,6 +99,7 @@ func (d Deps) DebugConversationStream(ctx context.Context, organizationID, servi
 			if result.Provider == "" {
 				result.Provider = string(response.ExtraFields.RoutingInfo.Provider)
 				result.UpstreamModel = response.ExtraFields.RoutingInfo.Model
+				servedAccountID = response.ExtraFields.RoutingInfo.Key
 			}
 			if usage := usageFromBifrost(response.Usage); usage.hasTokens() {
 				snapshot = usageSnapshot(usage)
@@ -124,7 +126,7 @@ func (d Deps) DebugConversationStream(ctx context.Context, organizationID, servi
 		result.Response = content.String()
 		result.TotalMS = int(time.Since(start).Milliseconds())
 		result.InputTokens, result.OutputTokens, result.CachedTokens, result.ReasoningTokens = snapshot.InputTokens, snapshot.OutputTokens, snapshot.CachedTokens, snapshot.ReasoningTokens
-		if served, err := chain.findCandidate(result.Provider, result.UpstreamModel); err == nil {
+		if served, err := chain.findCandidate(result.Provider, result.UpstreamModel, servedAccountID); err == nil {
 			result.Cost = served.costUSD(result.InputTokens, result.OutputTokens)
 			result.Currency = currencyOf(served)
 		}
@@ -167,6 +169,7 @@ func (d Deps) prepareConversationRequest(ctx context.Context, organizationID, se
 	start := time.Now()
 	timeout := time.Duration(service.Policy.ProviderTimeoutMS) * time.Millisecond
 	bctx := schemas.NewBifrostContext(ctx, time.Now().Add(timeout))
+	bctx.SetValue(schemas.BifrostContextKeyAPIKeyID, primary.AccountID)
 	return chain, bctx, request, start, nil
 }
 

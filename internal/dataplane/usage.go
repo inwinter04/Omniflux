@@ -73,32 +73,36 @@ func (s usageStore) insertPending(ctx context.Context, p pendingUsage) error {
 
 // finalize 定稿用量与决策。路由决策的 attempt_trail 一并更新。
 func (s usageStore) finalize(ctx context.Context, requestID uuid.UUID, f finalUsage) error {
-	// 定稿是所有请求的唯一出口,业务指标在这里统一采集。
-	recordFinalizedMetrics(f)
 	currency := f.Currency
 	if currency == "" {
 		currency = "USD"
 	}
-	_, err := s.pool.Exec(ctx, `
-		UPDATE usage_records SET
-			state = $2, status_code = $3, model_candidate_id = $4,
-			provider = $5, upstream_model = $6,
-			input_tokens = $7, output_tokens = $8, cached_tokens = $9, reasoning_tokens = $10,
-			cost = $11, first_token_ms = $12, total_ms = $13, usage_source = $14,
-			error_type = $15, error_message = $16, cost_currency = COALESCE($17, cost_currency), finalized_at = now()
-		WHERE request_id = $1 AND state = 'pending'
-	`, requestID, f.State, nullableInt(f.StatusCode), nullableUUID(f.CandidateID),
-		nullableString(f.Provider), nullableString(f.UpstreamModel),
-		f.InputTokens, f.OutputTokens, f.CachedTokens, f.ReasoningTokens,
-		f.Cost, nullableInt(f.FirstTokenMS), f.TotalMS, nullableString(f.UsageSource),
-		nullableString(f.ErrorType), nullableString(f.ErrorMessage), nullableString(&currency))
-	if err != nil {
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `
+			UPDATE usage_records SET
+				state = $2, status_code = $3, model_candidate_id = $4,
+				provider = $5, upstream_model = $6,
+				input_tokens = $7, output_tokens = $8, cached_tokens = $9, reasoning_tokens = $10,
+				cost = $11, first_token_ms = $12, total_ms = $13, usage_source = $14,
+				error_type = $15, error_message = $16, cost_currency = COALESCE($17, cost_currency), finalized_at = now()
+			WHERE request_id = $1 AND state = 'pending'
+		`, requestID, f.State, nullableInt(f.StatusCode), nullableUUID(f.CandidateID),
+			nullableString(f.Provider), nullableString(f.UpstreamModel),
+			f.InputTokens, f.OutputTokens, f.CachedTokens, f.ReasoningTokens,
+			f.Cost, nullableInt(f.FirstTokenMS), f.TotalMS, nullableString(f.UsageSource),
+			nullableString(f.ErrorType), nullableString(f.ErrorMessage), nullableString(&currency)); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `
+			UPDATE policy_decisions SET attempt_trail = $2
+			WHERE request_id = $1
+		`, requestID, f.AttemptTrail)
 		return err
+	})
+	if err == nil {
+		// 定稿是所有请求的唯一出口,业务指标在这里统一采集。
+		recordFinalizedMetrics(f)
 	}
-	_, err = s.pool.Exec(ctx, `
-		UPDATE policy_decisions SET attempt_trail = $2
-		WHERE request_id = $1
-	`, requestID, f.AttemptTrail)
 	return err
 }
 

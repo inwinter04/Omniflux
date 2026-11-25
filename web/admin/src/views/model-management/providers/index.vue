@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, h, onMounted, reactive, ref } from 'vue';
+import { computed, h, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { NButton, NDropdown, NPopconfirm, NSpace, NTag } from 'naive-ui';
 import type { DataTableColumns, FormInst, FormRules, SelectGroupOption } from 'naive-ui';
@@ -427,6 +427,10 @@ const modelLoading = ref(false);
 const modelRows = ref<Api.Management.ProviderModel[]>([]);
 const modelTitle = ref('');
 const modelAccountID = ref('');
+let modelRequestGeneration = 0;
+watch(showModels, visible => {
+  if (!visible) modelRequestGeneration++;
+});
 const selectedModelKeys = ref<string[]>([]);
 const modelColumns = computed<DataTableColumns<Api.Management.ProviderModel>>(() => [
   { type: 'selection' },
@@ -448,6 +452,7 @@ const modelColumns = computed<DataTableColumns<Api.Management.ProviderModel>>(()
 ]);
 
 async function openModels(row: Pick<Api.Management.ProviderAccount, 'id' | 'name'>) {
+  const generation = ++modelRequestGeneration;
   showModels.value = true;
   modelLoading.value = true;
   modelRows.value = [];
@@ -456,9 +461,9 @@ async function openModels(row: Pick<Api.Management.ProviderAccount, 'id' | 'name
   modelTitle.value = $t('business.accountAvailableModels', { name: row.name });
   try {
     const { data, error } = await fetchProviderModels(row.id);
-    if (!error && data) modelRows.value = data.models;
+    if (generation === modelRequestGeneration && !error && data) modelRows.value = data.models;
   } finally {
-    modelLoading.value = false;
+    if (generation === modelRequestGeneration) modelLoading.value = false;
   }
 }
 

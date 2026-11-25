@@ -40,6 +40,17 @@ export const generatedRoutes: GeneratedRoute[] = [
     }
   },
   {
+    name: 'accept-invitation',
+    path: '/accept-invitation',
+    component: 'layout.blank$view.accept-invitation',
+    meta: {
+      title: 'accept-invitation',
+      i18nKey: 'route.accept-invitation',
+      constant: true,
+      hideInMenu: true
+    }
+  },
+  {
     name: 'access',
     path: '/access',
     component: 'layout.base',
@@ -120,6 +131,17 @@ export const generatedRoutes: GeneratedRoute[] = [
         }
       }
     ]
+  },
+  {
+    name: 'forgot-password',
+    path: '/forgot-password',
+    component: 'layout.blank$view.forgot-password',
+    meta: {
+      title: 'forgot-password',
+      i18nKey: 'route.forgot-password',
+      constant: true,
+      hideInMenu: true
+    }
   },
   {
     name: 'home',
@@ -304,5 +326,64 @@ export const generatedRoutes: GeneratedRoute[] = [
         }
       }
     ]
+  },
+  {
+    name: 'register',
+    path: '/register',
+    component: 'layout.blank$view.register',
+    meta: {
+      title: 'register',
+      i18nKey: 'route.register',
+      constant: true,
+      hideInMenu: true
+    }
+  },
+  {
+    name: 'reset-password',
+    path: '/reset-password',
+    component: 'layout.blank$view.reset-password',
+    meta: {
+      title: 'reset-password',
+      i18nKey: 'route.reset-password',
+      constant: true,
+      hideInMenu: true
+    }
+  },
+  {
+    name: 'system',
+    path: '/system',
+    component: 'layout.base',
+    meta: {
+      title: 'system',
+      i18nKey: 'route.system',
+      order: 6,
+      icon: 'mdi:cog-outline',
+      roles: ['platform_admin']
+    },
+    children: [
+      {
+        name: 'system_settings',
+        path: '/system/settings',
+        component: 'view.system_settings',
+        meta: {
+          title: 'system_settings',
+          i18nKey: 'route.system_settings',
+          order: 1,
+          icon: 'mdi:application-cog-outline',
+          roles: ['platform_admin']
+        }
+      }
+    ]
+  },
+  {
+    name: 'verify-email',
+    path: '/verify-email',
+    component: 'layout.blank$view.verify-email',
+    meta: {
+      title: 'verify-email',
+      i18nKey: 'route.verify-email',
+      constant: true,
+      hideInMenu: true
+    }
   }
 ];

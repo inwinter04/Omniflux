@@ -120,32 +120,43 @@ const columns = computed<DataTableColumns<Api.Management.AssetVersion>>(() => [
   }
 ]);
 
+let sessionGeneration = 0;
 watch(
-  () => props.show,
-  visible => {
+  [() => props.show, () => props.asset?.id],
+  ([visible]) => {
+    sessionGeneration++;
     if (visible) void loadData();
+    else {
+      detail.value = null;
+      loading.value = false;
+    }
   }
 );
 
 async function loadData() {
   if (!props.asset) return;
+  const generation = sessionGeneration;
+  const assetId = props.asset.id;
   loading.value = true;
+  detail.value = null;
   diff.value = '';
   try {
-    const { data, error } = await fetchAssetDetail(props.asset.id);
-    if (error || !data) return;
+    const { data, error } = await fetchAssetDetail(assetId);
+    if (generation !== sessionGeneration || assetId !== props.asset?.id || error || !data) return;
     detail.value = data;
     diffFrom.value = data.current_version_id ?? data.versions.at(-1)?.id ?? null;
     diffTo.value = data.versions.find(item => item.version === data.latest_version)?.id ?? null;
   } finally {
-    loading.value = false;
+    if (generation === sessionGeneration) loading.value = false;
   }
 }
 
 async function publish(versionID: string) {
-  if (!props.asset) return;
-  const { error } = await fetchPublishAsset(props.asset.id, versionID);
-  if (!error) {
+  if (!props.asset || !detail.value) return;
+  const generation = sessionGeneration;
+  const assetId = props.asset.id;
+  const { error } = await fetchPublishAsset(assetId, versionID);
+  if (!error && generation === sessionGeneration && assetId === props.asset?.id) {
     window.$message?.success($t('business.new-version-enabled'));
     emit('saved');
     await loadData();
@@ -154,8 +165,11 @@ async function publish(versionID: string) {
 
 async function rollback(versionID: string) {
   if (!props.asset || !detail.value) return;
-  const { data, error } = await fetchRollbackAsset(props.asset.id, versionID, detail.value.latest_version);
-  if (!error && data) {
+  const generation = sessionGeneration;
+  const assetId = props.asset.id;
+  const expectedVersion = detail.value.latest_version;
+  const { data, error } = await fetchRollbackAsset(assetId, versionID, expectedVersion);
+  if (!error && data && generation === sessionGeneration && assetId === props.asset?.id) {
     window.$message?.success($t('business.restoredAsVersion', { version: data.version }));
     emit('saved');
     await loadData();
@@ -164,12 +178,14 @@ async function rollback(versionID: string) {
 
 async function compare() {
   if (!props.asset || !diffFrom.value || !diffTo.value) return;
+  const generation = sessionGeneration;
+  const assetId = props.asset.id;
   diffLoading.value = true;
   try {
-    const { data, error } = await fetchAssetDiff(props.asset.id, diffFrom.value, diffTo.value);
-    if (!error && data) diff.value = buildAssetDiff(data);
+    const { data, error } = await fetchAssetDiff(assetId, diffFrom.value, diffTo.value);
+    if (generation === sessionGeneration && assetId === props.asset?.id && !error && data) diff.value = buildAssetDiff(data);
   } finally {
-    diffLoading.value = false;
+    if (generation === sessionGeneration) diffLoading.value = false;
   }
 }
 </script>

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -52,22 +53,24 @@ func runOnce(ctx context.Context, logger *slog.Logger, pool *pgxpool.Pool, known
 // reconcilePending 把长时间停留在 pending 的用量定稿为 failed。
 // 正常路径一定经过 finalize;只有进程崩溃/重启才会遗留 pending。
 func reconcilePending(ctx context.Context, logger *slog.Logger, pool *pgxpool.Pool) {
-	tag, err := pool.Exec(ctx, `
-        UPDATE usage_records
-        SET state = 'failed', status_code = 504,
-            error_type = 'abandoned',
-            error_message = 'server interrupted before completion; usage reconciled as failed',
-            finalized_at = now()
-        WHERE state = 'pending' AND created_at < now() - interval '`+pendingTTL+`'
-    `)
-	if err != nil {
-		logger.Warn("reconcile pending usage failed", "error", err)
-		return
-	}
-	if tag.RowsAffected() > 0 {
-		logger.Info("reconciled abandoned pending usage", "count", tag.RowsAffected())
-		// 对应的路由决策从未走到结果,同步标记为 failed,保证审计口径一致。
-		if _, err := pool.Exec(ctx, `
+	var count int64
+	err := pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `
+	        UPDATE usage_records
+	        SET state = 'failed', status_code = 504,
+	            error_type = 'abandoned',
+	            error_message = 'server interrupted before completion; usage reconciled as failed',
+	            finalized_at = now()
+	        WHERE state = 'pending' AND created_at < now() - interval '`+pendingTTL+`'
+	    `)
+		if err != nil {
+			return err
+		}
+		count = tag.RowsAffected()
+		if count == 0 {
+			return nil
+		}
+		_, err = tx.Exec(ctx, `
             UPDATE policy_decisions d
             SET decision = 'failed',
                 reason = d.reason || '; abandoned: server interrupted before completion'
@@ -77,9 +80,15 @@ func reconcilePending(ctx context.Context, logger *slog.Logger, pool *pgxpool.Po
                 WHERE u.request_id = d.request_id AND u.state = 'failed'
                       AND u.error_type = 'abandoned'
               )
-        `); err != nil {
-			logger.Warn("reconcile abandoned policy decisions failed", "error", err)
-		}
+        `)
+		return err
+	})
+	if err != nil {
+		logger.Warn("reconcile pending usage failed", "error", err)
+		return
+	}
+	if count > 0 {
+		logger.Info("reconciled abandoned pending usage", "count", count)
 	}
 }
 
@@ -89,7 +98,7 @@ func refreshProviderHealth(ctx context.Context, logger *slog.Logger, pool *pgxpo
 	rows, err := pool.Query(ctx, `
         SELECT a.id, a.provider,
                count(u.id),
-               avg(CASE WHEN u.state = 'success' THEN 1.0 ELSE 0.0 END)
+               avg(CASE WHEN u.state = 'success' THEN 1.0 ELSE 0.0 END) FILTER (WHERE u.id IS NOT NULL)
         FROM provider_accounts a
         LEFT JOIN model_candidates mc ON mc.provider_account_id = a.id
         LEFT JOIN usage_records u ON u.model_candidate_id = mc.id
@@ -112,11 +121,9 @@ func refreshProviderHealth(ctx context.Context, logger *slog.Logger, pool *pgxpo
 			return
 		}
 		key := id + "|" + provider
-		current[key] = true
-		if !knownAccounts[key] {
-			knownAccounts[key] = true
-		}
 		if requests != nil && *requests > 0 && rate != nil {
+			current[key] = true
+			knownAccounts[key] = true
 			providerAccountSuccessRate.WithLabelValues(id, provider).Set(*rate)
 		}
 	}

@@ -104,13 +104,20 @@ func (d ServerDeps) Budgets(w http.ResponseWriter, r *http.Request) {
 		}
 		item.ID = id.String()
 		item.ScopeID = scopeID.String()
-		name, err := d.resolveBudgetScope(r.Context(), item.ScopeType, scopeID, principal.OrganizationID)
+		item.Exceeded = amountCompare(item.SpentAmount, item.LimitAmount) >= 0
+		list = append(list, item)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		adminError(w, http.StatusInternalServerError, "BUDGET_LIST_FAILED", "failed-to-query-budgets", nil)
+		return
+	}
+	for i := range list {
+		name, err := d.resolveBudgetScope(r.Context(), list[i].ScopeType, uuid.MustParse(list[i].ScopeID), principal.OrganizationID)
 		if err != nil {
 			name = "-"
 		}
-		item.ScopeName = name
-		item.Exceeded = amountCompare(item.SpentAmount, item.LimitAmount) >= 0
-		list = append(list, item)
+		list[i].ScopeName = name
 	}
 	adminOK(w, list)
 }

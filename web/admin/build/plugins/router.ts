@@ -11,7 +11,7 @@ export function setupElegantRouter() {
     onRouteMetaGen(routeName) {
       const key = routeName as RouteKey;
 
-      const constantRoutes: RouteKey[] = ['login', '403', '404', '500'];
+      const constantRoutes: RouteKey[] = ['login', 'register', 'forgot-password', 'reset-password', 'verify-email', 'accept-invitation', '403', '404', '500'];
 
       const meta: Partial<RouteMeta> = {
         title: key,
@@ -37,7 +37,9 @@ export function setupElegantRouter() {
         observability: 5,
         observability_usage: 2,
         observability_audit: 3,
-        observability_budgets: 1
+        observability_budgets: 1,
+        system: 6,
+        system_settings: 1
       };
 
       const menuIcons: Partial<Record<RouteKey, string>> = {
@@ -60,7 +62,15 @@ export function setupElegantRouter() {
         observability: 'mdi:monitor-shimmer',
         observability_usage: 'mdi:chart-bar',
         observability_audit: 'mdi:text-box-search-outline',
-        observability_budgets: 'mdi:wallet-outline'
+        observability_budgets: 'mdi:wallet-outline',
+        system: 'mdi:cog-outline',
+        system_settings: 'mdi:application-cog-outline'
+      };
+
+      const routeRoles: Partial<Record<RouteKey, string[]>> = {
+        access_users: ['org_owner', 'platform_admin'],
+        system: ['platform_admin'],
+        system_settings: ['platform_admin']
       };
 
       if (menuOrder[key] !== undefined) {
@@ -71,6 +81,10 @@ export function setupElegantRouter() {
         meta.icon = menuIcons[key];
       }
 
+      if (routeRoles[key]) {
+        meta.roles = routeRoles[key];
+      }
+
       if (constantRoutes.includes(key)) {
         meta.constant = true;
       }
@@ -79,11 +93,3 @@ export function setupElegantRouter() {
     }
   });
 }
-
-
-
-
-
-
-
-

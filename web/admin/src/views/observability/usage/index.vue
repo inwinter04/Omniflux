@@ -407,7 +407,8 @@ async function loadRecords() {
 function applyQuickRange(kind: QuickRange) {
   if (kind === 'last7' || kind === 'last30') {
     days.value = kind === 'last7' ? 7 : 30;
-    filterRange.value = null;
+    const now = Date.now();
+    filterRange.value = [now - days.value * 24 * 60 * 60 * 1000, now];
     applyFilters();
     return;
   }

@@ -26,6 +26,22 @@ declare namespace Api {
       name: string;
     }
 
+    interface SystemSettings {
+      public_registration_enabled: boolean;
+      registration_organization_id: string | null;
+      registration_role: 'developer' | 'viewer';
+      email_verification_required: boolean;
+      updated_by: string | null;
+      updated_at: string;
+    }
+
+    interface UpdateSystemSettingsParams {
+      public_registration_enabled: boolean;
+      registration_organization_id: string | null;
+      email_verification_required: boolean;
+      registration_role: 'developer' | 'viewer';
+    }
+
     interface Project {
       id: string;
       name: string;
@@ -621,15 +637,51 @@ declare namespace Api {
 
     interface CreateUserParams {
       email: string;
-      password: string;
+      password?: string;
+      generate_password: boolean;
       role: string;
       organization_id?: string;
+    }
+
+    interface CreateUserResult {
+      id: string;
+      generated_password?: string;
     }
 
     interface UpdateUserParams {
       role?: string;
       status?: string;
       password?: string;
+      organization_id?: string;
+    }
+
+    interface EmailSettings {
+      enabled: boolean;
+      smtp_host: string;
+      smtp_port: number;
+      smtp_username: string;
+      from_address: string;
+      from_name: string;
+      encryption: 'starttls' | 'tls' | 'none';
+      public_base_url: string;
+      has_password: boolean;
+    }
+
+    interface UpdateEmailSettingsParams {
+      enabled: boolean;
+      smtp_host: string;
+      smtp_port: number;
+      smtp_username: string;
+      smtp_password?: string;
+      from_address: string;
+      from_name: string;
+      encryption: 'starttls' | 'tls' | 'none';
+      public_base_url: string;
+    }
+
+    interface InviteUserParams {
+      email: string;
+      role: string;
       organization_id?: string;
     }
 
@@ -712,11 +764,3 @@ declare namespace Api {
     }
   }
 }
-
-
-
-
-
-
-
-

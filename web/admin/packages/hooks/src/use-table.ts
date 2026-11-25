@@ -90,11 +90,15 @@ export default function useTable<ResponseData, ApiData, Column, Pagination exten
     }));
   }
 
+  let requestGeneration = 0;
+
   async function getData() {
+    const generation = ++requestGeneration;
     try {
       startLoading();
 
       const response = await api();
+      if (generation !== requestGeneration) return;
 
       const transformed = transform(response);
 
@@ -104,7 +108,7 @@ export default function useTable<ResponseData, ApiData, Column, Pagination exten
 
       await onFetched?.(transformed);
     } finally {
-      endLoading();
+      if (generation === requestGeneration) endLoading();
     }
   }
 

@@ -20,6 +20,7 @@ import (
 	"github.com/inwinter04/omniflux/internal/bootstrap"
 	"github.com/inwinter04/omniflux/internal/config"
 	"github.com/inwinter04/omniflux/internal/infra"
+	"github.com/inwinter04/omniflux/internal/mail"
 )
 
 // 集成测试需要真实 PostgreSQL;设置 OMNIFLUX_TEST_DATABASE_URL 启用,
@@ -28,6 +29,7 @@ import (
 const integrationDBEnv = "OMNIFLUX_TEST_DATABASE_URL"
 
 type integrationEnv struct {
+	mailer *fakeMailer
 	srv    *httptest.Server
 	pool   *pgxpool.Pool
 	engine *bifrostx.Engine
@@ -76,18 +78,20 @@ func setupIntegration(t *testing.T) *integrationEnv {
 	if err := bootstrap.Seed(ctx, logger, pool, cfg); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}
+	mailer := &fakeMailer{settings: mail.StoredSettings{Settings: mail.Settings{PublicBaseURL: "http://127.0.0.1:1"}}}
 	engine, err := bifrostx.NewEngine(ctx, []bifrostx.ProviderSpec{})
 	if err != nil {
 		t.Fatalf("engine: %v", err)
 	}
 	handler := New(ServerDeps{
 		Logger: logger, Pool: pool, Engine: engine,
-		Auth: auth.NewStore(pool), Env: "development",
+		Auth: auth.NewStore(pool), Mailer: mailer, Env: "development",
 		MasterKey: cfg.MasterKey, APIKeyPepper: cfg.APIKeyPepper,
 	})
 	srv := httptest.NewServer(handler)
+	mailer.settings.PublicBaseURL = srv.URL
 	t.Cleanup(srv.Close)
-	itEnv = &integrationEnv{srv: srv, pool: pool, engine: engine}
+	itEnv = &integrationEnv{mailer: mailer, srv: srv, pool: pool, engine: engine}
 	t.Cleanup(func() {
 		itEnv = nil
 	})
@@ -102,10 +106,10 @@ func sessionClient(t *testing.T, email, password string) *http.Client {
 		t.Fatalf("cookiejar: %v", err)
 	}
 	client := &http.Client{Jar: jar}
-	code, _ := doJSON(t, client, http.MethodPost, "/api/v1/auth/login",
+	code, body := doJSON(t, client, http.MethodPost, "/api/v1/auth/login",
 		map[string]string{"email": email, "password": password})
 	if code != http.StatusOK {
-		t.Fatalf("login %s status = %d", email, code)
+		t.Fatalf("login %s status = %d body = %v", email, code, body)
 	}
 	return client
 }
@@ -151,6 +155,257 @@ func TestIntegrationGovernance(t *testing.T) {
 
 	admin := sessionClient(t, "it-admin@test.local", "it-admin-password-123456")
 
+	t.Run("public registration follows system settings", func(t *testing.T) {
+		public := &http.Client{}
+		code, body := doJSON(t, public, http.MethodGet, "/api/v1/auth/registration-options", nil)
+		if code != http.StatusOK || body["data"].(map[string]any)["enabled"] != false {
+			t.Fatal("registration should be disabled by default")
+		}
+		code, _ = doJSON(t, public, http.MethodPost, "/api/v1/auth/register",
+			map[string]string{"email": "registered@test.local", "password": "registered-password-123"})
+		if code != http.StatusForbidden {
+			t.Fatalf("disabled register status = %d, want 403", code)
+		}
+
+		code, body = doJSON(t, admin, http.MethodGet, "/api/v1/system/settings", nil)
+		if code != http.StatusOK {
+			t.Fatalf("read system settings status = %d body = %v", code, body)
+		}
+		settings := body["data"].(map[string]any)
+		organizationID := settings["registration_organization_id"].(string)
+		if organizationID == "" || settings["public_registration_enabled"] != false {
+			t.Fatalf("unexpected initial settings = %v", settings)
+		}
+
+		code, _ = doJSON(t, admin, http.MethodPatch, "/api/v1/system/settings", map[string]any{
+			"public_registration_enabled": true, "registration_organization_id": "", "registration_role": "developer",
+		})
+		if code != http.StatusBadRequest {
+			t.Fatalf("enable without organization status = %d, want 400", code)
+		}
+		code, body = doJSON(t, admin, http.MethodPatch, "/api/v1/system/settings", map[string]any{
+			"public_registration_enabled": false, "registration_organization_id": "", "registration_role": "viewer",
+		})
+		if code != http.StatusOK || body["data"].(map[string]any)["registration_organization_id"] != nil {
+			t.Fatalf("clear registration organization status = %d body = %v", code, body)
+		}
+
+		code, body = doJSON(t, admin, http.MethodPatch, "/api/v1/system/settings", map[string]any{
+			"public_registration_enabled": true, "registration_organization_id": organizationID, "registration_role": "developer",
+		})
+		if code != http.StatusOK {
+			t.Fatalf("enable registration status = %d body = %v", code, body)
+		}
+		code, body = doJSON(t, public, http.MethodGet, "/api/v1/auth/registration-options", nil)
+		if code != http.StatusOK || body["data"].(map[string]any)["enabled"] != true {
+			t.Fatal("registration should be enabled after settings update")
+		}
+
+		jar, err := cookiejar.New(nil)
+		if err != nil {
+			t.Fatalf("cookie jar: %v", err)
+		}
+		registered := &http.Client{Jar: jar}
+		code, body = doJSON(t, registered, http.MethodPost, "/api/v1/auth/register",
+			map[string]string{"email": "registered@test.local", "password": "registered-password-123"})
+		if code != http.StatusOK {
+			t.Fatalf("register status = %d body = %v", code, body)
+		}
+		if body["data"].(map[string]any)["user"].(map[string]any)["role"] != "developer" {
+			t.Fatalf("registered role = %v, want developer", body["data"])
+		}
+		code, body = doJSON(t, registered, http.MethodGet, "/api/v1/auth/me", nil)
+		if code != http.StatusOK {
+			t.Fatalf("registered me status = %d body = %v", code, body)
+		}
+		code, _ = doJSON(t, registered, http.MethodGet, "/api/v1/system/settings", nil)
+		if code != http.StatusForbidden {
+			t.Fatalf("registered developer system settings status = %d, want 403", code)
+		}
+
+		code, _ = doJSON(t, public, http.MethodPost, "/api/v1/auth/register",
+			map[string]string{"email": "registered@test.local", "password": "registered-password-123"})
+		if code != http.StatusConflict {
+			t.Fatalf("duplicate register status = %d, want 409", code)
+		}
+		code, body = doJSON(t, admin, http.MethodPatch, "/api/v1/system/settings", map[string]any{
+			"public_registration_enabled": false, "registration_organization_id": organizationID, "registration_role": "developer",
+		})
+		if code != http.StatusOK {
+			t.Fatalf("disable registration status = %d", code)
+		}
+	})
+
+	t.Run("platform admin creates user with generated password", func(t *testing.T) {
+		code, _ := doJSON(t, admin, http.MethodPost, "/api/v1/users", map[string]any{
+			"email": "generated-admin@test.local", "role": "viewer",
+		})
+		if code != http.StatusBadRequest {
+			t.Fatalf("create without password status = %d, want 400", code)
+		}
+
+		payload, err := json.Marshal(map[string]any{
+			"email": "generated-admin@test.local", "generate_password": true, "role": "viewer",
+		})
+		if err != nil {
+			t.Fatalf("marshal generated user: %v", err)
+		}
+		req, err := http.NewRequest(http.MethodPost, itEnv.base()+"/api/v1/users", bytes.NewReader(payload))
+		if err != nil {
+			t.Fatalf("build generated user request: %v", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := admin.Do(req)
+		if err != nil {
+			t.Fatalf("create generated user: %v", err)
+		}
+		defer resp.Body.Close()
+		envelope := map[string]any{}
+		if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+			t.Fatalf("decode generated user: %v", err)
+		}
+		if resp.StatusCode != http.StatusOK || resp.Header.Get("Cache-Control") != "no-store" {
+			t.Fatalf("generated user status = %d cache-control = %q", resp.StatusCode, resp.Header.Get("Cache-Control"))
+		}
+		data := envelope["data"].(map[string]any)
+		password := data["generated_password"].(string)
+		if len(password) != 24 {
+			t.Fatalf("generated password length = %d, want 24", len(password))
+		}
+		var auditAfter string
+		if err := env.pool.QueryRow(context.Background(), `
+			SELECT after_state::text FROM audit_events
+			WHERE action='user.created' AND resource_id=$1
+		`, data["id"].(string)).Scan(&auditAfter); err != nil {
+			t.Fatalf("read generated user audit: %v", err)
+		}
+		if bytes.Contains([]byte(auditAfter), []byte(password)) {
+			t.Fatal("generated password must not be written to audit state")
+		}
+		generatedSession := sessionClient(t, "generated-admin@test.local", password)
+		code, _ = doJSON(t, generatedSession, http.MethodGet, "/api/v1/auth/me", nil)
+		if code != http.StatusOK {
+			t.Fatalf("generated user me status = %d", code)
+		}
+	})
+
+	t.Run("email verification, invitation and password reset close the loop", func(t *testing.T) {
+		env.mailer.settings.Enabled = true
+		code, body := doJSON(t, admin, http.MethodPatch, "/api/v1/system/email/settings", map[string]any{
+			"enabled": true, "smtp_host": "smtp.example.com", "smtp_port": 587,
+			"from_address": "omniflux@example.com", "encryption": "starttls",
+			"public_base_url": itEnv.base(),
+		})
+		if code != http.StatusOK {
+			t.Fatalf("configure email settings status = %d body = %v", code, body)
+		}
+
+		code, body = doJSON(t, admin, http.MethodGet, "/api/v1/system/settings", nil)
+		if code != http.StatusOK {
+			t.Fatalf("read system settings for email status = %d", code)
+		}
+		organizationID := body["data"].(map[string]any)["registration_organization_id"].(string)
+		code, _ = doJSON(t, admin, http.MethodPatch, "/api/v1/system/settings", map[string]any{
+			"public_registration_enabled": true, "registration_organization_id": organizationID,
+			"registration_role": "viewer", "email_verification_required": true,
+		})
+		if code != http.StatusOK {
+			t.Fatalf("enable verified registration status = %d", code)
+		}
+
+		public := &http.Client{}
+		code, body = doJSON(t, public, http.MethodPost, "/api/v1/auth/register",
+			map[string]string{"email": "verified-user@test.local", "password": "verified-password-123"})
+		if code != http.StatusOK || body["data"].(map[string]any)["status"] != "verification_email_sent" {
+			t.Fatalf("verified registration status = %d body = %v", code, body)
+		}
+		code, body = doJSON(t, public, http.MethodPost, "/api/v1/auth/register",
+			map[string]string{"email": "verified-user@test.local", "password": "re-verified-password-123"})
+		if code != http.StatusOK || body["data"].(map[string]any)["status"] != "verification_email_sent" {
+			t.Fatalf("re-registration status = %d body = %v", code, body)
+		}
+		var storedPasswordHash string
+		if err := env.pool.QueryRow(context.Background(), `SELECT password_hash FROM users WHERE email=$1`, "verified-user@test.local").Scan(&storedPasswordHash); err != nil {
+			t.Fatalf("read re-registered password hash: %v", err)
+		}
+		if valid, verifyErr := auth.VerifyPassword(storedPasswordHash, "re-verified-password-123"); verifyErr != nil || !valid {
+			t.Fatalf("re-registered password does not verify: valid=%v error=%v", valid, verifyErr)
+		}
+		verificationToken := lastEmailToken(t, env)
+		jar, err := cookiejar.New(nil)
+		if err != nil {
+			t.Fatalf("verification cookie jar: %v", err)
+		}
+		verified := &http.Client{Jar: jar}
+		code, body = doJSON(t, verified, http.MethodPost, "/api/v1/auth/verify-email", map[string]string{"token": verificationToken})
+		if code != http.StatusOK {
+			t.Fatalf("verify email status = %d body = %v", code, body)
+		}
+
+		oldPasswordSession := &http.Client{}
+		code, _ = doJSON(t, oldPasswordSession, http.MethodPost, "/api/v1/auth/login",
+			map[string]string{"email": "verified-user@test.local", "password": "verified-password-123"})
+		if code != http.StatusUnauthorized {
+			t.Fatalf("old password after re-registration status = %d, want 401", code)
+		}
+		var loginStatus string
+		var failedLogins int
+		if err := env.pool.QueryRow(context.Background(), `SELECT status,failed_login_count FROM users WHERE email=$1`, "verified-user@test.local").Scan(&loginStatus, &failedLogins); err != nil {
+			t.Fatalf("read login state: %v", err)
+		}
+		if loginStatus != "active" || failedLogins >= 5 {
+			t.Fatalf("login state status=%s failed=%d", loginStatus, failedLogins)
+		}
+		code, _ = doJSON(t, public, http.MethodPost, "/api/v1/auth/login",
+			map[string]string{"email": "verified-user@test.local", "password": "re-verified-password-123"})
+		if code != http.StatusOK {
+			t.Fatalf("new password login status = %d", code)
+		}
+		code, _ = doJSON(t, admin, http.MethodPost, "/api/v1/users/invite", map[string]any{
+			"email": "invited-user@test.local", "role": "developer", "organization_id": organizationID,
+		})
+		if code != http.StatusOK {
+			t.Fatalf("invite user status = %d body = %v", code, body)
+		}
+		invitationToken := lastEmailToken(t, env)
+		inviteJar, err := cookiejar.New(nil)
+		if err != nil {
+			t.Fatalf("invitation cookie jar: %v", err)
+		}
+		invited := &http.Client{Jar: inviteJar}
+		code, body = doJSON(t, invited, http.MethodPost, "/api/v1/auth/accept-invitation", map[string]string{
+			"token": invitationToken, "password": "invited-password-123",
+		})
+		if code != http.StatusOK {
+			t.Fatalf("accept invitation status = %d body = %v", code, body)
+		}
+		code, _ = doJSON(t, invited, http.MethodGet, "/api/v1/auth/me", nil)
+		if code != http.StatusOK {
+			t.Fatalf("invited me status = %d", code)
+		}
+
+		code, _ = doJSON(t, public, http.MethodPost, "/api/v1/auth/forgot-password",
+			map[string]string{"email": "invited-user@test.local"})
+		if code != http.StatusOK {
+			t.Fatalf("forgot password status = %d", code)
+		}
+		resetToken := lastEmailToken(t, env)
+		code, _ = doJSON(t, public, http.MethodPost, "/api/v1/auth/reset-password", map[string]string{
+			"token": resetToken, "password": "reset-password-123",
+		})
+		if code != http.StatusOK {
+			t.Fatalf("reset password status = %d", code)
+		}
+		code, _ = doJSON(t, invited, http.MethodGet, "/api/v1/auth/me", nil)
+		if code != http.StatusUnauthorized {
+			t.Fatalf("old invited session status = %d, want 401", code)
+		}
+		code, body = doJSON(t, public, http.MethodPost, "/api/v1/auth/register",
+			map[string]string{"email": "invited-user@test.local", "password": "verified-password-123"})
+		if code != http.StatusOK || body["data"].(map[string]any)["status"] != "verification_email_sent" {
+			t.Fatalf("enumeration-safe duplicate registration status = %d body = %v", code, body)
+		}
+	})
 	var acmeOrgID string
 	t.Run("platform admin creates and lists organizations", func(t *testing.T) {
 		code, body := doJSON(t, admin, http.MethodPost, "/api/v1/organizations",

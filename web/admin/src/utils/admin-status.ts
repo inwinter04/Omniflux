@@ -36,6 +36,8 @@ export function statusTagType(status: string): 'success' | 'warning' | 'error' |
       return 'info';
     case 'archived':
       return 'default';
+    case 'pending_email_verification':
+      return 'warning';
     case 'disabled':
       return 'default';
     default:
@@ -155,6 +157,17 @@ const actionTextKeyMap: Record<string, App.I18n.I18nKey> = {
   'budget.deleted': 'business.delete-budget',
   'user.created': 'business.audit-create-user',
   'user.updated': 'business.update-user',
+  'user.invited': 'business.invitation-email-sent',
+  'user.invitation_resent': 'business.invitation-email-sent',
+  'user.invitation_revoked': 'business.invitation-revoked',
+  'auth.email_verified': 'business.verification-email-succeeded',
+  'auth.password_reset_requested': 'business.reset-email-sent',
+  'auth.password_reset': 'business.password-reset',
+  'auth.invitation_accepted': 'business.accept-invitation',
+  'email.verification_sent': 'business.verification-email-sent',
+  'email.verification_resent': 'business.verification-email-sent',
+  'user.self_registered': 'business.audit-self-registration',
+  'system.settings_updated': 'business.update-system-settings',
   'evaluation_set.created': 'business.audit-create-evaluation-set',
   'evaluation_set.updated': 'business.update-evaluation-set',
   'evaluation_set.deleted': 'business.delete-evaluation-set',
@@ -195,7 +208,9 @@ const resourceTextKeyMap: Record<string, App.I18n.I18nKey> = {
   evaluation_set: 'business.evaluation-set',
   budget: 'business.budget',
   organization: 'business.organization',
-  department: 'business.department'
+  department: 'business.department',
+  system_settings: 'business.system-settings',
+  email_settings: 'business.email-service'
 };
 
 export function auditResourceText(resourceType: string) {
@@ -233,6 +248,10 @@ const snapshotFieldKeyMap: Record<string, App.I18n.I18nKey> = {
   model_service_id: 'business.model-service',
   name: 'business.name',
   password_reset: 'business.reset-password',
+  public_registration_enabled: 'business.enable-public-registration',
+  registration_organization_id: 'business.registration-organization',
+  registration_role: 'business.default-registration-role',
+  email_verification_required: 'business.require-email-verification',
   project_id: 'business.project',
   provider: 'business.provider',
   provider_timeout_ms: 'business.upstream-timeout-ms',
@@ -272,6 +291,8 @@ const snapshotStatusResource: Record<string, StatusResource> = {
 const scopeTypeLabels: Record<string, App.I18n.I18nKey> = {
   organization: 'business.organization',
   department: 'business.department',
+  system_settings: 'business.system-settings',
+  email_settings: 'business.email-service',
   project: 'business.project',
   application: 'business.application',
   api_key: 'business.api-key'

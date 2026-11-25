@@ -1,4 +1,14 @@
 -- +goose Up
+-- +goose StatementBegin
+DO $do$
+BEGIN
+    IF EXISTS (SELECT 1 FROM model_endpoints) THEN
+        RAISE EXCEPTION 'model_endpoints contains data; migrate endpoint associations before dropping the table';
+    END IF;
+END
+$do$;
+-- +goose StatementEnd
+
 ALTER TABLE users DROP CONSTRAINT users_role_check;
 ALTER TABLE users
     ADD CONSTRAINT users_role_check CHECK (role IN ('platform_admin','org_owner','org_admin','project_admin','developer','viewer'));

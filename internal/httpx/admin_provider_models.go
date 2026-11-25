@@ -59,9 +59,9 @@ func (d ServerDeps) ProviderModels(w http.ResponseWriter, r *http.Request) {
 	for key, value := range headers {
 		req.Header.Set(key, value)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := providerHTTPClient.Do(req)
 	if err != nil {
-		adminError(w, http.StatusBadGateway, "PROVIDER_MODELS_UNREACHABLE", "unable-to-connect-to-the-upstream", nil, err.Error())
+		adminError(w, http.StatusBadGateway, "PROVIDER_MODELS_UNREACHABLE", "unable-to-connect-to-the-upstream", nil)
 		return
 	}
 	defer resp.Body.Close()

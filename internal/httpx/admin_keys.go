@@ -266,39 +266,37 @@ func (d ServerDeps) UpdateAPIKeyStatus(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusBadRequest, "APIKEY_INVALID_ID", "invalid-api-key-id", nil)
 		return
 	}
-	var currentStatus string
-	var currentRateLimit *int
-	err = d.Pool.QueryRow(r.Context(), `
-		SELECT status, rate_limit_per_min FROM api_keys WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
-	`, keyID, principal.OrganizationID).Scan(&currentStatus, &currentRateLimit)
-	if errors.Is(err, pgx.ErrNoRows) {
-		adminError(w, http.StatusNotFound, "APIKEY_NOT_FOUND", "api-key-does-not-exist", nil)
-		return
-	}
-	if err != nil {
-		adminError(w, http.StatusInternalServerError, "APIKEY_STATUS_FAILED", "failed-to-update-the-api-key", nil)
-		return
-	}
-	// 生效后的值:未传的字段沿用原值;审计快照记录生效值,而不是请求里的空值。
-	newStatus := currentStatus
-	if body.Status != nil {
-		newStatus = *body.Status
-	}
-	newRateLimit := currentRateLimit
-	if rateLimitProvided {
-		newRateLimit = requestedRateLimit
-	}
-	if newStatus == currentStatus && optionalIntEqual(newRateLimit, currentRateLimit) {
-		adminOK(w, map[string]string{"status": newStatus})
-		return
-	}
+	var newStatus string
 	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
-		tag, err := tx.Exec(r.Context(), `
-			UPDATE api_keys SET status = $3, rate_limit_per_min = $4, updated_at = now()
-			WHERE id = $1 AND organization_id = $2
-		`, keyID, principal.OrganizationID, newStatus, nullableIntPtr(newRateLimit))
+		var currentStatus string
+		var currentRateLimit *int
+		err := tx.QueryRow(r.Context(), `
+			SELECT status, rate_limit_per_min FROM api_keys
+			WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL FOR UPDATE
+		`, keyID, principal.OrganizationID).Scan(&currentStatus, &currentRateLimit)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return pgx.ErrNoRows
+		}
 		if err != nil {
 			return err
+		}
+		newStatus = currentStatus
+		if body.Status != nil {
+			newStatus = *body.Status
+		}
+		newRateLimit := currentRateLimit
+		if rateLimitProvided {
+			newRateLimit = requestedRateLimit
+		}
+		if newStatus == currentStatus && optionalIntEqual(newRateLimit, currentRateLimit) {
+			return errAPIKeyNoChange
+		}
+		tag, execErr := tx.Exec(r.Context(), `
+			UPDATE api_keys SET status = $3, rate_limit_per_min = $4, updated_at = now()
+			WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
+		`, keyID, principal.OrganizationID, newStatus, nullableIntPtr(newRateLimit))
+		if execErr != nil {
+			return execErr
 		}
 		if tag.RowsAffected() == 0 {
 			return pgx.ErrNoRows
@@ -308,6 +306,10 @@ func (d ServerDeps) UpdateAPIKeyStatus(w http.ResponseWriter, r *http.Request) {
 			map[string]any{"status": currentStatus, "rate_limit_per_min": currentRateLimit},
 			map[string]any{"status": newStatus, "rate_limit_per_min": newRateLimit})
 	})
+	if errors.Is(err, errAPIKeyNoChange) {
+		adminOK(w, map[string]string{"status": newStatus})
+		return
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		adminError(w, http.StatusNotFound, "APIKEY_NOT_FOUND", "api-key-does-not-exist", nil)
 		return
@@ -353,3 +355,5 @@ func (d ServerDeps) DeleteAPIKey(w http.ResponseWriter, r *http.Request) {
 	}
 	adminOK(w, nil)
 }
+
+var errAPIKeyNoChange = errors.New("api key no change")

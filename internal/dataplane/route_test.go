@@ -133,15 +133,29 @@ func TestSuccessRateWithoutHistory(t *testing.T) {
 
 func TestFindCandidateMapsProvider(t *testing.T) {
 	chain := routeChain{testCandidate("primary", 1, 1, 10, 10, 0.5)}
-	got, err := chain.findCandidate("openai", "model-primary")
+	got, err := chain.findCandidate("openai", "model-primary", "acc-primary")
 	if err != nil {
 		t.Fatalf("findCandidate error = %v", err)
 	}
 	if got.ID != idFor("primary") {
 		t.Fatalf("findCandidate got %s, want %s", got.ID, idFor("primary"))
 	}
-	if _, err := chain.findCandidate("openai", "missing-model"); err == nil {
+	if _, err := chain.findCandidate("openai", "missing-model", "acc-primary"); err == nil {
 		t.Fatal("findCandidate should fail for unknown upstream model")
+	}
+}
+
+func TestFindCandidateUsesAccountForDuplicateModels(t *testing.T) {
+	first := testCandidate("first", 1, 1, 10, 10, 0.5)
+	second := testCandidate("second", 2, 1, 20, 20, 0.5)
+	second.UpstreamModel = first.UpstreamModel
+	chain := routeChain{first, second}
+	got, err := chain.findCandidate("openai", first.UpstreamModel, second.AccountID)
+	if err != nil {
+		t.Fatalf("findCandidate error = %v", err)
+	}
+	if got.ID != second.ID {
+		t.Fatalf("findCandidate got %s, want %s", got.ID, second.ID)
 	}
 }
 

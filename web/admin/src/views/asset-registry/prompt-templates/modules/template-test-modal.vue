@@ -126,11 +126,20 @@ const historyColumns = computed<DataTableColumns<Api.Management.PromptRun>>(() =
   }
 ]);
 
+let sessionGeneration = 0;
 watch(
-  () => props.show,
-  visible => {
+  [() => props.show, () => props.asset?.id],
+  ([visible]) => {
+    sessionGeneration++;
+    running.value = false;
+    testing.value = false;
     if (visible) void initialize();
-    else abortController?.abort();
+    else {
+      abortController?.abort();
+      detail.value = null;
+      selectedSpec.value = null;
+      loading.value = false;
+    }
   }
 );
 
@@ -144,6 +153,8 @@ watch(activeTab, tab => {
 
 async function initialize() {
   if (!props.asset) return;
+  const generation = sessionGeneration;
+  const assetId = props.asset.id;
   loading.value = true;
   rendered.value = '';
   runs.value = [];
@@ -154,23 +165,26 @@ async function initialize() {
   selectedSpec.value = null;
   selectedVersionID.value = null;
   try {
-    const [detailRes, modelRes] = await Promise.all([fetchAssetDetail(props.asset.id), fetchModelServices()]);
+    const [detailRes, modelRes] = await Promise.all([fetchAssetDetail(assetId), fetchModelServices()]);
+    if (generation !== sessionGeneration || assetId !== props.asset?.id) return;
     if (!modelRes.error && modelRes.data) models.value = modelRes.data;
     if (detailRes.error || !detailRes.data) return;
     detail.value = detailRes.data;
     const latestID = detailRes.data.versions.find(item => item.version === detailRes.data.latest_version)?.id ?? null;
     selectedVersionID.value = props.preferLatest ? latestID : (detailRes.data.current_version_id ?? latestID);
   } finally {
-    loading.value = false;
+    if (generation === sessionGeneration) loading.value = false;
   }
 }
 
 async function selectVersion(versionID: string) {
   if (!props.asset) return;
+  const generation = sessionGeneration;
+  const assetId = props.asset.id;
   loading.value = true;
   try {
-    const { data, error } = await fetchAssetVersion(props.asset.id, versionID);
-    if (error || !data || !data.spec) return;
+    const { data, error } = await fetchAssetVersion(assetId, versionID);
+    if (generation !== sessionGeneration || assetId !== props.asset?.id || selectedVersionID.value !== versionID || error || !data || !data.spec) return;
     selectedSpec.value = data.spec;
     selectedModelIDs.value = data.spec.model_service_id ? [data.spec.model_service_id] : [];
     resetValues(data.spec);
@@ -178,7 +192,7 @@ async function selectVersion(versionID: string) {
     runs.value = [];
     streamingText.value = '';
   } finally {
-    loading.value = false;
+    if (generation === sessionGeneration) loading.value = false;
   }
 }
 
@@ -198,15 +212,18 @@ function numberValue(value: unknown) {
 
 async function runLocalTest() {
   if (!props.asset || !selectedVersionID.value) return;
+  const generation = sessionGeneration;
+  const assetId = props.asset.id;
+  const versionId = selectedVersionID.value;
   testing.value = true;
   try {
-    const { data, error } = await fetchRenderAssetPreview(props.asset.id, selectedVersionID.value, { ...values });
-    if (!error && data) {
+    const { data, error } = await fetchRenderAssetPreview(assetId, versionId, { ...values });
+    if (generation === sessionGeneration && selectedVersionID.value === versionId && !error && data) {
       rendered.value = data.rendered;
       window.$message?.success($t('business.local-rendering-completed'));
     }
   } finally {
-    testing.value = false;
+    if (generation === sessionGeneration) testing.value = false;
   }
 }
 
@@ -217,59 +234,70 @@ function withModelName(run: Api.Management.PromptRun) {
 }
 
 async function runModels() {
-  if (!props.asset || !selectedVersionID.value || !selectedSpec.value) return;
+  if (!props.asset || !selectedVersionID.value || !selectedSpec.value || running.value) return;
+  const generation = sessionGeneration;
+  const assetId = props.asset.id;
+  const versionId = selectedVersionID.value;
   running.value = true;
   runs.value = [];
   streamingText.value = '';
   rendered.value = '';
   abortController?.abort();
-  abortController = new AbortController();
+  const controller = new AbortController();
+  abortController = controller;
   const modelIDs = selectedModelIDs.value.length ? selectedModelIDs.value : undefined;
   try {
-    if (selectedModelIDs.value.length <= 1) {
+    if (modelIDs === undefined || modelIDs.length <= 1) {
       await streamPromptRun(
-        props.asset.id,
+        assetId,
         {
-          version_id: selectedVersionID.value,
+          version_id: versionId,
           variables: { ...values },
           model_service_ids: modelIDs,
           stream: true
         },
         {
-          onDelta: delta => (streamingText.value += delta),
+          onDelta: delta => {
+            if (generation === sessionGeneration) streamingText.value += delta;
+          },
           onResult: result => {
+            if (generation !== sessionGeneration) return;
             runs.value = [withModelName(result)];
             streamingText.value = '';
           },
           onError: result => {
+            if (generation !== sessionGeneration) return;
             runs.value = [withModelName(result)];
             streamingText.value = '';
           }
         },
-        abortController.signal
+        controller.signal
       );
     } else {
-      const { data, error } = await fetchRunPrompt(props.asset.id, {
-        version_id: selectedVersionID.value,
+      const { data, error } = await fetchRunPrompt(assetId, {
+        version_id: versionId,
         variables: { ...values },
         model_service_ids: modelIDs
       });
-      if (!error && data) runs.value = data.runs.map(withModelName);
+      if (generation === sessionGeneration && !error && data) runs.value = data.runs.map(withModelName);
     }
+    if (generation !== sessionGeneration) return;
     window.$message?.success($t('business.model-run-completed'));
     void loadHistory();
   } catch (error) {
-    if (!abortController.signal.aborted)
+    if (generation === sessionGeneration && !controller.signal.aborted)
       window.$message?.error(error instanceof Error ? error.message : $t('business.model-run-failed'));
   } finally {
-    running.value = false;
+    if (generation === sessionGeneration) running.value = false;
   }
 }
 
 async function loadHistory() {
   if (!props.asset) return;
-  const { data, error } = await fetchPromptRunHistory(props.asset.id);
-  if (!error && data) history.value = data.map(withModelName);
+  const generation = sessionGeneration;
+  const assetId = props.asset.id;
+  const { data, error } = await fetchPromptRunHistory(assetId);
+  if (generation === sessionGeneration && assetId === props.asset?.id && !error && data) history.value = data.map(withModelName);
 }
 
 function showHistoryRun(row: Api.Management.PromptRun) {

@@ -23,5 +23,6 @@ RUN CGO_ENABLED=0 go build -trimpath -o /omniflux ./cmd/omniflux
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates tzdata
 COPY --from=go-builder /omniflux /usr/local/bin/omniflux
+ENV OMNIFLUX_HTTP_ADDR=0.0.0.0:8080
 EXPOSE 8080
 ENTRYPOINT ["omniflux"]

@@ -124,7 +124,7 @@ func (d Deps) ChatAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "name")
-	item, rawSpec, err := d.loadAgent(r, keyCtx, name, "invoke")
+	item, _, err := d.loadAgent(r, keyCtx, name, "invoke")
 	if errors.Is(err, pgx.ErrNoRows) {
 		d.auditDeniedAgentChat(r, keyCtx, name)
 		apiError(w, http.StatusForbidden, "agent_access_denied", "Agent does not exist, is not published, or is not invocable by the current project.")
@@ -132,21 +132,6 @@ func (d Deps) ChatAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		apiError(w, http.StatusInternalServerError, "internal_error", "Failed to query agent.")
-		return
-	}
-	agentSpec, err := asset.ParseAgentSpec(rawSpec)
-	if err != nil {
-		apiError(w, http.StatusInternalServerError, "internal_error", "Agent configuration is invalid.")
-		return
-	}
-	serviceID := uuid.MustParse(agentSpec.ModelServiceID)
-	allowed, err := d.hasModelServiceAccess(r.Context(), keyCtx.OrganizationID, keyCtx.ProjectID, serviceID, "invoke")
-	if err != nil {
-		apiError(w, http.StatusInternalServerError, "internal_error", "Failed to check model service access.")
-		return
-	}
-	if !allowed {
-		apiError(w, http.StatusForbidden, "model_access_denied", "The current project is not allowed to invoke the model service bound to this agent.")
 		return
 	}
 	if !d.checkBudgets(w, r, keyCtx) {
@@ -168,6 +153,19 @@ func (d Deps) ChatAgent(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		writeAgentAPIError(w, err)
+		return
+	}
+	// 会话固定旧版本时，授权和路由必须使用该版本绑定的模型服务，而不是当前发布版本。
+	serviceID := uuid.MustParse(run.Spec.ModelServiceID)
+	allowed, err := d.hasModelServiceAccess(r.Context(), keyCtx.OrganizationID, keyCtx.ProjectID, serviceID, "invoke")
+	if err != nil {
+		_ = d.FinishAgentRun(r.Context(), run, "failed", DebugResult{}, errors.New("Failed to check model service access."))
+		apiError(w, http.StatusInternalServerError, "internal_error", "Failed to check model service access.")
+		return
+	}
+	if !allowed {
+		_ = d.FinishAgentRun(r.Context(), run, "failed", DebugResult{}, errors.New("The current project is not allowed to invoke the model service bound to this agent."))
+		apiError(w, http.StatusForbidden, "model_access_denied", "The current project is not allowed to invoke the model service bound to this agent.")
 		return
 	}
 	var serviceName string
@@ -204,6 +202,7 @@ func (d Deps) ChatAgent(w http.ResponseWriter, r *http.Request) {
 	timeout := time.Duration(svc.Policy.ProviderTimeoutMS) * time.Millisecond
 	start := time.Now()
 	bctx := schemas.NewBifrostContext(requestCtx, time.Now().Add(timeout))
+	bctx.SetValue(schemas.BifrostContextKeyAPIKeyID, primary.AccountID)
 	runStatus := "failed"
 	observer := &completionObserver{onComplete: func(status string, result DebugResult, runErr error) {
 		runStatus = status

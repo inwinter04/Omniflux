@@ -138,7 +138,7 @@ func (d ServerDeps) CreateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 		constraints = json.RawMessage("{}")
 	}
 	if err := dataplane.ValidateConstraintsJSON(constraints); err != nil {
-		adminError(w, http.StatusBadRequest, "POLICY_CONSTRAINTS_INVALID", "policyConstraintsInvalid", nil)
+		adminError(w, http.StatusBadRequest, "POLICY_CONSTRAINTS_INVALID", "policy-constraints-invalid", nil)
 		return
 	}
 	weights := body.Weights
@@ -281,7 +281,7 @@ func (d ServerDeps) UpdateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 	constraints := []byte(body.Constraints)
 	if len(constraints) > 0 {
 		if err := dataplane.ValidateConstraintsJSON(constraints); err != nil {
-			adminError(w, http.StatusBadRequest, "POLICY_CONSTRAINTS_INVALID", "policyConstraintsInvalid", nil)
+			adminError(w, http.StatusBadRequest, "POLICY_CONSTRAINTS_INVALID", "policy-constraints-invalid", nil)
 			return
 		}
 	}

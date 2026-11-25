@@ -65,7 +65,10 @@ export const createAlovaRequest = <
         return transformedData;
       },
       onComplete: options.onComplete,
-      onError: (error, method) => options.onError?.(error, null, method)
+      onError: async (error, method) => {
+        await options.onError?.(error, null, method);
+        throw error;
+      }
     })
   });
 

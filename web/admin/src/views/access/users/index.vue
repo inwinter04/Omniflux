@@ -4,7 +4,16 @@ import { useRoute } from 'vue-router';
 import { NButton, NModal, NPopconfirm, NSpace, NTag } from 'naive-ui';
 import type { DataTableColumns, FormInst, FormRules } from 'naive-ui';
 import { formatTime, statusTagType, statusText } from '@/utils/admin-status';
-import { fetchCreateUser, fetchOrganizations, fetchUpdateUser, fetchUsers } from '@/service/api';
+import {
+  fetchCreateUser,
+  fetchInviteOptions,
+  fetchInviteUser,
+  fetchOrganizations,
+  fetchResendUserInvitation,
+  fetchRevokeUserInvitation,
+  fetchUpdateUser,
+  fetchUsers
+} from '@/service/api';
 import { $t } from '@/locales';
 import { useAuthStore } from '@/store/modules/auth';
 
@@ -26,6 +35,7 @@ const route = useRoute();
 const isPlatformAdmin = computed(() => authStore.userInfo.roles.includes('platform_admin'));
 const orgOptions = ref<{ label: string; value: string }[]>([]);
 const filterOrgId = ref<string | null>(null);
+const emailEnabled = ref(false);
 
 const roleOptions = computed(() => [
   { label: $t('business.organization-admin'), value: 'org_admin' },
@@ -48,6 +58,7 @@ const editFormRef = ref<FormInst | null>(null);
 const formModel = reactive({
   email: '',
   password: '',
+  create_mode: 'random',
   role: 'developer',
   organization_id: null as string | null
 });
@@ -67,6 +78,9 @@ const editModel = reactive({
   password: ''
 });
 
+const createdEmail = ref('');
+const createdPassword = ref('');
+
 const formRules = computed<FormRules>(() => ({
   email: {
     required: true,
@@ -74,8 +88,9 @@ const formRules = computed<FormRules>(() => ({
     trigger: 'blur'
   },
   password: {
-    required: true,
-    message: $t('business.enter-a-password'),
+    required: formModel.create_mode === 'manual',
+    validator: (_rule, value: string) => formModel.create_mode !== 'manual' || !value || value.length >= 16,
+    message: $t('business.password-must-be-at-least'),
     trigger: 'blur'
   },
   role: {
@@ -127,7 +142,7 @@ const columns = computed<DataTableColumns<Api.Management.User>>(() => [
   {
     title: $t('business.actions'),
     key: 'actions',
-    width: 210,
+    width: 330,
     // 操作列固定在右侧:列多于一屏宽度时,行内操作不用横向滚动也能点到。
     fixed: 'right',
     render(row) {
@@ -154,6 +169,33 @@ const columns = computed<DataTableColumns<Api.Management.User>>(() => [
           { default: () => $t('business.edit') }
         )
       ];
+      if (row.status === 'pending_email_verification') {
+        actions.push(
+          h(
+            NButton,
+            {
+              size: 'small',
+              quaternary: true,
+              type: 'primary',
+              onClick: () => handleResendInvitation(row)
+            },
+            { default: () => $t('business.resend-invitation') }
+          ),
+          h(
+            NPopconfirm,
+            { onPositiveClick: () => handleRevokeInvitation(row) },
+            {
+              trigger: () =>
+                h(
+                  NButton,
+                  { size: 'small', type: 'warning', quaternary: true },
+                  { default: () => $t('business.revoke-invitation') }
+                ),
+              default: () => $t('business.revoke-invitation-confirm')
+            }
+          )
+        );
+      }
       if (isPlatformAdmin.value) {
         actions.push(
           h(
@@ -232,12 +274,17 @@ async function loadOrganizations() {
   }
 }
 
+async function loadEmailSettings() {
+  const { data, error } = await fetchInviteOptions();
+  emailEnabled.value = !error && data.email_enabled;
+}
 function handleFilterOrg() {
   void loadData();
 }
 
 function openCreate() {
   formModel.email = '';
+  formModel.create_mode = 'random';
   formModel.password = '';
   formModel.role = 'developer';
   formModel.organization_id = null;
@@ -284,22 +331,52 @@ function openEdit(row: Api.Management.User) {
 
 async function handleCreate() {
   await formRef.value?.validate();
+  const email = formModel.email.trim();
   submitting.value = true;
   try {
-    const { error } = await fetchCreateUser({
-      email: formModel.email.trim(),
-      password: formModel.password,
-      role: formModel.role,
-      organization_id: formModel.organization_id ?? undefined
-    });
+    if (formModel.create_mode === 'invite') {
+      const { error } = await fetchInviteUser({
+        email,
+        role: formModel.role,
+        organization_id: formModel.organization_id ?? undefined
+      });
+      if (!error) {
+        window.$message?.success($t('business.invitation-email-sent'));
+        showCreate.value = false;
+        await loadData();
+      }
+    } else {
+      const { data, error } = await fetchCreateUser({
+        email,
+        password: formModel.create_mode === 'manual' ? formModel.password : undefined,
+        generate_password: formModel.create_mode === 'random',
+        role: formModel.role,
+        organization_id: formModel.organization_id ?? undefined
+      });
     if (!error) {
-      window.$message?.success($t('business.user-created'));
+      if (data?.generated_password) {
+        createdEmail.value = email;
+        createdPassword.value = data.generated_password;
+      } else {
+        window.$message?.success($t('business.user-created'));
+      }
       showCreate.value = false;
       await loadData();
     }
+  }
   } finally {
     submitting.value = false;
   }
+}
+
+async function handleCopyCreatedPassword() {
+  await navigator.clipboard.writeText(createdPassword.value);
+  window.$message?.success($t('business.copied-to-clipboard'));
+}
+
+function handleCloseCreatedPassword() {
+  createdEmail.value = '';
+  createdPassword.value = '';
 }
 
 async function handleUpdate() {
@@ -319,6 +396,20 @@ async function handleUpdate() {
   }
 }
 
+async function handleResendInvitation(row: Api.Management.User) {
+  const { error } = await fetchResendUserInvitation(row.id);
+  if (!error) {
+    window.$message?.success($t('business.invitation-email-sent'));
+  }
+}
+
+async function handleRevokeInvitation(row: Api.Management.User) {
+  const { error } = await fetchRevokeUserInvitation(row.id);
+  if (!error) {
+    window.$message?.success($t('business.invitation-revoked'));
+    await loadData();
+  }
+}
 async function handleToggleStatus(row: Api.Management.User, status: 'active' | 'disabled') {
   const { error } = await fetchUpdateUser(row.id, { status });
   if (!error) {
@@ -328,7 +419,7 @@ async function handleToggleStatus(row: Api.Management.User, status: 'active' | '
 }
 
 onMounted(async () => {
-  await Promise.all([loadData(), loadOrganizations()]);
+  await Promise.all([loadData(), loadOrganizations(), loadEmailSettings()]);
   const userID = typeof route.query.user === 'string' ? route.query.user : '';
   if (userID) {
     const user = list.value.find(item => item.id === userID);
@@ -363,13 +454,27 @@ onMounted(async () => {
         <NFormItem :label="$t('business.email')" path="email">
           <NInput v-model:value="formModel.email" placeholder="user@example.com" />
         </NFormItem>
-        <NFormItem :label="$t('business.initial-password')" path="password">
-          <NInput
-            v-model:value="formModel.password"
-            type="password"
-            show-password-on="click"
-            :placeholder="$t('business.at-least-16-characters')"
-          />
+        <NFormItem :label="$t('business.account-delivery')" path="password">
+          <div class="w-full">
+            <NRadioGroup v-model:value="formModel.create_mode" class="w-full">
+              <NRadio value="random">{{ $t('business.generate-random-password') }}</NRadio>
+              <NRadio value="manual">{{ $t('business.manual-password') }}</NRadio>
+              <NRadio value="invite" :disabled="!emailEnabled">
+                {{ $t('business.email-invitation') }}
+              </NRadio>
+            </NRadioGroup>
+            <NInput
+              v-if="formModel.create_mode === 'manual'"
+              v-model:value="formModel.password"
+              type="password"
+              show-password-on="click"
+              class="mt-8px"
+              :placeholder="$t('business.at-least-16-characters')"
+            />
+            <NAlert v-if="formModel.create_mode === 'invite'" type="info" :show-icon="true" class="mt-8px">
+              {{ $t('business.invitation-description') }}
+            </NAlert>
+          </div>
         </NFormItem>
         <NFormItem :label="$t('business.role')" path="role">
           <NSelect v-model:value="formModel.role" :options="roleOptions" />
@@ -385,12 +490,35 @@ onMounted(async () => {
       </NForm>
       <template #footer>
         <NSpace justify="end">
-          <NButton @click="showCreate = false">{{ $t('business.cancel') }}</NButton>
+          <NButton :disabled="submitting" @click="showCreate = false">{{ $t('business.cancel') }}</NButton>
           <NButton type="primary" :loading="submitting" @click="handleCreate">{{ $t('business.create') }}</NButton>
         </NSpace>
       </template>
     </NModal>
 
+    <NModal
+      :show="createdPassword !== ''"
+      preset="card"
+      :title="$t('business.user-created')"
+      class="w-560px"
+      :mask-closable="false"
+    >
+      <NAlert type="warning" :bordered="false" class="mb-12px">
+        {{ $t('business.initial-password-shown-only-once') }}
+      </NAlert>
+      <NDescriptions :column="1" bordered size="small" label-placement="left">
+        <NDescriptionsItem :label="$t('business.email')">{{ createdEmail }}</NDescriptionsItem>
+        <NDescriptionsItem :label="$t('business.initial-password')">
+          <NInput :value="createdPassword" readonly type="textarea" :autosize="{ minRows: 2 }" />
+        </NDescriptionsItem>
+      </NDescriptions>
+      <template #footer>
+        <NSpace justify="end">
+          <NButton @click="handleCopyCreatedPassword">{{ $t('business.copy-password') }}</NButton>
+          <NButton type="primary" @click="handleCloseCreatedPassword">{{ $t('business.i-have-sent-it') }}</NButton>
+        </NSpace>
+      </template>
+    </NModal>
     <NModal v-model:show="showEdit" preset="card" :title="$t('business.reset-password')" class="w-520px">
       <NForm ref="editFormRef" :model="editModel" :rules="editRules" label-placement="left" label-width="100">
         <NFormItem :label="$t('business.email')">
@@ -408,7 +536,7 @@ onMounted(async () => {
       </NForm>
       <template #footer>
         <NSpace justify="end">
-          <NButton @click="showEdit = false">{{ $t('business.cancel') }}</NButton>
+          <NButton :disabled="submitting" @click="showEdit = false">{{ $t('business.cancel') }}</NButton>
           <NButton type="primary" :loading="submitting" @click="handleUpdate">
             {{ $t('business.reset-password') }}
           </NButton>

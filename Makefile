@@ -18,7 +18,8 @@ admin-build:
 	corepack pnpm --dir web/admin build
 admin-sync:
 	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sync-admin.ps1
-build-admin: admin-build admin-sync
+build-admin: admin-build
+	$(MAKE) admin-sync
 run:
 	go run ./cmd/omniflux
 docker-build:

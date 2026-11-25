@@ -30,6 +30,11 @@ type createApplicationRequest struct {
 	ProjectID string `json:"project_id"`
 }
 
+var (
+	errProjectHasApplications = errors.New("project has applications")
+	errApplicationHasAPIKeys  = errors.New("application has API keys")
+)
+
 // Departments 返回当前组织的部门列表,供项目创建与展示使用。
 func (d ServerDeps) Departments(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
@@ -168,14 +173,40 @@ func (d ServerDeps) DeleteProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
-		// 资源删除后已查不到名称,审计里记下它,审计列表才能显示“删的是什么”。
 		var name string
-		if err := tx.QueryRow(r.Context(), `DELETE FROM projects WHERE id = $1 RETURNING name`, projectID).Scan(&name); err != nil {
+		if err := tx.QueryRow(r.Context(), `SELECT name FROM projects WHERE id = $1 AND organization_id = $2 FOR UPDATE`, projectID, principal.OrganizationID).Scan(&name); err != nil {
+			return err
+		}
+		if err := tx.QueryRow(r.Context(), `SELECT count(*) FROM applications WHERE project_id = $1`, projectID).Scan(&appCount); err != nil {
+			return err
+		}
+		if appCount > 0 {
+			return errProjectHasApplications
+		}
+		if err := tx.QueryRow(r.Context(), `SELECT count(*) FROM api_keys WHERE project_id = $1 AND deleted_at IS NULL`, projectID).Scan(&keyCount); err != nil {
+			return err
+		}
+		if keyCount > 0 {
+			return errApplicationHasAPIKeys
+		}
+		if _, err := tx.Exec(r.Context(), `DELETE FROM projects WHERE id = $1`, projectID); err != nil {
 			return err
 		}
 		return writeAuditEvent(r.Context(), tx, principal.OrganizationID, principal.UserID,
 			"project.deleted", "project", projectID.String(), map[string]any{"name": name}, nil)
 	})
+	if errors.Is(err, errProjectHasApplications) {
+		adminError(w, http.StatusConflict, "PROJECT_HAS_APPLICATIONS", "project-has-applications", nil)
+		return
+	}
+	if errors.Is(err, errApplicationHasAPIKeys) {
+		adminError(w, http.StatusConflict, "PROJECT_HAS_API_KEYS", "project-has-api-keys", nil)
+		return
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		adminError(w, http.StatusNotFound, "PROJECT_NOT_FOUND", "project-does-not-exist-or-does", nil)
+		return
+	}
 	if err != nil {
 		adminError(w, http.StatusInternalServerError, "PROJECT_DELETE_FAILED", "failed-to-delete-the-project", nil)
 		return
@@ -284,14 +315,33 @@ func (d ServerDeps) DeleteApplication(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
-		// 资源删除后已查不到名称,审计里记下它,审计列表才能显示“删的是什么”。
 		var name string
-		if err := tx.QueryRow(r.Context(), `DELETE FROM applications WHERE id = $1 RETURNING name`, applicationID).Scan(&name); err != nil {
+		if err := tx.QueryRow(r.Context(), `
+			SELECT a.name FROM applications a JOIN projects p ON p.id = a.project_id
+			WHERE a.id = $1 AND p.organization_id = $2 FOR UPDATE OF a
+		`, applicationID, principal.OrganizationID).Scan(&name); err != nil {
+			return err
+		}
+		if err := tx.QueryRow(r.Context(), `SELECT count(*) FROM api_keys WHERE application_id = $1 AND deleted_at IS NULL`, applicationID).Scan(&keyCount); err != nil {
+			return err
+		}
+		if keyCount > 0 {
+			return errApplicationHasAPIKeys
+		}
+		if _, err := tx.Exec(r.Context(), `DELETE FROM applications WHERE id = $1`, applicationID); err != nil {
 			return err
 		}
 		return writeAuditEvent(r.Context(), tx, principal.OrganizationID, principal.UserID,
 			"application.deleted", "application", applicationID.String(), map[string]any{"name": name}, nil)
 	})
+	if errors.Is(err, errApplicationHasAPIKeys) {
+		adminError(w, http.StatusConflict, "APPLICATION_HAS_API_KEYS", "application-has-api-keys", nil)
+		return
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		adminError(w, http.StatusNotFound, "APPLICATION_NOT_FOUND", "application-does-not-exist-or-does", nil)
+		return
+	}
 	if err != nil {
 		adminError(w, http.StatusInternalServerError, "APPLICATION_DELETE_FAILED", "failed-to-delete-the-application", nil)
 		return

@@ -15,6 +15,8 @@ const emit = defineEmits<{
 
 const loading = ref(false);
 const saving = ref(false);
+let editGeneration = 0;
+let promptGeneration = 0;
 const prompts = ref<Api.Management.Asset[]>([]);
 const models = ref<Api.Management.ModelService[]>([]);
 const promptDetail = ref<Api.Management.AssetDetail | null>(null);
@@ -54,22 +56,34 @@ const historyOptions = computed(() =>
 );
 
 watch(
-  () => props.show,
-  visible => {
+  [() => props.show, () => props.assetId],
+  ([visible]) => {
+    editGeneration++;
+    promptGeneration++;
+    saving.value = false;
     if (visible) void initialize();
+    else loading.value = false;
   }
 );
 
 async function initialize() {
+  const generation = ++editGeneration;
+  const assetId = props.assetId;
   loading.value = true;
   promptDetail.value = null;
+  latestVersion.value = 0;
+  Object.assign(form, {
+    name: '', description: '', prompt_template_id: null, prompt_version_id: null, model_service_id: null,
+    temperature: 0.7, top_p: 1, max_tokens: 2048, max_history_messages: 20
+  });
   try {
     const [promptRes, modelRes] = await Promise.all([fetchAssets('prompt_template'), fetchModelServices()]);
+    if (generation !== editGeneration) return;
     if (!promptRes.error && promptRes.data) prompts.value = promptRes.data;
     if (!modelRes.error && modelRes.data) models.value = modelRes.data;
-    if (props.assetId) {
-      const { data, error } = await fetchAssetDetail<Api.Management.AgentSpec>(props.assetId);
-      if (error || !data) return;
+    if (assetId) {
+      const { data, error } = await fetchAssetDetail<Api.Management.AgentSpec>(assetId);
+      if (generation !== editGeneration || error || !data) return;
       latestVersion.value = data.latest_version;
       Object.assign(form, {
         name: data.name,
@@ -98,11 +112,13 @@ async function initialize() {
       });
     }
   } finally {
-    loading.value = false;
+    if (generation === editGeneration) loading.value = false;
   }
 }
 
 async function loadPromptVersions(id: string | null, reset = true) {
+  const generation = ++promptGeneration;
+  const parentGeneration = editGeneration;
   form.prompt_template_id = id;
   promptDetail.value = null;
   if (reset) {
@@ -111,7 +127,7 @@ async function loadPromptVersions(id: string | null, reset = true) {
   }
   if (!id) return;
   const { data, error } = await fetchAssetDetail(id);
-  if (error || !data) return;
+  if (generation !== promptGeneration || parentGeneration !== editGeneration || form.prompt_template_id !== id || error || !data) return;
   promptDetail.value = data;
   if (reset) {
     form.prompt_version_id = data.versions.find(item => item.version === data.latest_version)?.id ?? null;
@@ -120,10 +136,13 @@ async function loadPromptVersions(id: string | null, reset = true) {
 }
 
 async function save() {
+  if (loading.value || saving.value || (props.assetId && !latestVersion.value)) return;
   if (!form.name.trim() || !form.prompt_template_id || !form.prompt_version_id || !form.model_service_id) {
     window.$message?.warning($t('business.enter-a-name-and-select'));
     return;
   }
+  const generation = editGeneration;
+  const assetId = props.assetId;
   saving.value = true;
   try {
     const spec: Api.Management.AgentSpec = {
@@ -141,21 +160,21 @@ async function save() {
       description: form.description.trim(),
       spec
     };
-    const { error } = props.assetId
-      ? await fetchUpdateAsset(props.assetId, {
+    const { error } = assetId
+      ? await fetchUpdateAsset(assetId, {
           ...params,
           expected_version: latestVersion.value
         })
       : await fetchCreateAsset(params);
-    if (!error) {
+    if (!error && generation === editGeneration) {
       window.$message?.success(
-        props.assetId ? $t('business.agent-configuration-saved-as-a') : $t('business.agent-created')
+        assetId ? $t('business.agent-configuration-saved-as-a') : $t('business.agent-created')
       );
       emit('update:show', false);
       emit('saved');
     }
   } finally {
-    saving.value = false;
+    if (generation === editGeneration) saving.value = false;
   }
 }
 </script>
@@ -227,8 +246,8 @@ async function save() {
     </NSpin>
     <template #footer>
       <NSpace justify="end">
-        <NButton @click="emit('update:show', false)">{{ $t('business.cancel') }}</NButton>
-        <NButton type="primary" :loading="saving" @click="save">
+        <NButton :disabled="saving" @click="emit('update:show', false)">{{ $t('business.cancel') }}</NButton>
+        <NButton type="primary" :loading="saving" :disabled="loading" @click="save">
           {{ props.assetId ? $t('business.save-as-new-version') : $t('business.createAgent') }}
         </NButton>
       </NSpace>

@@ -313,7 +313,7 @@ export function fetchUsers(organizationId?: string) {
 
 /** Create a user; requires org owner */
 export function fetchCreateUser(params: Api.Management.CreateUserParams) {
-  return request<{ id: string }>({
+  return request<Api.Management.CreateUserResult>({
     url: '/users',
     method: 'post',
     data: params
@@ -731,6 +731,71 @@ export function fetchUpsertModelServiceGrant(id: string, params: Api.Management.
 export function fetchRevokeModelServiceGrant(id: string, grantId: string) {
   return request({
     url: `/model-services/${id}/grants/${grantId}`,
+    method: 'delete'
+  });
+}
+
+/** Get platform system settings; requires platform admin */
+export function fetchSystemSettings() {
+  return request<Api.Management.SystemSettings>({ url: '/system/settings' });
+}
+
+/** Update platform system settings; requires platform admin */
+export function fetchUpdateSystemSettings(params: Api.Management.UpdateSystemSettingsParams) {
+  return request<Api.Management.SystemSettings>({
+    url: '/system/settings',
+    method: 'patch',
+    data: params
+  });
+}
+
+/** Get SMTP and email-link settings; the password is never returned */
+export function fetchEmailSettings() {
+  return request<Api.Management.EmailSettings>({ url: '/system/email/settings' });
+}
+
+/** Update SMTP and email-link settings */
+export function fetchUpdateEmailSettings(params: Api.Management.UpdateEmailSettingsParams) {
+  return request<Api.Management.EmailSettings>({
+    url: '/system/email/settings',
+    method: 'patch',
+    data: params
+  });
+}
+
+/** Send a test email using the saved settings */
+export function fetchTestEmailSettings(to: string) {
+  return request<{ status: string }>({
+    url: '/system/email/test',
+    method: 'post',
+    data: { to }
+  });
+}
+
+/** Get whether email invitation is available */
+export function fetchInviteOptions() {
+  return request<{ email_enabled: boolean }>({ url: '/users/invite-options' });
+}
+
+/** Invite a user by email; the recipient sets the password through an email link */
+export function fetchInviteUser(params: Api.Management.InviteUserParams) {
+  return request<{ status: string }>({
+    url: '/users/invite',
+    method: 'post',
+    data: params
+  });
+}
+
+export function fetchResendUserInvitation(id: string) {
+  return request<{ status: string }>({
+    url: `/users/${id}/invitation/resend`,
+    method: 'post'
+  });
+}
+
+export function fetchRevokeUserInvitation(id: string) {
+  return request<{ status: string }>({
+    url: `/users/${id}/invitation`,
     method: 'delete'
   });
 }

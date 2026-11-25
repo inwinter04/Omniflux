@@ -23,6 +23,7 @@ const emit = defineEmits<{
 const loading = ref(false);
 const saving = ref(false);
 const dirty = ref(false);
+let editGeneration = 0;
 const closeConfirm = ref(false);
 const showExample = ref(false);
 const showVersions = ref(false);
@@ -57,9 +58,12 @@ const templateVariables = computed<Api.Management.PromptVariable[]>(() =>
 );
 
 watch(
-  () => props.show,
-  visible => {
+  [() => props.show, () => props.assetId],
+  ([visible]) => {
+    editGeneration++;
+    saving.value = false;
     if (visible) void initialize();
+    else loading.value = false;
   }
 );
 
@@ -73,11 +77,14 @@ watch(
 
 async function initialize() {
   if (!props.assetId) return;
+  const generation = ++editGeneration;
+  const assetId = props.assetId;
   activeTab.value = 'content';
   detail.value = null;
   loading.value = true;
   try {
-    const [detailRes, modelRes] = await Promise.all([fetchAssetDetail(props.assetId), fetchModelServices()]);
+    const [detailRes, modelRes] = await Promise.all([fetchAssetDetail(assetId), fetchModelServices()]);
+    if (generation !== editGeneration || assetId !== props.assetId) return;
     if (!modelRes.error && modelRes.data) models.value = modelRes.data;
     if (detailRes.error || !detailRes.data) return;
     detail.value = detailRes.data;
@@ -97,7 +104,7 @@ async function initialize() {
     }));
     dirty.value = false;
   } finally {
-    loading.value = false;
+    if (generation === editGeneration) loading.value = false;
   }
 }
 
@@ -115,7 +122,10 @@ function validate() {
 }
 
 async function save(openTest: boolean) {
-  if (!props.assetId || !detail.value) return;
+  if (loading.value || saving.value || !props.assetId || !detail.value) return;
+  const generation = editGeneration;
+  const assetId = props.assetId;
+  const expectedVersion = detail.value.latest_version;
   const errorMessage = validate();
   if (errorMessage) {
     window.$message?.warning(errorMessage);
@@ -133,10 +143,10 @@ async function save(openTest: boolean) {
     }
   }
   try {
-    const { data, error } = await fetchUpdateAsset(props.assetId, {
+    const { data, error } = await fetchUpdateAsset(assetId, {
       name: form.name.trim(),
       description: form.description.trim(),
-      expected_version: detail.value.latest_version,
+      expected_version: expectedVersion,
       spec: {
         template: form.template,
         model_service_id: form.model_service_id || undefined,
@@ -144,14 +154,14 @@ async function save(openTest: boolean) {
         variables: templateVariables.value
       }
     });
-    if (error || !data) return;
+    if (error || !data || generation !== editGeneration) return;
     dirty.value = false;
     emit('saved');
     emit('update:show', false);
     window.$message?.success($t('business.savedAsVersion', { version: data.version }));
-    if (openTest) emit('test', props.assetId);
+    if (openTest) emit('test', assetId);
   } finally {
-    saving.value = false;
+    if (generation === editGeneration) saving.value = false;
   }
 }
 
@@ -166,6 +176,7 @@ function generateSchema() {
 }
 
 function requestClose() {
+  if (saving.value) return;
   if (dirty.value) closeConfirm.value = true;
   else emit('update:show', false);
 }
@@ -263,10 +274,10 @@ function discardAndClose() {
           <NSpace>
             <NButton @click="showVersions = true">{{ $t('business.version-management') }}</NButton>
             <NButton @click="requestClose">{{ $t('business.close') }}</NButton>
-            <NButton :loading="saving" :disabled="detail?.status === 'archived'" @click="save(true)">
+            <NButton :loading="saving" :disabled="loading || saving || !detail || detail.status === 'archived'" @click="save(true)">
               {{ $t('business.save-and-test') }}
             </NButton>
-            <NButton type="primary" :loading="saving" :disabled="detail?.status === 'archived'" @click="save(false)">
+            <NButton type="primary" :loading="saving" :disabled="loading || saving || !detail || detail.status === 'archived'" @click="save(false)">
               {{ $t('business.save-as-new-version') }}
             </NButton>
           </NSpace>

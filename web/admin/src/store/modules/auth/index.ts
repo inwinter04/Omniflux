@@ -3,7 +3,7 @@ import { useRoute } from 'vue-router';
 import { defineStore } from 'pinia';
 import { useLoading } from '@sa/hooks';
 import { localStg } from '@/utils/storage';
-import { fetchGetUserInfo, fetchLogin, fetchLogout } from '@/service/api';
+import { fetchGetUserInfo, fetchLogin, fetchLogout, fetchRegister } from '@/service/api';
 import { translateBackendError } from '@/service/request/backend-error';
 import { $t } from '@/locales';
 import { useRouterPush } from '@/hooks/common/router';
@@ -12,8 +12,9 @@ import { useRouteStore } from '../route';
 import { useTabStore } from '../tab';
 import { clearAuthStorage, getToken } from './shared';
 
-interface LoginResult {
+interface AuthResult {
   success: boolean;
+  status?: string;
   message?: string;
 }
 
@@ -26,13 +27,14 @@ interface LoginErrorPayload {
 
 export const useAuthStore = defineStore(SetupStoreId.Auth, () => {
   const route = useRoute();
-  const authStore = useAuthStore();
   const routeStore = useRouteStore();
   const tabStore = useTabStore();
   const { toLogin, redirectFromLogin } = useRouterPush(false);
-  const { loading: loginLoading, startLoading, endLoading } = useLoading();
+  const { loading: loginLoading, startLoading: startLoginLoading, endLoading: endLoginLoading } = useLoading();
+  const { loading: registerLoading, startLoading: startRegisterLoading, endLoading: endRegisterLoading } = useLoading();
 
   const token = ref('');
+  const sessionGeneration = ref(0);
 
   const userInfo: Api.Auth.UserInfo = reactive({
     userId: '',
@@ -49,16 +51,28 @@ export const useAuthStore = defineStore(SetupStoreId.Auth, () => {
 
   const isLogin = computed(() => Boolean(token.value));
 
-  async function resetStore() {
+  function getSessionGeneration() {
+    return sessionGeneration.value;
+  }
+
+  function isSessionCurrent(generation: number) {
+    return generation === sessionGeneration.value;
+  }
+
+  async function resetStore(): Promise<boolean> {
+    const generation = ++sessionGeneration.value;
+
     if (getToken()) {
       await fetchLogout();
+
     }
 
+    if (generation !== sessionGeneration.value) return false;
     recordUserId();
 
     clearAuthStorage();
+    token.value = '';
 
-    authStore.$reset();
 
     // 首次进入页面时路由还在解析,守卫发现未登录后会带上回跳地址自己跳到登录页
     if (!route.meta.constant && route.name) {
@@ -67,6 +81,7 @@ export const useAuthStore = defineStore(SetupStoreId.Auth, () => {
 
     tabStore.cacheTabs();
     routeStore.resetStore();
+    return true;
   }
 
   /** 记录最近一次登录的用户,下次登录时据此判断是否换了人 */
@@ -96,42 +111,56 @@ export const useAuthStore = defineStore(SetupStoreId.Auth, () => {
     return false;
   }
 
-  async function login(email: string, password: string, redirect = true): Promise<LoginResult> {
-    startLoading();
+  async function establishSession(
+    loginToken: Api.Auth.LoginToken,
+    redirect: boolean,
+    generation: number
+  ): Promise<boolean> {
+    if (generation !== sessionGeneration.value) return false;
+    localStg.set('token', loginToken.token);
+    localStg.set('refreshToken', loginToken.refreshToken);
+
+    const info = await getUserInfo(generation);
+
+    if (!info || generation !== sessionGeneration.value) {
+      return false;
+    }
+
+    Object.assign(userInfo, info);
+    token.value = loginToken.token;
+    const isClear = checkTabClear();
+
+    recordUserId();
+    await redirectFromLogin(redirect && !isClear);
+
+    return generation === sessionGeneration.value;
+  }
+
+  async function login(email: string, password: string, redirect = true): Promise<AuthResult> {
+    const generation = ++sessionGeneration.value;
+    startLoginLoading();
 
     const { data: loginToken, error } = await fetchLogin(email, password);
 
+    let pass = false;
     if (!error) {
-      const pass = await loginByToken(loginToken);
-
-      if (pass) {
-        const isClear = checkTabClear();
-
-        recordUserId();
-
-        let needRedirect = redirect;
-
-        if (isClear) {
-          needRedirect = false;
-        }
-
-        await redirectFromLogin(needRedirect);
-
-        window.$notification?.success({
-          title: $t('page.login.common.loginSuccess'),
-          content: $t('page.login.common.welcomeBack', {
-            userName: userInfo.userName
-          }),
-          duration: 4500
-        });
-
-        endLoading();
-        return { success: true };
-      }
+      pass = await establishSession(loginToken, redirect, generation);
+    }
+    if (pass) {
+      window.$notification?.success({
+        title: $t('page.login.common.loginSuccess'),
+        content: $t('page.login.common.welcomeBack', {
+          userName: userInfo.userName
+        }),
+        duration: 4500
+      });
+      endLoginLoading();
+      return { success: true };
     }
 
-    const axiosError = error as { response?: { data?: LoginErrorPayload } };
-    const payload = axiosError.response?.data;
+
+    const axiosError = error as { response?: { data?: LoginErrorPayload } } | null;
+    const payload = axiosError?.response?.data;
     let message = payload?.reason
       ? translateBackendError(payload.reason, payload.params, payload.detail)
       : $t('business.login-failed-please-try-again');
@@ -150,51 +179,91 @@ export const useAuthStore = defineStore(SetupStoreId.Auth, () => {
       }
     }
 
-    clearAuthStorage();
-    token.value = '';
+    if (generation === sessionGeneration.value) {
+      clearAuthStorage();
+      token.value = '';
+    }
 
-    endLoading();
+    endLoginLoading();
     return { success: false, message };
   }
 
-  async function loginByToken(loginToken: Api.Auth.LoginToken) {
-    localStg.set('token', loginToken.token);
-    localStg.set('refreshToken', loginToken.refreshToken);
+  async function register(email: string, password: string): Promise<AuthResult> {
+    const generation = ++sessionGeneration.value;
+    startRegisterLoading();
 
-    const pass = await getUserInfo();
-
+    const { data: result, error } = await fetchRegister(email, password);
+    let pass = false;
+    if (!error && result && 'status' in result) {
+      endRegisterLoading();
+      return { success: true, status: result.status };
+    }
+    if (!error && result) {
+      pass = await establishSession(result as Api.Auth.LoginToken, true, generation);
+    }
     if (pass) {
-      token.value = loginToken.token;
-
-      return true;
+      window.$notification?.success({
+        title: $t('business.registration-succeeded'),
+        content: $t('business.welcome-to-omniflux', {
+          userName: userInfo.userName
+        }),
+        duration: 4500
+      });
+      endRegisterLoading();
+      return { success: true };
     }
 
-    return false;
+
+    const axiosError = error as { response?: { data?: LoginErrorPayload } } | null;
+    const payload = axiosError?.response?.data;
+    const message = payload?.reason
+      ? translateBackendError(payload.reason, payload.params, payload.detail)
+      : $t('business.registration-failed-please-try-again');
+
+    if (generation === sessionGeneration.value) {
+      clearAuthStorage();
+      token.value = '';
+    }
+
+    endRegisterLoading();
+    return { success: false, message };
   }
 
-  async function getUserInfo() {
+  async function loginWithToken(loginToken: Api.Auth.LoginToken): Promise<boolean> {
+    const generation = ++sessionGeneration.value;
+    const pass = await establishSession(loginToken, true, generation);
+    if (pass) {
+      window.$notification?.success({
+        title: $t('page.login.common.loginSuccess'),
+        content: $t('page.login.common.welcomeBack', {
+          userName: userInfo.userName
+        }),
+        duration: 4500
+      });
+    }
+    return pass;
+  }
+  async function getUserInfo(generation: number) {
     const { data: info, error } = await fetchGetUserInfo();
 
-    if (!error) {
-      Object.assign(userInfo, info);
+    if (error || generation !== sessionGeneration.value) return null;
+    return info;
+  }
 
+  async function initUserInfo(): Promise<boolean> {
+    const maybeToken = getToken();
+    if (!maybeToken) return false;
+
+    const generation = sessionGeneration.value;
+    token.value = maybeToken;
+    const info = await getUserInfo(generation);
+    if (info && generation === sessionGeneration.value) {
+      Object.assign(userInfo, info);
       return true;
     }
 
+    if (generation === sessionGeneration.value) await resetStore();
     return false;
-  }
-
-  async function initUserInfo() {
-    const maybeToken = getToken();
-
-    if (maybeToken) {
-      token.value = maybeToken;
-      const pass = await getUserInfo();
-
-      if (!pass) {
-        resetStore();
-      }
-    }
   }
 
   return {
@@ -203,8 +272,13 @@ export const useAuthStore = defineStore(SetupStoreId.Auth, () => {
     isStaticSuper,
     isLogin,
     loginLoading,
+    registerLoading,
     resetStore,
+    getSessionGeneration,
+    isSessionCurrent,
     login,
+    register,
+    loginWithToken,
     initUserInfo
   };
 });

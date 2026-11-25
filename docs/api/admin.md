@@ -16,6 +16,13 @@
 | 接口 | 说明 |
 | --- | --- |
 | `POST /api/v1/auth/login` | 管理员登录 |
+| `GET /api/v1/auth/registration-options` | 查询公开注册是否开放 |
+| `POST /api/v1/auth/register` | 按系统设置注册账号；需要邮箱验证时先发送验证邮件 |
+| `POST /api/v1/auth/resend-verification` | 重发公开注册邮箱验证邮件；响应不暴露邮箱是否存在 |
+| `POST /api/v1/auth/verify-email` | 消费一次性验证令牌，激活账号并建立会话 |
+| `POST /api/v1/auth/forgot-password` | 申请密码重置邮件；响应不暴露邮箱是否存在 |
+| `POST /api/v1/auth/reset-password` | 消费一次性重置令牌并设置新密码 |
+| `POST /api/v1/auth/accept-invitation` | 消费一次性邀请令牌，设置密码、激活账号并建立会话 |
 | `GET /api/v1/auth/me` | 获取当前管理员信息 |
 | `POST /api/v1/auth/logout` | 退出登录 |
 | `GET /api/v1/dashboard` | 首页统计概览 |
@@ -65,7 +72,27 @@
 | --- | --- |
 | `GET /api/v1/users` | 用户列表(需组织所有者;平台管理员可按 `organization_id` 过滤) |
 | `POST /api/v1/users` | 创建用户(平台管理员可指定归属组织) |
+| `GET /api/v1/users/invite-options` | 查询邮件邀请是否可用(需组织所有者) |
+| `POST /api/v1/users/invite` | 创建待激活用户并发送一次性邮件邀请 |
+| `POST /api/v1/users/{id}/invitation/resend` | 重发待激活用户邀请并作废旧链接 |
+| `DELETE /api/v1/users/{id}/invitation` | 撤销待激活用户邀请 |
 | `PATCH /api/v1/users/{id}` | 更新角色/状态/密码/归属组织 |
+
+`POST /api/v1/users` 可提交手工密码，或提交 `generate_password: true` 由服务端用 `crypto/rand` 生成 24 位初始密码。随机密码只在创建响应中通过 `generated_password` 返回一次，响应带 `Cache-Control: no-store`；明文不落库、不写审计、不进入 URL，管理台会提供一次性回显与复制。
+
+## 系统设置
+
+| 接口 | 说明 |
+| --- | --- |
+| `GET /api/v1/system/settings` | 查询公开注册配置(仅平台管理员) |
+| `PATCH /api/v1/system/settings` | 修改公开注册、归属组织、默认角色与邮箱验证配置(仅平台管理员) |
+| `GET /api/v1/system/email/settings` | 查询邮件服务配置；SMTP 密码只返回是否已保存(仅平台管理员) |
+| `PATCH /api/v1/system/email/settings` | 修改 SMTP、发件人与公开访问地址配置(仅平台管理员) |
+| `POST /api/v1/system/email/test` | 使用已保存配置发送测试邮件(仅平台管理员) |
+
+`PATCH /api/v1/system/settings` 按完整配置提交 `public_registration_enabled`、`registration_organization_id`、`registration_role` 与 `email_verification_required`;仅在关闭公开注册时允许组织为空。公开注册默认关闭。开启前必须选择已存在组织和 `developer` / `viewer` 默认角色;同一 IP 每分钟最多提交 5 次注册。关闭邮箱验证时注册成功后立即建立会话；开启邮箱验证时先创建待验证账号并发送邮件，验证后才建立会话。操作写入审计事件 `system.settings_updated`、`user.self_registered`、`email.verification_sent` 与 `auth.email_verified`。
+
+邮件令牌由服务端 `crypto/rand` 生成，HMAC-SHA256 哈希后入库，只保存哈希与有效期。验证、邀请和密码重置分别使用一次性令牌；重发会作废旧令牌，撤销邀请会立即失效当前链接。
 
 ## 预算
 

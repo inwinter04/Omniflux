@@ -22,14 +22,21 @@ function getErrorCodes(codes?: string) {
  *
  * 会话已失效(登录过期,或在别处退出了登录):清掉本地登录状态并回到登录页,重新登录后会回到当前页面。
  */
-function handleSessionExpired() {
+async function handleSessionExpired(requestGeneration?: number) {
+  const authStore = useAuthStore();
+  if (requestGeneration !== undefined && !authStore.isSessionCurrent(requestGeneration)) return;
+
   // 只处理“本地仍是登录态”的情况,同一次失效里的其它请求不再重复提示
   if (!getToken()) {
     return;
   }
 
-  // 会话已经失效,退出登录接口同样会被拒绝,所以这里不再调用它
+  // 先移除本地令牌，避免 resetStore 里的退出登录再次收到 401 并递归触发本函数。
   clearAuthStorage();
+  const stillCurrent = await useAuthStore().resetStore();
+  if (!stillCurrent) {
+    return;
+  }
 
   const notice = $t('backendError.authentication-required');
 
@@ -40,7 +47,6 @@ function handleSessionExpired() {
     request.state.pendingNotice = notice;
   }
 
-  useAuthStore().resetStore();
 }
 
 export const request = createFlatRequest(
@@ -60,6 +66,7 @@ export const request = createFlatRequest(
     async onRequest(config) {
       const Authorization = getAuthorization();
       Object.assign(config.headers, { Authorization });
+      Object.assign(config, { sessionGeneration: useAuthStore().getSessionGeneration() });
 
       return config;
     },
@@ -140,7 +147,8 @@ export const request = createFlatRequest(
 
       // the session is no longer valid: clear the local sign-in state and go back to the login page
       if (error.response?.status === 401) {
-        handleSessionExpired();
+        const requestGeneration = (error.config as { sessionGeneration?: number } | undefined)?.sessionGeneration;
+        void handleSessionExpired(requestGeneration);
         return;
       }
 

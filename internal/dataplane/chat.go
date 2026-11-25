@@ -284,6 +284,7 @@ func (d Deps) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	requestCtx, cancelRequest := context.WithCancel(r.Context())
 	defer cancelRequest()
 	bctx := schemas.NewBifrostContext(requestCtx, time.Now().Add(timeout))
+	bctx.SetValue(schemas.BifrostContextKeyAPIKeyID, primary.AccountID)
 	req := &schemas.BifrostChatRequest{
 		Provider:  provider,
 		Model:     primary.UpstreamModel,
@@ -388,7 +389,7 @@ func (d Deps) handleNonStreamObserved(bctx *schemas.BifrostContext, r *http.Requ
 	req *schemas.BifrostChatRequest, start time.Time, observer *completionObserver) {
 	resp, bifrostErr := d.Engine.Client().ChatCompletionRequest(bctx, req)
 	if bifrostErr != nil {
-		d.recordFailure(r.Context(), requestID, chain, bctx, bifrostErr, start, nil, usageSnapshot{})
+		d.recordFailure(r.Context(), keyFromContextOrEmpty(r), requestID, chain, bctx, bifrostErr, start, nil, usageSnapshot{})
 		if observer != nil {
 			observer.onComplete("failed", DebugResult{TotalMS: int(time.Since(start).Milliseconds())}, errors.New(errorMessageOf(bifrostErr)))
 		}
@@ -399,7 +400,7 @@ func (d Deps) handleNonStreamObserved(bctx *schemas.BifrostContext, r *http.Requ
 	usage := usageFromBifrost(resp.Usage)
 	servedProvider := string(resp.ExtraFields.RoutingInfo.Provider)
 	servedModel := resp.ExtraFields.RoutingInfo.Model
-	served, lookupErr := chain.findCandidate(servedProvider, servedModel)
+	served, lookupErr := chain.findCandidate(servedProvider, servedModel, resp.ExtraFields.RoutingInfo.Key)
 
 	candidateID := uuidPtr(served.ID, lookupErr == nil)
 	inputTokens, outputTokens, cachedTokens, reasoningTokens := usage.tokens()
@@ -447,7 +448,7 @@ func (d Deps) handleNonStreamObserved(bctx *schemas.BifrostContext, r *http.Requ
 
 // recordFailure 在上游失败时定稿用量并记录失败明细。finalize 使用不受请求取消影响的 ctx。
 // bctx 用于读取 Bifrost 路由引擎日志,把每次失败尝试写入 attempt_trail。
-func (d Deps) recordFailure(ctx context.Context, requestID uuid.UUID, chain routeChain,
+func (d Deps) recordFailure(ctx context.Context, keyCtx apiKeyContext, requestID uuid.UUID, chain routeChain,
 	bctx *schemas.BifrostContext, bifrostErr *schemas.BifrostError, start time.Time, firstTokenMS *int, partial usageSnapshot) {
 	total := int(time.Since(start).Milliseconds())
 	statusCode := http.StatusBadGateway
@@ -467,12 +468,18 @@ func (d Deps) recordFailure(ctx context.Context, requestID uuid.UUID, chain rout
 	// 失败归因:错误响应携带实际尝试的 provider/model 时,定位链中对应候选,
 	// 让失败用量与汇总报表能归到具体上游,而不是留空。
 	attemptedProvider := string(bifrostErr.ExtraFields.RoutingInfo.Provider)
-	attempted, lookupErr := chain.findCandidate(attemptedProvider, bifrostErr.ExtraFields.RoutingInfo.Model)
+	attempted, lookupErr := chain.findCandidate(attemptedProvider, bifrostErr.ExtraFields.RoutingInfo.Model, bifrostErr.ExtraFields.RoutingInfo.Key)
 	var attemptedModel *string
 	if bifrostErr.ExtraFields.RoutingInfo.Model != "" {
 		attemptedModel = stringPtr(bifrostErr.ExtraFields.RoutingInfo.Model)
 	}
 
+	cost := 0.0
+	currency := ""
+	if partial.hasTokens() && lookupErr == nil {
+		cost = attempted.costUSD(partial.InputTokens, partial.OutputTokens)
+		currency = currencyOf(attempted)
+	}
 	store := usageStore{pool: d.Pool}
 	if err := store.finalize(context.WithoutCancel(ctx), requestID, finalUsage{
 		State:           "failed",
@@ -484,6 +491,8 @@ func (d Deps) recordFailure(ctx context.Context, requestID uuid.UUID, chain rout
 		OutputTokens:    partial.OutputTokens,
 		CachedTokens:    partial.CachedTokens,
 		ReasoningTokens: partial.ReasoningTokens,
+		Cost:            cost,
+		Currency:        currency,
 		FirstTokenMS:    firstTokenMS,
 		TotalMS:         total,
 		UsageSource:     usageSource,
@@ -493,6 +502,7 @@ func (d Deps) recordFailure(ctx context.Context, requestID uuid.UUID, chain rout
 	}); err != nil {
 		d.Logger.Warn("finalize failed usage error", "request_id", requestID, "error", err)
 	}
+	d.settleBudget(context.WithoutCancel(ctx), keyCtx, requestID, cost, currency)
 }
 
 // writeBifrostError 把 Bifrost 错误转成 OpenAI 风格错误 JSON。

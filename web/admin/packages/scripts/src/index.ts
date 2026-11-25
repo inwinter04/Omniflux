@@ -58,8 +58,11 @@ export async function setupCli() {
   const commands: CommandWithAction<CommandArg> = {
     cleanup: {
       desc: 'delete dirs: node_modules, dist, etc.',
-      action: async () => {
-        await cleanup(cliOptions.cleanupDirs);
+      action: async args => {
+        const cleanupDirs = args?.cleanupDir
+          ? args.cleanupDir.split(',').map(dir => dir.trim()).filter(Boolean)
+          : cliOptions.cleanupDirs;
+        await cleanup(cleanupDirs);
       }
     },
     'update-pkg': {

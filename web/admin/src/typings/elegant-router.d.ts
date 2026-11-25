@@ -20,6 +20,7 @@ declare module "@elegant-router/types" {
     "403": "/403";
     "404": "/404";
     "500": "/500";
+    "accept-invitation": "/accept-invitation";
     "access": "/access";
     "access_api-keys": "/access/api-keys";
     "access_users": "/access/users";
@@ -27,6 +28,7 @@ declare module "@elegant-router/types" {
     "asset-registry_agents": "/asset-registry/agents";
     "asset-registry_evaluations": "/asset-registry/evaluations";
     "asset-registry_prompt-templates": "/asset-registry/prompt-templates";
+    "forgot-password": "/forgot-password";
     "home": "/home";
     "iframe-page": "/iframe-page/:url";
     "login": "/login";
@@ -43,6 +45,11 @@ declare module "@elegant-router/types" {
     "organization_departments": "/organization/departments";
     "organization_organizations": "/organization/organizations";
     "organization_projects": "/organization/projects";
+    "register": "/register";
+    "reset-password": "/reset-password";
+    "system": "/system";
+    "system_settings": "/system/settings";
+    "verify-email": "/verify-email";
   };
 
   /**
@@ -77,14 +84,20 @@ declare module "@elegant-router/types" {
     | "403"
     | "404"
     | "500"
+    | "accept-invitation"
     | "access"
     | "asset-registry"
+    | "forgot-password"
     | "home"
     | "iframe-page"
     | "login"
     | "model-management"
     | "observability"
     | "organization"
+    | "register"
+    | "reset-password"
+    | "system"
+    | "verify-email"
   >;
 
   /**
@@ -104,8 +117,13 @@ declare module "@elegant-router/types" {
     | "403"
     | "404"
     | "500"
+    | "accept-invitation"
+    | "forgot-password"
     | "iframe-page"
     | "login"
+    | "register"
+    | "reset-password"
+    | "verify-email"
     | "access_api-keys"
     | "access_users"
     | "asset-registry_agents"
@@ -122,6 +140,7 @@ declare module "@elegant-router/types" {
     | "organization_departments"
     | "organization_organizations"
     | "organization_projects"
+    | "system_settings"
   >;
 
   /**

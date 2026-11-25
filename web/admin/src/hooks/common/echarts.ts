@@ -163,11 +163,12 @@ export function useEcharts<T extends ECOption>(optionsFactory: () => T, hooks: C
 
   /** destroy chart */
   async function destroy() {
-    if (!chart.value) return;
+    const instance = chart.value;
+    if (!instance) return;
 
-    await onDestroy?.(chart.value);
-    chart.value?.dispose();
     chart.value = null;
+    await onDestroy?.(instance);
+    instance.dispose();
   }
 
   /** change chart theme */

@@ -78,6 +78,7 @@ func providerBaseURL(key schemas.ModelProvider, specs []ProviderSpec) string {
 func NewAccount(specs []ProviderSpec) (*Account, error) {
 	byProvider := make(map[schemas.ModelProvider][]ProviderSpec)
 	baseURLs := make(map[schemas.ModelProvider]string)
+	blankBaseURLs := make(map[schemas.ModelProvider]bool)
 	for _, spec := range specs {
 		provider, err := resolveProviderKey(spec.Provider)
 		if err != nil {
@@ -86,7 +87,9 @@ func NewAccount(specs []ProviderSpec) (*Account, error) {
 		if spec.APIKey == "" && provider != schemas.Bedrock {
 			return nil, fmt.Errorf("provider account %q has no credential", spec.Name)
 		}
-		if spec.BaseURL != "" {
+		if spec.BaseURL == "" {
+			blankBaseURLs[provider] = true
+		} else {
 			previous, exists := baseURLs[provider]
 			if exists && previous != spec.BaseURL {
 				return nil, fmt.Errorf("provider %s has conflicting base URLs %q and %q; separate custom providers are required", provider, previous, spec.BaseURL)
@@ -94,6 +97,9 @@ func NewAccount(specs []ProviderSpec) (*Account, error) {
 			baseURLs[provider] = spec.BaseURL
 		}
 		byProvider[provider] = append(byProvider[provider], spec)
+		if blankBaseURLs[provider] && baseURLs[provider] != "" {
+			return nil, fmt.Errorf("provider %s mixes default and custom base URLs; set the same effective endpoint for every account", provider)
+		}
 	}
 	return &Account{specs: byProvider}, nil
 }
@@ -118,7 +124,7 @@ func (a *Account) GetKeysForProvider(_ context.Context, provider schemas.ModelPr
 		if weight <= 0 {
 			weight = 1
 		}
-		key := schemas.Key{ID: spec.AccountID, Name: spec.Name, Value: schemas.SecretVar{Val: spec.APIKey}, Models: models, Weight: weight}
+		key := schemas.Key{ID: spec.AccountID, Name: spec.AccountID, Value: schemas.SecretVar{Val: spec.APIKey}, Models: models, Weight: weight}
 		keys = append(keys, key)
 	}
 	return keys, nil

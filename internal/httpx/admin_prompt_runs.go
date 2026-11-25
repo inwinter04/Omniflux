@@ -150,7 +150,7 @@ func (d ServerDeps) preparePromptRun(ctx context.Context, principal auth.Princip
 	}
 	result.rendered, err = asset.RenderPrompt(result.spec, variables)
 	if err != nil {
-		return result, assetError(http.StatusBadRequest, "PROMPT_RENDER_INVALID", "promptRenderInvalid")
+		return result, assetError(http.StatusBadRequest, "PROMPT_RENDER_INVALID", "prompt-render-invalid")
 	}
 	if len(modelIDs) == 0 {
 		if result.spec.ModelServiceID == "" {
@@ -289,14 +289,14 @@ func (d ServerDeps) streamPromptRun(w http.ResponseWriter, r *http.Request, prin
 	}
 	writeEvent("started", map[string]any{"run_id": runID.String(), "group_id": groupID.String(), "version": runContext.version})
 	plane := dataplane.Deps{Logger: d.Logger, Pool: d.Pool, Engine: d.Engine}
+	response := promptRunResponse{ID: runID.String(), GroupID: groupID.String(), Kind: "single", Version: runContext.version, VersionID: runContext.versionID.String(), ModelServiceID: serviceID.String(), Status: "running"}
 	events, err := plane.DebugCompletionStream(r.Context(), principal.OrganizationID, serviceID, runContext.rendered, runContext.spec.OutputSchema)
 	if err != nil {
-		response := promptRunResponse{Status: "failed", Error: err.Error()}
+		response.Status, response.Error = "failed", err.Error()
 		d.finalizePromptRun(r.Context(), runID, response)
 		writeEvent("error", response)
 		return
 	}
-	response := promptRunResponse{ID: runID.String(), GroupID: groupID.String(), Kind: "single", Version: runContext.version, VersionID: runContext.versionID.String(), ModelServiceID: serviceID.String(), Status: "running"}
 	var content strings.Builder
 	for event := range events {
 		if event.Err != nil {
@@ -337,7 +337,12 @@ func (d ServerDeps) streamPromptRun(w http.ResponseWriter, r *http.Request, prin
 	if response.Status == "running" {
 		response.Status, response.Response = "interrupted", content.String()
 	}
-	d.finalizePromptRun(r.Context(), runID, response)
+	if err := d.finalizePromptRun(r.Context(), runID, response); err != nil {
+		d.Logger.Error("finalize prompt run failed", "run_id", runID, "error", err)
+		response.Status, response.Error = "failed", "failed to persist prompt run"
+		writeEvent("error", response)
+		return
+	}
 	writeEvent("result", response)
 }
 

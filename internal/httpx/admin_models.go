@@ -135,7 +135,7 @@ func (d ServerDeps) ModelServices(w http.ResponseWriter, r *http.Request) {
 	}
 	healthRows, err := d.Pool.Query(r.Context(), `
 		SELECT c.model_service_id, count(u.id),
-		       avg(CASE WHEN u.state = 'success' THEN 1.0 ELSE 0.0 END),
+		       avg(CASE WHEN u.state = 'success' THEN 1.0 ELSE 0.0 END) FILTER (WHERE u.id IS NOT NULL),
 		       avg(u.total_ms) FILTER (WHERE u.state = 'success'), max(u.created_at)
 		FROM model_candidates c
 		LEFT JOIN usage_records u ON u.model_candidate_id = c.id
@@ -524,22 +524,7 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 	}
 	var oldName string
 	var oldPolicyID *uuid.UUID
-	err = d.Pool.QueryRow(r.Context(), `
-		SELECT name, route_policy_id FROM model_services WHERE id = $1 AND organization_id = $2
-	`, serviceID, principal.OrganizationID).Scan(&oldName, &oldPolicyID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		adminError(w, http.StatusNotFound, "SERVICE_NOT_FOUND", "model-service-does-not-exist-or", nil)
-		return
-	}
-	if err != nil {
-		adminError(w, http.StatusInternalServerError, "SERVICE_UPDATE_FAILED", "failed-to-update-the-model-service", nil)
-		return
-	}
-	beforeCandidates, err := loadCandidateAuditStates(r.Context(), d.Pool, serviceID)
-	if err != nil {
-		adminError(w, http.StatusInternalServerError, "SERVICE_UPDATE_FAILED", "failed-to-update-the-model-service", nil)
-		return
-	}
+	var beforeCandidates []candidateAuditState
 	afterCandidates := make([]candidateAuditState, 0, len(body.Candidates))
 	for _, c := range body.Candidates {
 		weight := c.Weight
@@ -558,6 +543,16 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(r.Context(), `
+			SELECT name, route_policy_id FROM model_services WHERE id = $1 AND organization_id = $2 FOR UPDATE
+		`, serviceID, principal.OrganizationID).Scan(&oldName, &oldPolicyID); err != nil {
+			return err
+		}
+		var err error
+		beforeCandidates, err = loadCandidateAuditStates(r.Context(), tx, serviceID)
+		if err != nil {
+			return err
+		}
 		if _, err := tx.Exec(r.Context(), `
 			UPDATE model_services SET name = $3, route_policy_id = $4, updated_at = now()
 			WHERE id = $1 AND organization_id = $2
@@ -607,7 +602,7 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 				return err
 			}
 		}
-		_, err := tx.Exec(r.Context(), `
+		_, err = tx.Exec(r.Context(), `
 			INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, before_state, after_state)
 			VALUES ($1,$2,'user','model_service.updated','model_service',$3,$4,$5)
 		`, principal.OrganizationID, principal.UserID, serviceID.String(),
@@ -615,6 +610,10 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 			auditJSON(map[string]any{"name": body.Name, "route_policy_id": body.RoutePolicyID, "candidates": afterCandidates}))
 		return err
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		adminError(w, http.StatusNotFound, "SERVICE_NOT_FOUND", "model-service-does-not-exist-or", nil)
+		return
+	}
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.ConstraintName == "model_services_organization_id_name_key" {

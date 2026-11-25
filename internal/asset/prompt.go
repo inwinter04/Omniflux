@@ -17,6 +17,7 @@ import (
 const (
 	maxTemplateBytes = 256 * 1024
 	maxRenderedBytes = 1024 * 1024
+	maxRenderWrites  = 100000
 	maxVariables     = 64
 )
 
@@ -41,6 +42,7 @@ func ParsePromptSpec(raw json.RawMessage) (PromptSpec, error) {
 	var spec PromptSpec
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
+	decoder.UseNumber()
 	if err := decoder.Decode(&spec); err != nil {
 		return spec, fmt.Errorf("Prompt configuration format is invalid: %w", err)
 	}
@@ -80,7 +82,7 @@ func RenderPrompt(spec PromptSpec, input map[string]any) (string, error) {
 	if err := schema.Validate(normalized); err != nil {
 		return "", fmt.Errorf("variable validation failed: %w", err)
 	}
-	tmpl, err := template.New("prompt").Option("missingkey=error").Parse(spec.Template)
+	tmpl, err := newPromptTemplate().Parse(spec.Template)
 	if err != nil {
 		return "", fmt.Errorf("template parsing failed: %w", err)
 	}
@@ -89,6 +91,53 @@ func RenderPrompt(spec PromptSpec, input map[string]any) (string, error) {
 		return "", fmt.Errorf("template rendering failed: %w", err)
 	}
 	return writer.String(), nil
+}
+
+func newPromptTemplate() *template.Template {
+	return template.New("prompt").Option("missingkey=error").Funcs(template.FuncMap{"printf": limitedPrintf})
+}
+
+func limitedPrintf(format string, args ...any) (string, error) {
+	if len(format) > 1024 {
+		return "", errors.New("printf format is too long")
+	}
+	directives := 0
+	for i := 0; i < len(format); i++ {
+		if format[i] != '%' {
+			continue
+		}
+		if i+1 < len(format) && format[i+1] == '%' {
+			i++
+			continue
+		}
+		directives++
+		if directives > 8 {
+			return "", errors.New("printf has too many directives")
+		}
+		width := 0
+		for i++; i < len(format); i++ {
+			char := format[i]
+			if char == '*' {
+				return "", errors.New("printf dynamic width is not supported")
+			}
+			if char >= '0' && char <= '9' {
+				width = width*10 + int(char-'0')
+				if width > maxRenderedBytes {
+					return "", errors.New("printf width is too large")
+				}
+				continue
+			}
+			if strings.ContainsRune("+#- .[]", rune(char)) {
+				continue
+			}
+			break
+		}
+	}
+	result := fmt.Sprintf(format, args...)
+	if len(result) > maxRenderedBytes {
+		return "", fmt.Errorf("printf result cannot exceed %d bytes", maxRenderedBytes)
+	}
+	return result, nil
 }
 
 func validatePromptSpec(spec PromptSpec) error {
@@ -135,7 +184,7 @@ func validatePromptSpec(spec PromptSpec) error {
 	if err := validateOutputSchema(spec.OutputSchema); err != nil {
 		return err
 	}
-	tmpl, err := template.New("prompt").Option("missingkey=error").Parse(spec.Template)
+	tmpl, err := newPromptTemplate().Parse(spec.Template)
 	if err != nil {
 		return fmt.Errorf("template syntax is invalid: %w", err)
 	}
@@ -154,7 +203,8 @@ func validatePromptSpec(spec PromptSpec) error {
 			samples[variable.Name] = true
 		}
 	}
-	if err := tmpl.Execute(io.Discard, samples); err != nil {
+	writer := &limitedWriter{remaining: maxRenderedBytes}
+	if err := tmpl.Execute(writer, samples); err != nil {
 		return fmt.Errorf("template references an undefined variable or contains an invalid operation: %w", err)
 	}
 	return nil
@@ -227,10 +277,15 @@ func ensureJSONEOF(decoder *json.Decoder) error {
 
 type limitedWriter struct {
 	strings.Builder
+	writes    int
 	remaining int
 }
 
 func (w *limitedWriter) Write(p []byte) (int, error) {
+	w.writes++
+	if w.writes > maxRenderWrites {
+		return 0, fmt.Errorf("template executed too many writes")
+	}
 	if len(p) > w.remaining {
 		return 0, fmt.Errorf("rendered result cannot exceed %d bytes", maxRenderedBytes)
 	}

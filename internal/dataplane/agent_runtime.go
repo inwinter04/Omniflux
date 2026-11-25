@@ -249,6 +249,13 @@ func queryExistingAgentSession(ctx context.Context, tx pgx.Tx, input AgentRunSta
 	if err := json.Unmarshal(rawVariables, variables); err != nil {
 		return fmt.Errorf("failed to read session variables: %w", err)
 	}
+	var running bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM agent_runs WHERE session_id = $1 AND status = 'running')`, input.SessionID).Scan(&running); err != nil {
+		return err
+	}
+	if running {
+		return agentInputError("agent_session_busy", "Agent session already has a running request.")
+	}
 	return nil
 }
 

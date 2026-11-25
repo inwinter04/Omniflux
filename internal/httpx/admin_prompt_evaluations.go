@@ -77,7 +77,7 @@ func (d ServerDeps) PromptEvaluationSets(w http.ResponseWriter, r *http.Request)
 	}
 	defer rows.Close()
 	results := []evaluationSetResponse{}
-	sets := map[uuid.UUID]*evaluationSetResponse{}
+	sets := map[uuid.UUID]int{}
 	ids := []uuid.UUID{}
 	for rows.Next() {
 		var item evaluationSetResponse
@@ -88,7 +88,7 @@ func (d ServerDeps) PromptEvaluationSets(w http.ResponseWriter, r *http.Request)
 		}
 		item.ID, item.Cases = id.String(), []evaluationCaseOutput{}
 		results = append(results, item)
-		sets[id] = &results[len(results)-1]
+		sets[id] = len(results) - 1
 		ids = append(ids, id)
 	}
 	if len(ids) == 0 {
@@ -115,8 +115,8 @@ func (d ServerDeps) PromptEvaluationSets(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		item.ID = id.String()
-		if set := sets[setID]; set != nil {
-			set.Cases = append(set.Cases, item)
+		if index, exists := sets[setID]; exists {
+			results[index].Cases = append(results[index].Cases, item)
 		}
 	}
 	adminOK(w, results)

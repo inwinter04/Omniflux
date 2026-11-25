@@ -29,7 +29,6 @@ CHECK (provider IN (
 ALTER TABLE provider_accounts DROP CONSTRAINT provider_accounts_provider_check;
 ALTER TABLE provider_accounts ADD CONSTRAINT provider_accounts_provider_check
 CHECK (provider IN (
-CHECK (provider IN (
 	'openai', 'azure_openai', 'anthropic', 'gemini', 'vertex', 'bedrock',
 	'openai_compatible', 'kimi', 'kimi-global', 'kimi-for-coding', 'kimi-for-coding-global', 'packycode',
 	'patewayai', 'modelflare', 'haoai', 'fennoai', 'runapi', 'openmodel',

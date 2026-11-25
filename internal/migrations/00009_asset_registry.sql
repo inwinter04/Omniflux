@@ -29,9 +29,12 @@ CREATE TABLE asset_versions (
     UNIQUE (asset_id, version)
 );
 
+ALTER TABLE asset_versions
+    ADD CONSTRAINT asset_versions_asset_id_id_key UNIQUE (asset_id, id);
+
 ALTER TABLE assets
-    ADD CONSTRAINT assets_current_version_fk FOREIGN KEY (current_version_id)
-    REFERENCES asset_versions(id) ON DELETE RESTRICT;
+    ADD CONSTRAINT assets_current_version_fk FOREIGN KEY (id, current_version_id)
+    REFERENCES asset_versions(asset_id, id) ON DELETE RESTRICT;
 
 CREATE TABLE asset_grants (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -93,7 +93,7 @@ func (d ServerDeps) ProviderAccounts(w http.ResponseWriter, r *http.Request) {
 	healthRows, err := d.Pool.Query(r.Context(), `
 		SELECT a.id,
 		       count(u.id),
-		       avg(CASE WHEN u.state = 'success' THEN 1.0 ELSE 0.0 END),
+		       avg(CASE WHEN u.state = 'success' THEN 1.0 ELSE 0.0 END) FILTER (WHERE u.id IS NOT NULL),
 		       avg(u.total_ms) FILTER (WHERE u.state = 'success'),
 		       max(u.created_at),
 		       count(DISTINCT mc.id) FILTER (WHERE mc.status = 'active' AND mc.retired_at IS NULL)
@@ -205,7 +205,7 @@ func (d ServerDeps) CreateProviderAccount(w http.ResponseWriter, r *http.Request
 	}
 	billingCurrency, err := normalizeCurrency(body.BillingCurrency)
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "PROVIDER_CURRENCY_INVALID", "providerCurrencyInvalid", nil)
+		adminError(w, http.StatusBadRequest, "PROVIDER_CURRENCY_INVALID", "provider-currency-invalid", nil)
 		return
 	}
 	ciphertext, err := vault.Encrypt(d.MasterKey, []byte(body.APIKey))
@@ -258,6 +258,15 @@ func (d ServerDeps) DeleteProviderAccount(w http.ResponseWriter, r *http.Request
 	accountID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		adminError(w, http.StatusBadRequest, "PROVIDER_INVALID_ID", "invalid-account-id", nil)
+		return
+	}
+	var exists bool
+	if err := d.Pool.QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM provider_accounts WHERE id = $1 AND organization_id = $2)`, accountID, principal.OrganizationID).Scan(&exists); err != nil {
+		adminError(w, http.StatusInternalServerError, "PROVIDER_DELETE_FAILED", "failed-to-delete-the-provider-account", nil)
+		return
+	}
+	if !exists {
+		adminError(w, http.StatusNotFound, "PROVIDER_NOT_FOUND", "provider-account-does-not-exist", nil)
 		return
 	}
 	var count int
@@ -394,7 +403,7 @@ func (d ServerDeps) UpdateProviderAccount(w http.ResponseWriter, r *http.Request
 	}
 	billingCurrency, err := normalizeCurrency(body.BillingCurrency)
 	if err != nil {
-		adminError(w, http.StatusBadRequest, "PROVIDER_CURRENCY_INVALID", "providerCurrencyInvalid", nil)
+		adminError(w, http.StatusBadRequest, "PROVIDER_CURRENCY_INVALID", "provider-currency-invalid", nil)
 		return
 	}
 	newAPIKey := strings.TrimSpace(body.APIKey)
@@ -409,7 +418,7 @@ func (d ServerDeps) UpdateProviderAccount(w http.ResponseWriter, r *http.Request
 	}
 	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(r.Context(), `
-			UPDATE provider_accounts SET name = $3, region = $4, base_url = $5, billing_currency = $6, updated_at = now()
+			UPDATE provider_accounts SET name = $3, region = $4, base_url = COALESCE($5, base_url), billing_currency = $6, updated_at = now()
 			WHERE id = $1 AND organization_id = $2
 		`, accountID, principal.OrganizationID, body.Name, body.Region, body.BaseURL, billingCurrency); err != nil {
 			return err
@@ -457,8 +466,13 @@ func (d ServerDeps) UpdateProviderAccount(w http.ResponseWriter, r *http.Request
 type providerTestResult struct {
 	OK         bool   `json:"ok"`
 	Reason     string `json:"reason"`
-	Detail     string `json:"detail,omitempty"`
 	StatusCode int    `json:"status_code,omitempty"`
+}
+
+var providerHTTPClient = &http.Client{
+	CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
 }
 
 type providerAccess struct {
@@ -525,9 +539,9 @@ func (d ServerDeps) TestProviderAccount(w http.ResponseWriter, r *http.Request) 
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := providerHTTPClient.Do(req)
 	if err != nil {
-		adminOK(w, providerTestResult{OK: false, Reason: "network_error", Detail: err.Error()})
+		adminOK(w, providerTestResult{OK: false, Reason: "network_error"})
 		return
 	}
 	defer resp.Body.Close()
@@ -581,7 +595,7 @@ func providerProbeRequest(provider string, baseURL *string, apiKey string) (stri
 			"anthropic-version": "2023-06-01",
 		}, nil
 	case "gemini":
-		return "https://generativelanguage.googleapis.com/v1beta/models?key=" + apiKey, nil, nil
+		return "https://generativelanguage.googleapis.com/v1beta/models", map[string]string{"x-goog-api-key": apiKey}, nil
 	default:
 		if vendor := bifrostx.VendorByID(provider); vendor != nil {
 			base := vendor.BaseURL

@@ -72,7 +72,7 @@ func (d ServerDeps) ProviderAccountBalance(w http.ResponseWriter, r *http.Reques
 	defer cancel()
 	balances, qerr := queryVendorBalance(ctx, vendor.ID, vendor.BaseURL, string(apiKey))
 	if qerr != nil {
-		adminError(w, http.StatusBadGateway, "PROVIDER_BALANCE_QUERY_FAILED", "providerBalanceQueryFailed", nil)
+		adminError(w, http.StatusBadGateway, "PROVIDER_BALANCE_QUERY_FAILED", "provider-balance-query-failed", nil)
 		return
 	}
 	adminOK(w, map[string]any{"balances": balances})

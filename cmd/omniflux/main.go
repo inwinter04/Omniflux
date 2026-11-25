@@ -23,6 +23,7 @@ import (
 	"github.com/inwinter04/omniflux/internal/httpx"
 	"github.com/inwinter04/omniflux/internal/infra"
 	"github.com/inwinter04/omniflux/internal/logging"
+	"github.com/inwinter04/omniflux/internal/mail"
 	"github.com/inwinter04/omniflux/internal/vault"
 )
 
@@ -109,13 +110,16 @@ func run() error {
 		return engine.Reload(ctx, next)
 	}
 	authStore := auth.NewStore(pool)
+	mailer := mail.NewService(pool, cfg.MasterKey)
 	handler := httpx.New(httpx.ServerDeps{
 		Logger: logger, Pool: pool, Redis: redisClient, Engine: engine,
-		Auth: authStore, Env: cfg.Env,
+		Auth: authStore, Mailer: mailer, Env: cfg.Env,
 		MasterKey: cfg.MasterKey, APIKeyPepper: cfg.APIKeyPepper,
 		ReloadEngine:    reloadEngine,
 		RateLimitPerMin: cfg.RateLimitPerMin,
 	})
+	serverCtx, stopRequests := context.WithCancel(context.Background())
+	defer stopRequests()
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           handler,
@@ -124,7 +128,7 @@ func run() error {
 		WriteTimeout:      300 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    64 * 1024,
-		BaseContext:       func(net.Listener) context.Context { return ctx },
+		BaseContext:       func(net.Listener) context.Context { return serverCtx },
 	}
 	serverErrors := make(chan error, 1)
 	go func() {
@@ -141,7 +145,12 @@ func run() error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	logger.Info("omniflux shutting down")
-	return server.Shutdown(shutdownCtx)
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		stopRequests()
+		_ = server.Close()
+		return err
+	}
+	return nil
 }
 
 // loadProviderSpecs 从数据库读取 active Provider 账号并解密凭据,构建上游引擎配置。

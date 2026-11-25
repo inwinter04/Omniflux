@@ -1,11 +1,13 @@
 package auth
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"math/big"
 	"strings"
 
 	"golang.org/x/crypto/argon2"
@@ -36,6 +38,9 @@ func VerifyPassword(encoded, password string) (bool, error) {
 	if _, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &memory, &time, &threads); err != nil {
 		return false, err
 	}
+	if time < 1 || threads < 1 {
+		return false, errors.New("invalid password hash parameters")
+	}
 	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
 	if err != nil {
 		return false, err
@@ -46,4 +51,50 @@ func VerifyPassword(encoded, password string) (bool, error) {
 	}
 	got := argon2.IDKey([]byte(password), salt, time, memory, threads, uint32(len(want)))
 	return subtle.ConstantTimeCompare(got, want) == 1, nil
+}
+
+const generatedPasswordLength = 24
+
+var generatedPasswordClasses = [3][]byte{
+	[]byte("abcdefghjkmnpqrstuvwxyz"),
+	[]byte("ABCDEFGHJKLMNPQRSTUVWXYZ"),
+	[]byte("23456789"),
+}
+
+// GeneratePassword 生成适合管理员转交用户的一次性初始密码;只使用不易抄错的字符。
+func GeneratePassword() (string, error) {
+	characters := make([]byte, 0, generatedPasswordLength)
+	for _, class := range generatedPasswordClasses {
+		index, err := randomIndex(len(class))
+		if err != nil {
+			return "", err
+		}
+		characters = append(characters, class[index])
+	}
+
+	alphabet := bytes.Join(generatedPasswordClasses[:], nil)
+	for len(characters) < generatedPasswordLength {
+		index, err := randomIndex(len(alphabet))
+		if err != nil {
+			return "", err
+		}
+		characters = append(characters, alphabet[index])
+	}
+
+	for index := len(characters) - 1; index > 0; index-- {
+		swap, err := randomIndex(index + 1)
+		if err != nil {
+			return "", err
+		}
+		characters[index], characters[swap] = characters[swap], characters[index]
+	}
+	return string(characters), nil
+}
+
+func randomIndex(limit int) (int, error) {
+	value, err := rand.Int(rand.Reader, big.NewInt(int64(limit)))
+	if err != nil {
+		return 0, err
+	}
+	return int(value.Int64()), nil
 }

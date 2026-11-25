@@ -105,39 +105,51 @@ const columns = computed<DataTableColumns<Api.Management.ModelServiceGrant>>(() 
   canManage.value ? [...baseColumns.value, ...manageColumns.value] : baseColumns.value
 );
 
+let sessionGeneration = 0;
+let grantRequestGeneration = 0;
 watch(
-  () => props.show,
-  visible => {
+  [() => props.show, () => props.service?.id],
+  ([visible]) => {
+    sessionGeneration++;
+    grantRequestGeneration++;
+    saving.value = false;
     if (visible) void initialize();
+    else loading.value = false;
   }
 );
 
 async function initialize() {
   if (!props.service) return;
+  const generation = sessionGeneration;
+  const serviceId = props.service.id;
   form.subject_type = 'project';
   form.subject_id = null;
   form.actions = ['read', 'invoke'];
   loading.value = true;
   try {
     const [grantRes, orgRes, departmentRes, projectRes] = await Promise.all([
-      fetchModelServiceGrants(props.service.id),
+      fetchModelServiceGrants(serviceId),
       fetchOrganizations(),
       fetchDepartments(),
       fetchProjects()
     ]);
+    if (generation !== sessionGeneration || serviceId !== props.service?.id) return;
     if (!grantRes.error && grantRes.data) grants.value = grantRes.data;
     if (!orgRes.error && orgRes.data) organizations.value = orgRes.data;
     if (!departmentRes.error && departmentRes.data) departments.value = departmentRes.data;
     if (!projectRes.error && projectRes.data) projects.value = projectRes.data;
   } finally {
-    loading.value = false;
+    if (generation === sessionGeneration) loading.value = false;
   }
 }
 
 async function reloadGrants() {
   if (!props.service) return;
-  const { data, error } = await fetchModelServiceGrants(props.service.id);
-  if (!error && data) grants.value = data;
+  const generation = sessionGeneration;
+  const requestGeneration = ++grantRequestGeneration;
+  const serviceId = props.service.id;
+  const { data, error } = await fetchModelServiceGrants(serviceId);
+  if (generation === sessionGeneration && requestGeneration === grantRequestGeneration && serviceId === props.service?.id && !error && data) grants.value = data;
 }
 
 async function save() {
@@ -149,20 +161,22 @@ async function save() {
     window.$message?.warning($t('business.select-at-least-one-allowed'));
     return;
   }
+  const generation = sessionGeneration;
+  const serviceId = props.service.id;
   saving.value = true;
   try {
-    const { error } = await fetchUpsertModelServiceGrant(props.service.id, {
+    const { error } = await fetchUpsertModelServiceGrant(serviceId, {
       subject_type: form.subject_type,
       subject_id: form.subject_id,
       actions: [...form.actions]
     });
-    if (!error) {
+    if (!error && generation === sessionGeneration && serviceId === props.service?.id) {
       window.$message?.success($t('business.model-access-permissions-saved'));
       form.subject_id = null;
       await reloadGrants();
     }
   } finally {
-    saving.value = false;
+    if (generation === sessionGeneration) saving.value = false;
   }
 }
 
