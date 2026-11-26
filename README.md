@@ -19,8 +19,6 @@ Omniflux 是一个面向企业的 AI 服务控制平面,用于把分散在多个
 
 ## 界面截图
 
-以下截图来自本地演示环境,数据为模拟生成;点击图片可查看原图。
-
 | 控制台首页 | 模型服务 |
 | --- | --- |
 | [![Omniflux 控制台首页](docs/assets/screenshots/home.zh-CN.png)](docs/assets/screenshots/home.zh-CN.png) | [![模型服务与候选路由](docs/assets/screenshots/model-services.zh-CN.png)](docs/assets/screenshots/model-services.zh-CN.png) |

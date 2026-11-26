@@ -19,8 +19,6 @@ Starting from v0.1.0, Omniflux is in a stabilization phase; breaking changes to 
 
 ## Screenshots
 
-The screenshots below come from a local demo environment with simulated data; click an image to view it at full size.
-
 | Console home | Model services |
 | --- | --- |
 | [![Omniflux console home](docs/assets/screenshots/home.en-US.png)](docs/assets/screenshots/home.en-US.png) | [![Model services with routed candidates](docs/assets/screenshots/model-services.en-US.png)](docs/assets/screenshots/model-services.en-US.png) |
