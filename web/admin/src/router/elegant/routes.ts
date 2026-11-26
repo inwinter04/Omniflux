@@ -57,7 +57,7 @@ export const generatedRoutes: GeneratedRoute[] = [
     meta: {
       title: 'access',
       i18nKey: 'route.access',
-      order: 3,
+      order: 4,
       icon: 'mdi:shield-account-outline'
     },
     children: [
@@ -103,7 +103,7 @@ export const generatedRoutes: GeneratedRoute[] = [
     meta: {
       title: 'asset-registry',
       i18nKey: 'route.asset-registry',
-      order: 4,
+      order: 5,
       icon: 'mdi:archive-outline'
     },
     children: [
@@ -114,7 +114,7 @@ export const generatedRoutes: GeneratedRoute[] = [
         meta: {
           title: 'asset-registry_agents',
           i18nKey: 'route.asset-registry_agents',
-          order: 1,
+          order: 2,
           icon: 'mdi:robot-outline'
         }
       },
@@ -136,7 +136,7 @@ export const generatedRoutes: GeneratedRoute[] = [
         meta: {
           title: 'asset-registry_prompt-templates',
           i18nKey: 'route.asset-registry_prompt-templates',
-          order: 2,
+          order: 1,
           icon: 'mdi:file-document-edit-outline'
         }
       }
@@ -206,7 +206,7 @@ export const generatedRoutes: GeneratedRoute[] = [
         meta: {
           title: 'model-management_model-services',
           i18nKey: 'route.model-management_model-services',
-          order: 3,
+          order: 2,
           icon: 'mdi:cube-send'
         }
       },
@@ -228,7 +228,7 @@ export const generatedRoutes: GeneratedRoute[] = [
         meta: {
           title: 'model-management_route-policies',
           i18nKey: 'route.model-management_route-policies',
-          order: 2,
+          order: 3,
           icon: 'mdi:routes'
         }
       }
@@ -241,7 +241,7 @@ export const generatedRoutes: GeneratedRoute[] = [
     meta: {
       title: 'observability',
       i18nKey: 'route.observability',
-      order: 4,
+      order: 6,
       icon: 'mdi:chart-box-outline'
     },
     children: [
@@ -252,7 +252,7 @@ export const generatedRoutes: GeneratedRoute[] = [
         meta: {
           title: 'observability_audit',
           i18nKey: 'route.observability_audit',
-          order: 2,
+          order: 3,
           icon: 'mdi:text-box-search-outline'
         }
       },
@@ -263,7 +263,7 @@ export const generatedRoutes: GeneratedRoute[] = [
         meta: {
           title: 'observability_budgets',
           i18nKey: 'route.observability_budgets',
-          order: 1,
+          order: 2,
           icon: 'mdi:wallet-outline'
         }
       },
@@ -298,7 +298,7 @@ export const generatedRoutes: GeneratedRoute[] = [
         meta: {
           title: 'organization_applications',
           i18nKey: 'route.organization_applications',
-          order: 3,
+          order: 4,
           icon: 'mdi:application-brackets-outline'
         }
       },
@@ -309,7 +309,7 @@ export const generatedRoutes: GeneratedRoute[] = [
         meta: {
           title: 'organization_departments',
           i18nKey: 'route.organization_departments',
-          order: 1,
+          order: 2,
           icon: 'mdi:division'
         }
       },
@@ -320,7 +320,7 @@ export const generatedRoutes: GeneratedRoute[] = [
         meta: {
           title: 'organization_organizations',
           i18nKey: 'route.organization_organizations',
-          order: 0,
+          order: 1,
           icon: 'mdi:office-building-outline'
         }
       },
@@ -331,7 +331,7 @@ export const generatedRoutes: GeneratedRoute[] = [
         meta: {
           title: 'organization_projects',
           i18nKey: 'route.organization_projects',
-          order: 2,
+          order: 3,
           icon: 'mdi:folder-multiple-outline'
         }
       }
@@ -376,7 +376,7 @@ export const generatedRoutes: GeneratedRoute[] = [
     meta: {
       title: 'system',
       i18nKey: 'route.system',
-      order: 6,
+      order: 7,
       icon: 'mdi:cog-outline',
       roles: ['platform_admin']
     },

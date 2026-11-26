@@ -19,6 +19,7 @@ import (
 	"github.com/inwinter04/omniflux/internal/bifrostx"
 	"github.com/inwinter04/omniflux/internal/bootstrap"
 	"github.com/inwinter04/omniflux/internal/config"
+	"github.com/inwinter04/omniflux/internal/fx"
 	"github.com/inwinter04/omniflux/internal/governance"
 	"github.com/inwinter04/omniflux/internal/infra"
 	"github.com/inwinter04/omniflux/internal/mail"
@@ -137,8 +138,9 @@ func setupIntegration(t *testing.T) *integrationEnv {
 		}
 		return engine.Reload(ctx, specs)
 	}
+	fxService := fx.NewService(pool, logger)
 	handler := New(ServerDeps{
-		Logger: logger, Pool: pool, Engine: engine,
+		Logger: logger, Pool: pool, Engine: engine, FX: fxService,
 		Auth: auth.NewStore(pool), Mailer: mailer, Env: "development",
 		MasterKey: cfg.MasterKey, APIKeyPepper: cfg.APIKeyPepper,
 		Governance:   gov,

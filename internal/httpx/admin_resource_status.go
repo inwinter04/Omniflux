@@ -205,6 +205,19 @@ func (d ServerDeps) UpdateRoutePolicyStatus(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
+	if status == "disabled" {
+		var serviceCount int
+		if err := d.Pool.QueryRow(r.Context(), `
+			SELECT count(*) FROM model_services WHERE route_policy_id = $1 AND organization_id = $2
+		`, id, principal.OrganizationID).Scan(&serviceCount); err != nil {
+			adminError(w, http.StatusInternalServerError, "POLICY_STATUS_FAILED", "failed-to-update-route-policy-status", nil)
+			return
+		}
+		if serviceCount > 0 {
+			adminError(w, http.StatusConflict, "POLICY_IN_USE", "policy-in-use-cannot-disable", map[string]any{"service_count": serviceCount})
+			return
+		}
+	}
 	err = d.updateStatusWithAudit(r.Context(),
 		`UPDATE route_policies SET status = $3, updated_at = now() WHERE id = $1 AND organization_id = $2`,
 		[]any{id, principal.OrganizationID, status},

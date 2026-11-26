@@ -105,6 +105,10 @@ Effective permissions are resolved in real time as `base permissions (custom per
 | `GET /api/v1/system/email/settings` | Get the email service configuration; the SMTP password is returned only as a saved/not-saved flag (platform administrators only) |
 | `PATCH /api/v1/system/email/settings` | Update SMTP, sender, and public access URL settings (platform administrators only) |
 | `POST /api/v1/system/email/test` | Send a test email using the saved configuration (platform administrators only) |
+| `GET /api/v1/system/fx-rates` | Get FX synchronization settings and cached exchange rates |
+| `PATCH /api/v1/system/fx-rates/settings` | Update auto-sync toggle and sync interval hours (1–168, platform administrators only) |
+| `PUT /api/v1/system/fx-rates/{currency}` | Update a non-USD currency exchange rate and manual override flag (platform administrators only) |
+| `POST /api/v1/system/fx-rates/sync` | Trigger an immediate FX rate pull from Frankfurter (ECB) and Open ER-API (platform administrators only) |
 
 `PATCH /api/v1/system/settings` submits the full configuration: `public_registration_enabled`, `registration_organization_id`, `registration_role`, and `email_verification_required`. The organization may be empty only when public registration is disabled. Public registration is disabled by default. Before enabling it, you must select an existing organization and a default role of `pending` (default, zero-permission until assigned) / `viewer` / `developer`; each IP may submit at most 5 registrations per minute. When email verification is disabled, a session is established immediately after successful registration; when enabled, a pending account is created and an email is sent first, and a session is established only after verification. These operations are recorded as audit events `system.settings_updated`, `user.self_registered`, `email.verification_sent`, and `auth.email_verified`.
 
@@ -164,11 +168,19 @@ The console lets you select discovered models and carry them into the new model 
 
 | Endpoint | Description |
 | --- | --- |
-| `GET /api/v1/route-policies` | List route policies |
-| `POST /api/v1/route-policies` | Create a route policy (including hard constraints) |
-| `PATCH /api/v1/route-policies/{id}` | Update policy parameters and hard constraints |
-| `PATCH /api/v1/route-policies/{id}/status` | Enable or disable a route policy |
+| `GET /api/v1/route-policies` | List route policies with bound model services and 24h traffic/fallback/TTFT stats |
+| `POST /api/v1/route-policies` | Create a route policy (9 strategies, compare currency, 4D weights, conditional rules, retry policy, circuit breaker) |
+| `PATCH /api/v1/route-policies/{id}` | Update policy fields (omitted fields preserved; increments `version`) |
+| `PATCH /api/v1/route-policies/{id}/status` | Enable or disable a route policy (returns 409 `POLICY_IN_USE` while bound to model services) |
+| `POST /api/v1/route-policies/{id}/clone` | Clone an existing route policy |
+| `POST /api/v1/route-policies/simulate` | Zero-cost router Dry-Run simulator (supports draft params, FX normalization, conditional rules, failover trace) |
+| `POST /api/v1/route-policies/{id}/playground` | Execute a live route playground call (`source=route_playground`) and record decision trail |
+| `GET /api/v1/route-policies/{id}/overview` | Policy overview with baseline cost savings, hit share, and per-model performance |
+| `GET /api/v1/route-policies/{id}/metrics` | Real-time policy metrics (TTFT P50/P95, OTPS, RPM/TPM, time series, error distribution) |
+| `GET /api/v1/route-policies/{id}/decisions` | Paginated policy decisions with `decision_detail` and `attempt_trail` |
 | `DELETE /api/v1/route-policies/{id}` | Delete a route policy |
+
+Route policies support 9 scheduling modes (`balanced`, `cost_first`, `quality_first`, `latency_first`, `reliability_first`, `weighted`, `round_robin`, `strict_failover`, `custom`); `model_candidates` also support `context_window`, `capabilities` (`vision`, `tools`, `reasoning`, `json_mode`, `streaming`), and `tags`, and mixed settlement currencies within one model service.
 
 ### Model Services
 

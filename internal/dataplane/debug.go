@@ -152,8 +152,12 @@ func (d Deps) prepareConversationRequest(ctx context.Context, organizationID, se
 	if err != nil || !found {
 		return nil, nil, nil, time.Time{}, fmt.Errorf("Model service has no available candidates.")
 	}
-	scores := d.loadCandidateHealth(ctx, organizationID, service.Candidates)
-	chain := selectChain(service.Candidates, service.Policy, scores)
+	scores := d.loadCandidateHealthWithBreaker(ctx, organizationID, service.Candidates, service.Policy.CircuitBreaker)
+	decision := EvaluateRoute(service.Candidates, service.Policy, RouteContext{}, scores, d.fxRatesSnapshot(), 0)
+	chain := decision.Chain
+	if len(chain) == 0 {
+		return nil, nil, nil, time.Time{}, fmt.Errorf("Model service has no eligible candidates.")
+	}
 	primary := chain[0]
 	provider, err := bifrostx.MapProvider(primary.Provider)
 	if err != nil {

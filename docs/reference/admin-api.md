@@ -105,6 +105,10 @@
 | `GET /api/v1/system/email/settings` | 查询邮件服务配置；SMTP 密码只返回是否已保存(仅平台管理员) |
 | `PATCH /api/v1/system/email/settings` | 修改 SMTP、发件人与公开访问地址配置(仅平台管理员) |
 | `POST /api/v1/system/email/test` | 使用已保存配置发送测试邮件(仅平台管理员) |
+| `GET /api/v1/system/fx-rates` | 查询汇率同步设置与实时换算汇率表 |
+| `PATCH /api/v1/system/fx-rates/settings` | 更新汇率自动同步开关与同步周期(1-168 小时，仅平台管理员) |
+| `PUT /api/v1/system/fx-rates/{currency}` | 设置非 USD 货币汇率及手工锁定标记(仅平台管理员) |
+| `POST /api/v1/system/fx-rates/sync` | 立即从 Frankfurter (ECB) 与 Open ER-API 拉取权威汇率(仅平台管理员) |
 
 `PATCH /api/v1/system/settings` 按完整配置提交 `public_registration_enabled`、`registration_organization_id`、`registration_role` 与 `email_verification_required`;仅在关闭公开注册时允许组织为空。公开注册默认关闭。开启前必须选择已存在组织和 `pending`（默认，零权限待分配）/ `viewer` / `developer` 默认角色;同一 IP 每分钟最多提交 5 次注册。关闭邮箱验证时注册成功后立即建立会话；开启邮箱验证时先创建待验证账号并发送邮件，验证后才建立会话。操作写入审计事件 `system.settings_updated`、`user.self_registered`、`email.verification_sent` 与 `auth.email_verified`。
 
@@ -189,11 +193,19 @@
 
 | 接口 | 说明 |
 | --- | --- |
-| `GET /api/v1/route-policies` | 路由策略列表 |
-| `POST /api/v1/route-policies` | 创建路由策略(含硬约束) |
-| `PATCH /api/v1/route-policies/{id}` | 更新策略参数与硬约束 |
-| `PATCH /api/v1/route-policies/{id}/status` | 启用或停用路由策略 |
+| `GET /api/v1/route-policies` | 路由策略列表(含绑定模型服务与 24h 请求量/转移率/首字延迟) |
+| `POST /api/v1/route-policies` | 创建路由策略(支持 9 种调度模式、比价币种、四维权重、条件规则、错误码韧性与熔断配置) |
+| `PATCH /api/v1/route-policies/{id}` | 更新策略参数(未传字段保留原值，自增 `version`) |
+| `PATCH /api/v1/route-policies/{id}/status` | 启用或停用路由策略(被模型服务绑定时禁止停用，返回 409 `POLICY_IN_USE`) |
+| `POST /api/v1/route-policies/{id}/clone` | 复制既有策略为新策略 |
+| `POST /api/v1/route-policies/simulate` | 路由器零消耗 Dry-Run 仿真(支持未保存草稿参数、跨币种归一化、条件规则与故障转移演练) |
+| `POST /api/v1/route-policies/{id}/playground` | 管理台路由在线体验试跑(记录 `source=route_playground` 用量与完整决策轨迹) |
+| `GET /api/v1/route-policies/{id}/overview` | 策略总览(基线成本节省对比、模型命中占比与各模型绩效对比) |
+| `GET /api/v1/route-policies/{id}/metrics` | 策略实时监控(TTFT P50/P95、OTPS、RPM/TPM、时序曲线与错误分布) |
+| `GET /api/v1/route-policies/{id}/decisions` | 分页查询路由决策快照与尝试链 (`attempt_trail`) |
 | `DELETE /api/v1/route-policies/{id}` | 删除路由策略 |
+
+路由策略支持 `balanced`、`cost_first`、`quality_first`、`latency_first`、`reliability_first`、`weighted`、`round_robin`、`strict_failover` 与 `custom` 九种调度策略；`model_candidates` 同时支持 `context_window`、`capabilities`（`vision`/`tools`/`reasoning`/`json_mode`/`streaming`）与 `tags` 元数据，并允许同一模型服务混用不同结算币种候选。
 
 ### 模型服务
 

@@ -135,6 +135,8 @@ const stateFilterOptions = computed(() => [
 ]);
 const sourceFilterOptions = computed(() => [
   { label: $t('business.business-calls'), value: 'api' },
+  { label: $t('business.source-agent-api'), value: 'agent_api' },
+  { label: $t('business.source-route-playground'), value: 'route_playground' },
   { label: $t('business.prompt-debugging'), value: 'prompt_debug' },
   { label: $t('business.agent-debugging'), value: 'agent_debug' }
 ]);
@@ -151,6 +153,8 @@ function sourceText(source: string) {
   return (
     {
       api: $t('business.business-calls'),
+      agent_api: $t('business.source-agent-api'),
+      route_playground: $t('business.source-route-playground'),
       prompt_debug: $t('business.prompt-debugging'),
       agent_debug: $t('business.agent-debugging')
     }[source] ?? source

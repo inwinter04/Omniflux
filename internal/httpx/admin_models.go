@@ -14,20 +14,24 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/inwinter04/omniflux/internal/auth"
+	"github.com/inwinter04/omniflux/internal/dataplane"
 )
 
 type candidateResponse struct {
-	ID                   string  `json:"id"`
-	ProviderAccountID    string  `json:"provider_account_id"`
-	Provider             string  `json:"provider"`
-	UpstreamModel        string  `json:"upstream_model"`
-	Priority             int     `json:"priority"`
-	Weight               float64 `json:"weight"`
-	InputCostPerMillion  float64 `json:"input_cost_per_million"`
-	OutputCostPerMillion float64 `json:"output_cost_per_million"`
-	QualityScore         float64 `json:"quality_score"`
-	CostCurrency         string  `json:"cost_currency"`
-	Status               string  `json:"status"`
+	ID                   string   `json:"id"`
+	ProviderAccountID    string   `json:"provider_account_id"`
+	Provider             string   `json:"provider"`
+	UpstreamModel        string   `json:"upstream_model"`
+	Priority             int      `json:"priority"`
+	Weight               float64  `json:"weight"`
+	InputCostPerMillion  float64  `json:"input_cost_per_million"`
+	OutputCostPerMillion float64  `json:"output_cost_per_million"`
+	QualityScore         float64  `json:"quality_score"`
+	CostCurrency         string   `json:"cost_currency"`
+	ContextWindow        *int     `json:"context_window"`
+	Capabilities         []string `json:"capabilities"`
+	Tags                 []string `json:"tags"`
+	Status               string   `json:"status"`
 }
 
 type modelServiceResponse struct {
@@ -55,6 +59,9 @@ type createCandidateRequest struct {
 	OutputCostPerMillion float64  `json:"output_cost_per_million"`
 	QualityScore         *float64 `json:"quality_score"`
 	CostCurrency         string   `json:"cost_currency"`
+	ContextWindow        *int     `json:"context_window"`
+	Capabilities         []string `json:"capabilities"`
+	Tags                 []string `json:"tags"`
 	Status               string   `json:"status"`
 }
 
@@ -108,7 +115,8 @@ func (d ServerDeps) ModelServices(w http.ResponseWriter, r *http.Request) {
 	}
 	candRows, err := d.Pool.Query(r.Context(), `
 		SELECT c.id, c.model_service_id, c.provider_account_id, a.provider, c.upstream_model, c.priority, c.weight,
-		       c.input_cost_per_million, c.output_cost_per_million, c.quality_score, c.cost_currency, c.status
+		       c.input_cost_per_million, c.output_cost_per_million, c.quality_score, c.cost_currency, c.status,
+		       c.context_window, c.capabilities, c.tags
 		FROM model_candidates c
 		JOIN provider_accounts a ON a.id = c.provider_account_id
 		WHERE a.organization_id = $1 AND c.retired_at IS NULL
@@ -123,9 +131,16 @@ func (d ServerDeps) ModelServices(w http.ResponseWriter, r *http.Request) {
 		var candID, svcID, accountID uuid.UUID
 		var c candidateResponse
 		if err := candRows.Scan(&candID, &svcID, &accountID, &c.Provider, &c.UpstreamModel, &c.Priority, &c.Weight,
-			&c.InputCostPerMillion, &c.OutputCostPerMillion, &c.QualityScore, &c.CostCurrency, &c.Status); err != nil {
+			&c.InputCostPerMillion, &c.OutputCostPerMillion, &c.QualityScore, &c.CostCurrency, &c.Status,
+			&c.ContextWindow, &c.Capabilities, &c.Tags); err != nil {
 			adminError(w, http.StatusInternalServerError, "SERVICE_LIST_FAILED", "failed-to-query-model-candidates", nil)
 			return
+		}
+		if c.Capabilities == nil {
+			c.Capabilities = []string{}
+		}
+		if c.Tags == nil {
+			c.Tags = []string{}
 		}
 		c.ID = candID.String()
 		c.ProviderAccountID = accountID.String()
@@ -201,29 +216,9 @@ func (d ServerDeps) CreateModelService(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATES_REQUIRED", "at-least-one-model-candidate-is", nil)
 		return
 	}
-	accountIDs := make([]uuid.UUID, 0, len(body.Candidates))
-	candidateKeys := map[string]bool{}
-	for _, c := range body.Candidates {
-		if strings.TrimSpace(c.UpstreamModel) == "" {
-			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "candidate-is-missing-upstream-model", nil)
-			return
-		}
-		if c.QualityScore != nil && (*c.QualityScore < 0 || *c.QualityScore > 1) {
-			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "candidate-quality-score-must-be-between", nil)
-			return
-		}
-		parsed, err := uuid.Parse(c.ProviderAccountID)
-		if err != nil {
-			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "invalid-candidate-provider-account-id", nil)
-			return
-		}
-		key := parsed.String() + "|" + strings.TrimSpace(c.UpstreamModel)
-		if candidateKeys[key] {
-			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "duplicate-model-candidate", nil)
-			return
-		}
-		candidateKeys[key] = true
-		accountIDs = append(accountIDs, parsed)
+	accountIDs, _, ok := validateAndNormalizeCandidates(w, body.Candidates)
+	if !ok {
+		return
 	}
 	// 同一账号可挂多个候选,校验前去重;候选引用的账号必须属于当前组织。
 	uniqueAccountIDs := make([]uuid.UUID, 0, len(accountIDs))
@@ -299,10 +294,12 @@ func (d ServerDeps) CreateModelService(w http.ResponseWriter, r *http.Request) {
 			}
 			if _, err := tx.Exec(r.Context(), `
 				INSERT INTO model_candidates(model_service_id, provider_account_id, upstream_model,
-				                             priority, weight, input_cost_per_million, output_cost_per_million, quality_score, cost_currency, status)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-			`, serviceID, accountID, c.UpstreamModel, priority, weight,
-				c.InputCostPerMillion, c.OutputCostPerMillion, candidateQuality(c), c.CostCurrency, candidateStatus(c)); err != nil {
+				                             priority, weight, input_cost_per_million, output_cost_per_million,
+				                             quality_score, cost_currency, status, context_window, capabilities, tags)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+			`, serviceID, accountID, strings.TrimSpace(c.UpstreamModel), priority, weight,
+				c.InputCostPerMillion, c.OutputCostPerMillion, candidateQuality(c), c.CostCurrency, candidateStatus(c),
+				nullableIntPtr(c.ContextWindow), nonNilStringSlice(c.Capabilities), nonNilStringSlice(c.Tags)); err != nil {
 				return err
 			}
 		}
@@ -450,29 +447,9 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATES_REQUIRED", "at-least-one-model-candidate-is", nil)
 		return
 	}
-	accountIDs := make([]uuid.UUID, 0, len(body.Candidates))
-	candidateKeys := map[string]bool{}
-	for _, c := range body.Candidates {
-		if strings.TrimSpace(c.UpstreamModel) == "" {
-			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "candidate-is-missing-upstream-model", nil)
-			return
-		}
-		if c.QualityScore != nil && (*c.QualityScore < 0 || *c.QualityScore > 1) {
-			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "candidate-quality-score-must-be-between", nil)
-			return
-		}
-		parsed, err := uuid.Parse(c.ProviderAccountID)
-		if err != nil {
-			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "invalid-candidate-provider-account-id", nil)
-			return
-		}
-		key := parsed.String() + "|" + strings.TrimSpace(c.UpstreamModel)
-		if candidateKeys[key] {
-			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "duplicate-model-candidate", nil)
-			return
-		}
-		candidateKeys[key] = true
-		accountIDs = append(accountIDs, parsed)
+	accountIDs, candidateKeys, ok := validateAndNormalizeCandidates(w, body.Candidates)
+	if !ok {
+		return
 	}
 	// 同一账号可挂多个候选,校验前去重。
 	uniqueAccountIDs := make([]uuid.UUID, 0, len(accountIDs))
@@ -539,7 +516,8 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 			ProviderAccountID: c.ProviderAccountID, UpstreamModel: strings.TrimSpace(c.UpstreamModel),
 			Priority: priority, Weight: weight, InputCostPerMillion: c.InputCostPerMillion,
 			OutputCostPerMillion: c.OutputCostPerMillion, QualityScore: candidateQuality(c),
-			CostCurrency: c.CostCurrency, Status: candidateStatus(c),
+			CostCurrency: c.CostCurrency, ContextWindow: c.ContextWindow,
+			Capabilities: nonNilStringSlice(c.Capabilities), Tags: nonNilStringSlice(c.Tags), Status: candidateStatus(c),
 		})
 	}
 	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
@@ -572,8 +550,8 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 			if _, err := tx.Exec(r.Context(), `
 				INSERT INTO model_candidates(model_service_id, provider_account_id, upstream_model,
 				                             priority, weight, input_cost_per_million, output_cost_per_million,
-				                             quality_score, cost_currency, status, retired_at)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULL)
+				                             quality_score, cost_currency, status, context_window, capabilities, tags, retired_at)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NULL)
 				ON CONFLICT (model_service_id, provider_account_id, upstream_model) DO UPDATE SET
 					priority = EXCLUDED.priority,
 					weight = EXCLUDED.weight,
@@ -582,10 +560,14 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 					quality_score = EXCLUDED.quality_score,
 					cost_currency = EXCLUDED.cost_currency,
 					status = EXCLUDED.status,
+					context_window = EXCLUDED.context_window,
+					capabilities = EXCLUDED.capabilities,
+					tags = EXCLUDED.tags,
 					retired_at = NULL,
 					updated_at = now()
 			`, serviceID, accountID, strings.TrimSpace(c.UpstreamModel), priority, weight,
-				c.InputCostPerMillion, c.OutputCostPerMillion, candidateQuality(c), c.CostCurrency, candidateStatus(c)); err != nil {
+				c.InputCostPerMillion, c.OutputCostPerMillion, candidateQuality(c), c.CostCurrency, candidateStatus(c),
+				nullableIntPtr(c.ContextWindow), nonNilStringSlice(c.Capabilities), nonNilStringSlice(c.Tags)); err != nil {
 				return err
 			}
 		}
@@ -627,21 +609,71 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 }
 
 type candidateAuditState struct {
-	ProviderAccountID    string  `json:"provider_account_id"`
-	UpstreamModel        string  `json:"upstream_model"`
-	Priority             int     `json:"priority"`
-	Weight               float64 `json:"weight"`
-	InputCostPerMillion  float64 `json:"input_cost_per_million"`
-	OutputCostPerMillion float64 `json:"output_cost_per_million"`
-	QualityScore         float64 `json:"quality_score"`
-	CostCurrency         string  `json:"cost_currency"`
-	Status               string  `json:"status"`
+	ProviderAccountID    string   `json:"provider_account_id"`
+	UpstreamModel        string   `json:"upstream_model"`
+	Priority             int      `json:"priority"`
+	Weight               float64  `json:"weight"`
+	InputCostPerMillion  float64  `json:"input_cost_per_million"`
+	OutputCostPerMillion float64  `json:"output_cost_per_million"`
+	QualityScore         float64  `json:"quality_score"`
+	CostCurrency         string   `json:"cost_currency"`
+	ContextWindow        *int     `json:"context_window,omitempty"`
+	Capabilities         []string `json:"capabilities,omitempty"`
+	Tags                 []string `json:"tags,omitempty"`
+	Status               string   `json:"status"`
+}
+
+func validateAndNormalizeCandidates(w http.ResponseWriter, candidates []createCandidateRequest) ([]uuid.UUID, map[string]bool, bool) {
+	accountIDs := make([]uuid.UUID, 0, len(candidates))
+	candidateKeys := map[string]bool{}
+	for i := range candidates {
+		c := candidates[i]
+		if strings.TrimSpace(c.UpstreamModel) == "" {
+			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "candidate-is-missing-upstream-model", nil)
+			return nil, nil, false
+		}
+		if c.QualityScore != nil && (*c.QualityScore < 0 || *c.QualityScore > 1) {
+			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "candidate-quality-score-must-be-between", nil)
+			return nil, nil, false
+		}
+		if c.ContextWindow != nil && *c.ContextWindow <= 0 {
+			adminError(w, http.StatusBadRequest, "CANDIDATE_CONTEXT_WINDOW_INVALID", "invalid-candidate-context-window", nil)
+			return nil, nil, false
+		}
+		caps, err := dataplane.ValidateCandidateCapabilities(c.Capabilities)
+		if err != nil {
+			adminError(w, http.StatusBadRequest, "CANDIDATE_CAPABILITIES_INVALID", "invalid-candidate-capabilities", nil, err.Error())
+			return nil, nil, false
+		}
+		candidates[i].Capabilities = caps
+		candidates[i].Tags = dataplane.NormalizeCandidateTags(c.Tags)
+		parsed, err := uuid.Parse(c.ProviderAccountID)
+		if err != nil {
+			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "invalid-candidate-provider-account-id", nil)
+			return nil, nil, false
+		}
+		key := parsed.String() + "|" + strings.TrimSpace(c.UpstreamModel)
+		if candidateKeys[key] {
+			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "duplicate-model-candidate", nil)
+			return nil, nil, false
+		}
+		candidateKeys[key] = true
+		accountIDs = append(accountIDs, parsed)
+	}
+	return accountIDs, candidateKeys, true
+}
+
+func nonNilStringSlice(items []string) []string {
+	if items == nil {
+		return []string{}
+	}
+	return items
 }
 
 func loadCandidateAuditStates(ctx context.Context, q rowQuerier, serviceID uuid.UUID) ([]candidateAuditState, error) {
 	rows, err := q.Query(ctx, `
 		SELECT provider_account_id, upstream_model, priority, weight, input_cost_per_million,
-		       output_cost_per_million, quality_score, cost_currency, status
+		       output_cost_per_million, quality_score, cost_currency, status, context_window, capabilities, tags
 		FROM model_candidates
 		WHERE model_service_id = $1 AND retired_at IS NULL
 		ORDER BY priority ASC, upstream_model ASC
@@ -656,7 +688,7 @@ func loadCandidateAuditStates(ctx context.Context, q rowQuerier, serviceID uuid.
 		var accountID uuid.UUID
 		if err := rows.Scan(&accountID, &item.UpstreamModel, &item.Priority, &item.Weight,
 			&item.InputCostPerMillion, &item.OutputCostPerMillion, &item.QualityScore,
-			&item.CostCurrency, &item.Status); err != nil {
+			&item.CostCurrency, &item.Status, &item.ContextWindow, &item.Capabilities, &item.Tags); err != nil {
 			return nil, err
 		}
 		item.ProviderAccountID = accountID.String()

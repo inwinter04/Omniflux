@@ -94,8 +94,17 @@ func (d Deps) Embeddings(w http.ResponseWriter, r *http.Request) {
 	if !d.checkBudgets(w, r, keyCtx) {
 		return
 	}
-	scores := d.loadCandidateHealth(r.Context(), keyCtx.OrganizationID, svc.Candidates)
-	chain := selectChain(svc.Candidates, svc.Policy, scores)
+	scores := d.loadCandidateHealthWithBreaker(r.Context(), keyCtx.OrganizationID, svc.Candidates, svc.Policy.CircuitBreaker)
+	var rr uint64
+	if svc.Policy.Strategy == StrategyRoundRobin {
+		rr = d.Breaker().NextRoundRobin(r.Context(), svc.ID.String())
+	}
+	decision := EvaluateRoute(svc.Candidates, svc.Policy, RouteContext{Source: "api"}, scores, d.fxRatesSnapshot(), rr)
+	chain := decision.Chain
+	if len(chain) == 0 {
+		apiError(w, http.StatusNotFound, "no_eligible_candidates", "No upstream model candidate matches the route policy constraints.", apiErrorOptions{Reason: "no_eligible_candidates", Param: "model", Params: map[string]any{"model": meta.Model}})
+		return
+	}
 	primary := chain[0]
 	requestID := uuid.New()
 
@@ -105,7 +114,7 @@ func (d Deps) Embeddings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := d.recordPending(r.Context(), requestID, keyCtx, svc, chain); err != nil {
+	if err := d.recordPendingDecision(r.Context(), requestID, &keyCtx, nil, "api", svc, decision); err != nil {
 		apiError(w, http.StatusInternalServerError, "internal_error", "Failed to record routing decision.")
 		return
 	}
@@ -132,7 +141,14 @@ func (d Deps) Embeddings(w http.ResponseWriter, r *http.Request) {
 
 	resp, bifrostErr := d.Engine.Client().EmbeddingRequest(bctx, req)
 	if bifrostErr != nil {
-		d.recordFailure(r.Context(), keyCtx, requestID, chain, bctx, bifrostErr, start, nil, usageSnapshot{})
+		statusCode, errCode, errType, errMsg := extractBifrostErrorInfo(bifrostErr)
+		action := ClassifyAttemptOutcome(statusCode, errCode, errType, svc.Policy.RetryPolicy)
+		d.Breaker().RecordFailure(r.Context(), primary.ID, statusCode, errCode, errType, svc.Policy.RetryPolicy, svc.Policy.CircuitBreaker)
+		d.recordChainFailure(r.Context(), &keyCtx, requestID, chain, []AttemptRecord{{
+			CandidateID: primary.ID, Provider: primary.Provider, UpstreamModel: primary.UpstreamModel,
+			StatusCode: statusCode, ErrorClass: action.Class, ErrorType: errType, ErrorMessage: errMsg,
+			LatencyMS: int(time.Since(start).Milliseconds()), Outcome: "failed",
+		}}, bifrostErr, start, nil, usageSnapshot{})
 		writeBifrostError(w, bifrostErr)
 		return
 	}
@@ -140,6 +156,9 @@ func (d Deps) Embeddings(w http.ResponseWriter, r *http.Request) {
 	servedProvider := string(resp.ExtraFields.RoutingInfo.Provider)
 	servedModel := resp.ExtraFields.RoutingInfo.Model
 	served, lookupErr := chain.findCandidate(servedProvider, servedModel, resp.ExtraFields.RoutingInfo.Key)
+	if lookupErr == nil {
+		d.Breaker().RecordSuccess(r.Context(), served.ID)
+	}
 
 	usage := usageFromBifrost(resp.Usage)
 	inputTokens, outputTokens, _, _ := usage.tokens()
@@ -171,7 +190,7 @@ func (d Deps) Embeddings(w http.ResponseWriter, r *http.Request) {
 
 	total := int(time.Since(start).Milliseconds())
 	candidateID := uuidPtr(served.ID, lookupErr == nil)
-	store := usageStore{pool: d.Pool}
+	store := usageStore{pool: d.Pool, fxRates: d.fxRatesSnapshot()}
 	if err := store.finalize(context.WithoutCancel(r.Context()), requestID, finalUsage{
 		State:         "success",
 		StatusCode:    intPtr(http.StatusOK),
@@ -184,7 +203,7 @@ func (d Deps) Embeddings(w http.ResponseWriter, r *http.Request) {
 		Currency:      currencyOf(served),
 		TotalMS:       total,
 		UsageSource:   usageSource,
-		AttemptTrail:  attemptTrailJSON(chain, served, "success", "", routingEngineLogs(bctx)),
+		AttemptTrail:  attemptTrailJSON(chain, served, "success", "", bctx.GetRoutingEngineLogs()),
 	}); err != nil {
 		d.Logger.Warn("finalize usage failed", "request_id", requestID, "error", err)
 	}

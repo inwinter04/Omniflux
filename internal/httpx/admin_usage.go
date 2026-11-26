@@ -161,7 +161,7 @@ func buildUsageFilters(r *http.Request, organizationID uuid.UUID) (string, []any
 	}
 	if value := strings.TrimSpace(r.URL.Query().Get("source")); value != "" {
 		switch value {
-		case "api", "prompt_debug", "agent_debug":
+		case "api", "agent_api", "route_playground", "prompt_debug", "agent_debug":
 			args = append(args, value)
 			where = append(where, fmt.Sprintf("u.source = $%d", len(args)))
 		default:
@@ -676,7 +676,7 @@ func (d ServerDeps) UsageRecords(w http.ResponseWriter, r *http.Request) {
 	}
 	if value := strings.TrimSpace(r.URL.Query().Get("source")); value != "" {
 		switch value {
-		case "api", "prompt_debug", "agent_debug":
+		case "api", "agent_api", "route_playground", "prompt_debug", "agent_debug":
 			args = append(args, value)
 			where = append(where, fmt.Sprintf("u.source = $%d", len(args)))
 		default:

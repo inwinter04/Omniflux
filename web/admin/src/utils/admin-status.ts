@@ -199,7 +199,11 @@ const actionTextKeyMap: Record<string, App.I18n.I18nKey> = {
   'route_policy.created': 'business.create-route-policy-167s75c',
   'route_policy.updated': 'business.update-route-policy',
   'route_policy.deleted': 'business.delete-route-policy',
+  'route_policy.cloned': 'business.clone-route-policy',
   'route_policy.status_changed': 'business.change-route-policy-status',
+  'fx_rate.settings_updated': 'business.fx-update-settings',
+  'fx_rate.updated': 'business.fx-update-rate',
+  'fx_rate.synced': 'business.fx-sync-rates',
   'model_service.created': 'business.create-model-service-11kri7x',
   'model_service.updated': 'business.update-model-service',
   'model_service.deleted': 'business.delete-model-service',
@@ -269,7 +273,8 @@ const resourceTextKeyMap: Record<string, App.I18n.I18nKey> = {
   organization: 'business.organization',
   department: 'business.department',
   system_settings: 'business.system-settings',
-  email_settings: 'business.email-service'
+  email_settings: 'business.email-service',
+  fx_rate: 'business.fx-rates'
 };
 
 export function auditResourceText(resourceType: string) {
@@ -355,7 +360,21 @@ const snapshotFieldKeyMap: Record<string, App.I18n.I18nKey> = {
   version: 'business.version',
   version_id: 'business.version-id',
   current_version_id: 'business.version-id',
-  weights: 'business.weight'
+  weights: 'business.weight',
+  compare_currency: 'business.compare-currency',
+  rules: 'business.conditional-rules',
+  retry_policy: 'business.retry-policy',
+  circuit_breaker: 'business.circuit-breaker',
+  baseline_candidate_id: 'business.baseline-candidate',
+  context_window: 'business.context-window',
+  capabilities: 'business.capabilities',
+  tags: 'business.tags',
+  auto_sync_enabled: 'business.fx-auto-sync',
+  sync_interval_hours: 'business.fx-sync-interval',
+  rate_per_usd: 'business.fx-rate-per-usd',
+  manual_override: 'business.fx-manual-override',
+  source_policy_id: 'business.source-policy-id',
+  source_name: 'business.source-policy-name'
 };
 
 /** 不同资源的 status 取值含义不同,沿用各列表页的状态文案。 */
@@ -399,11 +418,38 @@ const snapshotEnumLabels: Record<string, Record<string, App.I18n.I18nKey>> = {
   scope_type: scopeTypeLabels,
   subject_type: scopeTypeLabels,
   strategy: {
+    balanced: 'business.balanced',
     cost_first: 'business.cost-first',
     quality_first: 'business.quality-first',
-    balanced: 'business.balanced'
+    latency_first: 'business.strategy-latency-first',
+    reliability_first: 'business.strategy-reliability-first',
+    weighted: 'business.strategy-weighted',
+    round_robin: 'business.strategy-round-robin',
+    strict_failover: 'business.strategy-strict-failover',
+    custom: 'business.custom'
   }
 };
+
+export function routeStrategyText(strategy: string) {
+  const key = snapshotEnumLabels.strategy[strategy];
+  return key ? $t(key) : strategy;
+}
+
+export function routeStrategyTagType(strategy: string): 'default' | 'info' | 'success' | 'warning' | 'primary' {
+  switch (strategy) {
+    case 'cost_first':
+      return 'success';
+    case 'quality_first':
+      return 'primary';
+    case 'latency_first':
+      return 'info';
+    case 'reliability_first':
+    case 'strict_failover':
+      return 'warning';
+    default:
+      return 'default';
+  }
+}
 
 /** 把审计快照里的一个值转成可读文本;资源 ID 解析得到名称时显示名称。 */
 function snapshotValueText(key: string, value: unknown, resourceType: string, names: Record<string, string>): string {

@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -15,8 +14,6 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/inwinter04/omniflux/internal/asset"
-	"github.com/inwinter04/omniflux/internal/bifrostx"
-	"github.com/maximhq/bifrost/core/schemas"
 )
 
 const maxAgentChatBodyBytes = 1024 * 1024
@@ -180,29 +177,48 @@ func (d Deps) ChatAgent(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusConflict, "agent_model_unavailable", "The model service bound to the agent has no available candidates.", apiErrorOptions{Reason: "agent_model_no_candidates"})
 		return
 	}
-	chain := selectChain(svc.Candidates, svc.Policy, d.loadCandidateHealth(r.Context(), keyCtx.OrganizationID, svc.Candidates))
-	primary := chain[0]
-	provider, err := bifrostx.MapProvider(primary.Provider)
-	if err != nil {
-		_ = d.FinishAgentRun(r.Context(), run, "failed", DebugResult{}, err)
-		apiError(w, http.StatusInternalServerError, "internal_error", "Candidate provider is not supported.", apiErrorOptions{Reason: "unsupported_provider"})
+	params := AgentChatParameters(run.Spec, run.PromptSpec)
+	msgBytes, _ := json.Marshal(run.Input)
+	estIn, hasVision, textSample := EstimateTokensFromMessagesJSON(msgBytes)
+	caps := []string{}
+	if hasVision {
+		caps = append(caps, "vision")
+	}
+	if params != nil && params.ResponseFormat != nil {
+		caps = append(caps, "json_mode")
+	}
+	estOut := 500
+	if params != nil && params.MaxCompletionTokens != nil && *params.MaxCompletionTokens > 0 {
+		estOut = *params.MaxCompletionTokens
+	}
+	reqCtx := RouteContext{
+		EstimatedInputTokens:  estIn,
+		EstimatedOutputTokens: estOut,
+		Stream:                body.Stream,
+		RequiredCapabilities:  caps,
+		ProjectID:             keyCtx.ProjectID.String(),
+		ApplicationID:         keyCtx.ApplicationID.String(),
+		APIKeyID:              keyCtx.KeyID.String(),
+		Source:                "agent_api",
+		KeywordText:           textSample,
+	}
+	scores := d.loadCandidateHealthWithBreaker(r.Context(), keyCtx.OrganizationID, svc.Candidates, svc.Policy.CircuitBreaker)
+	var rr uint64
+	if svc.Policy.Strategy == StrategyRoundRobin {
+		rr = d.Breaker().NextRoundRobin(r.Context(), svc.ID.String())
+	}
+	decision := EvaluateRoute(svc.Candidates, svc.Policy, reqCtx, scores, d.fxRatesSnapshot(), rr)
+	if len(decision.Chain) == 0 {
+		_ = d.FinishAgentRun(r.Context(), run, "failed", DebugResult{}, errors.New("No eligible model candidate matched route policy constraints."))
+		apiError(w, http.StatusConflict, "agent_model_unavailable", "No upstream model candidate matches the route policy constraints.", apiErrorOptions{Reason: "no_eligible_candidates"})
 		return
 	}
-	if err := d.recordPending(r.Context(), run.RunID, keyCtx, svc, chain); err != nil {
+	if err := d.recordPendingDecision(r.Context(), run.RunID, &keyCtx, nil, "agent_api", svc, decision); err != nil {
 		_ = d.FinishAgentRun(r.Context(), run, "failed", DebugResult{}, errors.New("Failed to record routing decision."))
 		apiError(w, http.StatusInternalServerError, "internal_error", "Failed to record routing decision.")
 		return
 	}
-	request := &schemas.BifrostChatRequest{
-		Provider: provider, Model: primary.UpstreamModel, Input: run.Input,
-		Params: AgentChatParameters(run.Spec, run.PromptSpec), Fallbacks: fallbackSpecs(chain),
-	}
-	requestCtx, cancelRequest := context.WithCancel(r.Context())
-	defer cancelRequest()
-	timeout := time.Duration(svc.Policy.ProviderTimeoutMS) * time.Millisecond
 	start := time.Now()
-	bctx := schemas.NewBifrostContext(requestCtx, time.Now().Add(timeout))
-	bctx.SetValue(schemas.BifrostContextKeyAPIKeyID, primary.AccountID)
 	runStatus := "failed"
 	observer := &completionObserver{onComplete: func(status string, result DebugResult, runErr error) {
 		runStatus = status
@@ -215,14 +231,9 @@ func (d Deps) ChatAgent(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Agent-Version", strconv.Itoa(run.Version))
 	w.Header().Set("X-Agent-Version-Id", run.VersionID.String())
 	if body.Stream {
-		var firstTokenSeen atomic.Bool
-		if svc.Policy.FirstTokenTimeoutMS > 0 {
-			d.startFirstTokenWatchdog(requestCtx, cancelRequest, &firstTokenSeen,
-				time.Duration(svc.Policy.FirstTokenTimeoutMS)*time.Millisecond, run.RunID)
-		}
-		d.handleStreamObserved(bctx, requestCtx, r, w, run.RunID, keyCtx, chain, name, request, start, &firstTokenSeen, observer)
+		d.handleStreamChain(r, w, run.RunID, &keyCtx, svc, decision, name, run.Input, params, start, observer)
 	} else {
-		d.handleNonStreamObserved(bctx, r, w, run.RunID, chain, name, request, start, observer)
+		d.handleNonStreamChain(r, w, run.RunID, &keyCtx, svc, decision, name, run.Input, params, start, observer)
 	}
 	d.auditAgentChat(r, keyCtx, agentID, run, runStatus)
 }

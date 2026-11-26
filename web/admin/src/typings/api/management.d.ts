@@ -416,17 +416,91 @@ declare namespace Api {
       max_cost_per_million?: number;
     }
 
+    interface RoutePolicyWeights {
+      cost: number;
+      quality: number;
+      latency: number;
+      reliability: number;
+    }
+
+    interface RouteRuleWhen {
+      min_input_tokens?: number | null;
+      max_input_tokens?: number | null;
+      stream?: boolean | null;
+      capabilities?: string[];
+      project_ids?: string[];
+      application_ids?: string[];
+      api_key_ids?: string[];
+      keywords?: string[];
+      metadata?: Record<string, string[]>;
+    }
+
+    interface RouteRuleTarget {
+      strategy?: string;
+      candidate_tags?: string[];
+      allowed_providers?: string[];
+      blocked_providers?: string[];
+      allowed_models?: string[];
+    }
+
+    interface RouteRule {
+      id: string;
+      name: string;
+      enabled: boolean;
+      priority: number;
+      when: RouteRuleWhen;
+      target: RouteRuleTarget;
+    }
+
+    interface RouteRetryPolicy {
+      retry_429: boolean;
+      retry_5xx: boolean;
+      retry_timeout: boolean;
+      fallback_on_auth_error: boolean;
+      fallback_on_not_found: boolean;
+      fallback_on_rate_limit: boolean;
+      fallback_on_server_error: boolean;
+      fallback_on_ttft_timeout: boolean;
+      fallback_on_client_error: boolean;
+      max_retries_per_candidate: number;
+    }
+
+    interface RouteCircuitBreakerPolicy {
+      enabled: boolean;
+      failure_threshold: number;
+      cooldown_seconds: number;
+      half_open_max_calls: number;
+    }
+
+    interface BoundModelServiceSummary {
+      id: string;
+      name: string;
+      status: string;
+      candidate_count: number;
+    }
+
     interface RoutePolicy {
       id: string;
       name: string;
       version: number;
       strategy: string;
+      compare_currency: string;
       constraints: RouteConstraints;
-      weights: unknown;
+      weights: RoutePolicyWeights;
+      rules: RouteRule[];
+      retry_policy: RouteRetryPolicy;
+      circuit_breaker: RouteCircuitBreakerPolicy;
+      baseline_candidate_id: string | null;
       fallback_limit: number;
       provider_timeout_ms: number;
       first_token_timeout_ms: number;
       status: string;
+      bound_services: BoundModelServiceSummary[];
+      requests_24h: number;
+      success_rate_24h: number | null;
+      fallback_rate_24h: number | null;
+      avg_ttft_ms_24h: number | null;
+      avg_latency_ms_24h: number | null;
       created_at: string;
       updated_at: string;
     }
@@ -434,6 +508,12 @@ declare namespace Api {
     interface CreateRoutePolicyParams {
       name: string;
       strategy?: string;
+      compare_currency?: string;
+      weights?: RoutePolicyWeights;
+      rules?: RouteRule[];
+      retry_policy?: RouteRetryPolicy;
+      circuit_breaker?: RouteCircuitBreakerPolicy;
+      baseline_candidate_id?: string | null;
       fallback_limit?: number;
       provider_timeout_ms?: number;
       first_token_timeout_ms?: number;
@@ -451,6 +531,9 @@ declare namespace Api {
       output_cost_per_million: number;
       quality_score: number;
       cost_currency: string;
+      context_window: number | null;
+      capabilities: string[];
+      tags: string[];
       status: string;
     }
 
@@ -479,6 +562,9 @@ declare namespace Api {
       output_cost_per_million: number;
       quality_score: number;
       cost_currency?: string;
+      context_window?: number | null;
+      capabilities?: string[];
+      tags?: string[];
       status?: 'active' | 'disabled';
     }
 
@@ -551,14 +637,7 @@ declare namespace Api {
       api_key?: string;
     }
 
-    interface UpdateRoutePolicyParams {
-      name: string;
-      strategy?: string;
-      fallback_limit?: number;
-      provider_timeout_ms?: number;
-      first_token_timeout_ms?: number;
-      constraints?: RouteConstraints;
-    }
+    type UpdateRoutePolicyParams = CreateRoutePolicyParams;
 
     type UpdateModelServiceParams = CreateModelServiceParams;
 
@@ -1099,6 +1178,285 @@ declare namespace Api {
       /** 受影响资源是否仍然存在;已删除时不提供直达入口 */
       resource_exists: boolean;
       result: string;
+    }
+
+    interface FXRateSettings {
+      auto_sync_enabled: boolean;
+      sync_interval_hours: number;
+      primary_source: string;
+      fallback_source: string;
+      last_synced_at: string | null;
+      last_sync_status: 'never' | 'ok' | 'partial' | 'error';
+      last_sync_source: string | null;
+      last_sync_error: string | null;
+      updated_by?: string | null;
+      updated_at?: string | null;
+    }
+
+    interface FXRateEntry {
+      currency: string;
+      rate_per_usd: number;
+      source: 'builtin' | 'frankfurter_ecb' | 'open_er_api' | 'manual';
+      effective_date: string | null;
+      manual_override: boolean;
+      updated_by?: string | null;
+      updated_at: string;
+    }
+
+    interface FXRatesPayload {
+      settings: FXRateSettings;
+      rates: FXRateEntry[];
+    }
+
+    interface CandidateEvaluation {
+      candidate_id: string;
+      provider: string;
+      account_id: string;
+      account_name?: string;
+      upstream_model: string;
+      priority: number;
+      weight: number;
+      selected: boolean;
+      rank?: number;
+      excluded_reason?: string;
+      circuit_open: boolean;
+      account_health?: string;
+      cost_currency: string;
+      compare_currency: string;
+      estimated_cost: number;
+      cost_comparable: boolean;
+      cost_score: number;
+      quality_score: number;
+      latency_ms?: number | null;
+      latency_metric?: string;
+      latency_score: number;
+      reliability_rate: number;
+      reliability_score: number;
+      total_score: number;
+      weight_probability?: number | null;
+    }
+
+    interface RouteDecision {
+      chain_candidate_ids: string[];
+      policy_id?: string;
+      policy_version: number;
+      strategy: string;
+      effective_strategy: string;
+      compare_currency: string;
+      weights: RoutePolicyWeights;
+      matched_rule_id?: string;
+      matched_rule_name?: string;
+      random_seed?: number;
+      warnings?: string[];
+      evaluations: CandidateEvaluation[];
+    }
+
+    interface SimulatedFailoverStep {
+      attempt: number;
+      candidate_id: string;
+      provider: string;
+      upstream_model: string;
+      account_name: string;
+      outcome: 'simulated_failure' | 'served';
+    }
+
+    interface SimulatedSavings {
+      compare_currency: string;
+      baseline_candidate_id: string | null;
+      baseline_upstream_model: string | null;
+      baseline_cost: number | null;
+      selected_cost: number | null;
+      saved_cost: number | null;
+      savings_rate: number | null;
+    }
+
+    interface SimulateRoutePolicyParams {
+      model_service_id: string;
+      policy_id?: string | null;
+      strategy?: string;
+      compare_currency?: string;
+      weights?: RoutePolicyWeights;
+      constraints?: RouteConstraints;
+      rules?: RouteRule[];
+      retry_policy?: RouteRetryPolicy;
+      circuit_breaker?: RouteCircuitBreakerPolicy;
+      baseline_candidate_id?: string | null;
+      fallback_limit?: number;
+      provider_timeout_ms?: number;
+      first_token_timeout_ms?: number;
+      estimated_input_tokens?: number;
+      estimated_output_tokens?: number;
+      stream?: boolean;
+      required_capabilities?: string[];
+      keyword_text?: string;
+      metadata?: Record<string, string>;
+      rr_counter?: number;
+      simulate_failed_candidate_ids?: string[];
+    }
+
+    interface SimulateRoutePolicyResult {
+      decision: RouteDecision;
+      fx_rates: Record<string, number>;
+      estimated_savings: SimulatedSavings;
+      simulated_failover: SimulatedFailoverStep[];
+    }
+
+    interface PlaygroundRoutePolicyParams {
+      model_service_id: string;
+      prompt: string;
+      stream?: boolean;
+      required_capabilities?: string[];
+      metadata?: Record<string, string>;
+    }
+
+    interface PlaygroundAttemptRecord {
+      candidate_id: string;
+      provider: string;
+      account_id: string;
+      upstream_model: string;
+      status_code?: number;
+      error_code?: string;
+      error_message?: string;
+      latency_ms: number;
+      retry_count?: number;
+      outcome: string;
+    }
+
+    interface PlaygroundRoutePolicyResult {
+      request_id: string;
+      model_service_id: string;
+      model_service_name: string;
+      reply: string;
+      served_provider: string;
+      served_model: string;
+      input_tokens: number;
+      output_tokens: number;
+      cached_tokens: number;
+      reasoning_tokens: number;
+      cost: number;
+      currency: string;
+      total_ms: number;
+      attempts: PlaygroundAttemptRecord[];
+      decision: RouteDecision;
+    }
+
+    interface RoutePolicyOverview {
+      policy_id: string;
+      compare_currency: string;
+      days: number;
+      summary: {
+        requests: number;
+        success_requests: number;
+        fallback_requests: number;
+        success_rate: number | null;
+        fallback_rate: number | null;
+        avg_ttft_ms: number | null;
+        avg_latency_ms: number | null;
+        otps: number | null;
+        input_tokens: number;
+        output_tokens: number;
+        actual_cost: number;
+      };
+      baseline: {
+        compare_currency: string;
+        actual_cost: number;
+        candidate_id?: string;
+        upstream_model?: string;
+        provider?: string;
+        baseline_cost?: number;
+        saved_cost?: number;
+        savings_rate?: number | null;
+      };
+      by_model: {
+        candidate_id: string | null;
+        provider: string;
+        upstream_model: string;
+        requests: number;
+        success_requests: number;
+        fallback_requests: number;
+        hit_share: number;
+        success_rate: number;
+        avg_ttft_ms: number | null;
+        avg_latency_ms: number | null;
+        otps: number | null;
+        input_tokens: number;
+        output_tokens: number;
+        actual_cost: number;
+        avg_cost_per_req: number;
+      }[];
+      bound_services: BoundModelServiceSummary[];
+      candidate_options: {
+        id: string;
+        model_service: string;
+        provider: string;
+        account_name: string;
+        upstream_model: string;
+        cost_currency: string;
+        input_cost_per_m: number;
+        output_cost_per_m: number;
+      }[];
+    }
+
+    interface RoutePolicyMetrics {
+      kpis: {
+        requests: number;
+        rpm: number;
+        tpm: number;
+        success_rate: number | null;
+        fallback_rate: number | null;
+        ttft_p50_ms: number | null;
+        ttft_p95_ms: number | null;
+        avg_latency_ms: number | null;
+        otps: number | null;
+        total_cost: number;
+        compare_currency: string;
+      };
+      granularity: 'hour' | 'day';
+      series: {
+        bucket: string;
+        requests: number;
+        success_requests: number;
+        failed_requests: number;
+        fallback_requests: number;
+        avg_ttft_ms: number | null;
+        avg_latency_ms: number | null;
+        total_tokens: number;
+        cost: number;
+      }[];
+      error_distribution: { error_type: string; count: number }[];
+      available_models: string[];
+    }
+
+    interface RoutePolicyDecisionRecord {
+      id: string;
+      request_id: string;
+      policy_version: number | null;
+      strategy: string;
+      matched_rule_id: string | null;
+      matched_rule_name: string | null;
+      decision: string;
+      reason: string;
+      selected_candidate_id: string | null;
+      model_service_id: string | null;
+      model_service_name: string | null;
+      source: string;
+      state: string;
+      served_provider: string | null;
+      served_model: string | null;
+      first_token_ms: number | null;
+      total_ms: number | null;
+      cost: number | null;
+      cost_currency: string | null;
+      decision_detail: Partial<RouteDecision>;
+      attempt_trail: { attempts?: PlaygroundAttemptRecord[] };
+      created_at: string;
+    }
+
+    interface RoutePolicyDecisionsPage {
+      items: RoutePolicyDecisionRecord[];
+      total: number;
+      page: number;
+      page_size: number;
     }
   }
 }

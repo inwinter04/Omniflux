@@ -1,7 +1,6 @@
 package dataplane
 
 import (
-	"encoding/json"
 	"net/http"
 	"time"
 
@@ -61,13 +60,6 @@ func (d Deps) ListModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": data})
-}
-
-func writeJSON(w http.ResponseWriter, status int, body any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	enc := json.NewEncoder(w)
-	_ = enc.Encode(body)
 }
 
 var _ = uuid.Nil

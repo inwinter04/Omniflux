@@ -10,17 +10,24 @@ import (
 
 // pendingUsage 是请求开始时写入 usage_records 与 policy_decisions 的最小事实。
 type pendingUsage struct {
-	RequestID      uuid.UUID
-	OrganizationID uuid.UUID
-	ProjectID      uuid.UUID
-	ApplicationID  uuid.UUID
-	APIKeyID       uuid.UUID
-	ModelServiceID uuid.UUID
-	RoutePolicyID  *uuid.UUID
-	Reason         string
-	Candidates     []byte // jsonb: 配置的候选列表
-	SelectedID     *uuid.UUID
-	FallbackIDs    []uuid.UUID
+	RequestID       uuid.UUID
+	OrganizationID  uuid.UUID
+	ProjectID       *uuid.UUID
+	ApplicationID   *uuid.UUID
+	APIKeyID        *uuid.UUID
+	ActorUserID     *uuid.UUID
+	Source          string
+	ModelServiceID  uuid.UUID
+	RoutePolicyID   *uuid.UUID
+	PolicyVersion   *int
+	Strategy        string
+	MatchedRuleID   string
+	MatchedRuleName string
+	DecisionDetail  []byte
+	Reason          string
+	Candidates      []byte // jsonb: 配置的候选列表
+	SelectedID      *uuid.UUID
+	FallbackIDs     []uuid.UUID
 }
 
 // finalUsage 是请求结束后对 usage_records 与 policy_decisions 的定稿更新。
@@ -45,27 +52,38 @@ type finalUsage struct {
 }
 
 type usageStore struct {
-	pool *pgxpool.Pool
+	pool    *pgxpool.Pool
+	fxRates map[string]float64
 }
 
-// insertPending 在一个事务里写入 pending 用量与 allowed 路由决策。
+// insertPending 在一个事务里写入 pending 用量与 allowed 路由决策快照。
 func (s usageStore) insertPending(ctx context.Context, p pendingUsage) error {
+	source := p.Source
+	if source == "" {
+		source = "api"
+	}
+	detail := p.DecisionDetail
+	if len(detail) == 0 {
+		detail = []byte("{}")
+	}
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO usage_records(
 				request_id, organization_id, project_id, application_id, api_key_id,
-				model_service_id, route_policy_id, state
-			) VALUES ($1,$2,$3,$4,$5,$6,$7,'pending')
-		`, p.RequestID, p.OrganizationID, p.ProjectID, p.ApplicationID, p.APIKeyID,
-			p.ModelServiceID, nullableUUID(p.RoutePolicyID)); err != nil {
+				actor_user_id, source, model_service_id, route_policy_id, state
+			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending')
+		`, p.RequestID, p.OrganizationID, nullableUUID(p.ProjectID), nullableUUID(p.ApplicationID), nullableUUID(p.APIKeyID),
+			nullableUUID(p.ActorUserID), source, p.ModelServiceID, nullableUUID(p.RoutePolicyID)); err != nil {
 			return err
 		}
 		_, err := tx.Exec(ctx, `
 			INSERT INTO policy_decisions(
 				request_id, organization_id, api_key_id, route_policy_id,
+				policy_version, strategy, matched_rule_id, matched_rule_name, decision_detail,
 				decision, reason, candidates, selected_candidate_id, fallback_candidate_ids
-			) VALUES ($1,$2,$3,$4,'allowed',$5,$6,$7,$8)
-		`, p.RequestID, p.OrganizationID, p.APIKeyID, nullableUUID(p.RoutePolicyID),
+			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'allowed',$10,$11,$12,$13)
+		`, p.RequestID, p.OrganizationID, nullableUUID(p.APIKeyID), nullableUUID(p.RoutePolicyID),
+			nullableInt(p.PolicyVersion), nullableStringValue(p.Strategy), nullableStringValue(p.MatchedRuleID), nullableStringValue(p.MatchedRuleName), detail,
 			p.Reason, p.Candidates, nullableUUID(p.SelectedID), p.FallbackIDs)
 		return err
 	})
@@ -101,7 +119,7 @@ func (s usageStore) finalize(ctx context.Context, requestID uuid.UUID, f finalUs
 	})
 	if err == nil {
 		// 定稿是所有请求的唯一出口,业务指标在这里统一采集。
-		recordFinalizedMetrics(f)
+		recordFinalizedMetrics(f, s.fxRates)
 	}
 	return err
 }
@@ -118,6 +136,13 @@ func nullableString(v *string) any {
 		return nil
 	}
 	return *v
+}
+
+func nullableStringValue(v string) any {
+	if v == "" {
+		return nil
+	}
+	return v
 }
 
 func nullableInt(v *int) any {

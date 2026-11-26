@@ -7,6 +7,32 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 )
 
+// AttemptRecord 结构化记录单次上游候选调用的结果与耗时。
+type AttemptRecord struct {
+	CandidateID   string `json:"candidate_id"`
+	Provider      string `json:"provider"`
+	UpstreamModel string `json:"upstream_model"`
+	StatusCode    int    `json:"status_code,omitempty"`
+	ErrorClass    string `json:"error_class,omitempty"`
+	ErrorType     string `json:"error_type,omitempty"`
+	ErrorMessage  string `json:"error_message,omitempty"`
+	LatencyMS     int    `json:"latency_ms"`
+	RetryCount    int    `json:"retry_count,omitempty"`
+	Outcome       string `json:"outcome"` // success / failed / ttft_timeout / skipped_same_account
+}
+
+// attemptTrailFromRecords 生成结构化的 attempt_trail JSON，包含每次尝试明细及摘要。
+func attemptTrailFromRecords(records []AttemptRecord) []byte {
+	if records == nil {
+		records = []AttemptRecord{}
+	}
+	data, err := json.Marshal(map[string]any{"attempts": records})
+	if err != nil {
+		return []byte(`{"attempts":[]}`)
+	}
+	return data
+}
+
 // usageSnapshot 是流式过程中累积的 token 用量。
 type usageSnapshot struct {
 	InputTokens     int64
@@ -19,7 +45,6 @@ func (u usageSnapshot) hasTokens() bool {
 	return u.InputTokens > 0 || u.OutputTokens > 0 || u.CachedTokens > 0 || u.ReasoningTokens > 0
 }
 
-// usageInfo 是从 Bifrost 响应中提取的用量。
 type usageInfo usageSnapshot
 
 func usageFromBifrost(u *schemas.BifrostLLMUsage) usageInfo {
@@ -45,33 +70,21 @@ func (u usageInfo) hasTokens() bool {
 	return usageSnapshot(u).hasTokens()
 }
 
-// routingEngineLogs 读取 Bifrost 本次请求的路由引擎日志,
-// 包含主候选失败、每次 fallback/重试的尝试与错误摘要。
-func routingEngineLogs(bctx *schemas.BifrostContext) []schemas.RoutingEngineLogEntry {
-	if bctx == nil {
-		return nil
-	}
-	return bctx.GetRoutingEngineLogs()
-}
-
-// attemptTrailJSON 生成 policy_decisions.attempt_trail:
-//   - attempts: 最终结果摘要(成功记实际服务的候选,失败/中断记错误);
-//   - engine_logs: Bifrost 路由引擎的过程日志,保证 fallback 生效时主候选的失败原因可追溯。
+// attemptTrailJSON 生成兼容的 attempt_trail(供 embeddings 等单入口调用使用)。
 func attemptTrailJSON(chain routeChain, served candidate, outcome, errorMessage string, logs []schemas.RoutingEngineLogEntry) []byte {
-	trail := []map[string]any{}
+	trail := []AttemptRecord{}
 	if outcome == "success" {
-		trail = append(trail, map[string]any{
-			"candidate_id":   served.ID,
-			"provider":       served.Provider,
-			"model":          served.UpstreamModel,
-			"outcome":        outcome,
+		trail = append(trail, AttemptRecord{
+			CandidateID:   served.ID,
+			Provider:      served.Provider,
+			UpstreamModel: served.UpstreamModel,
+			Outcome:       outcome,
 		})
 	} else {
-		entry := map[string]any{"outcome": outcome}
-		if errorMessage != "" {
-			entry["error"] = errorMessage
-		}
-		trail = append(trail, entry)
+		trail = append(trail, AttemptRecord{
+			ErrorMessage: errorMessage,
+			Outcome:      outcome,
+		})
 	}
 	engineLogs := make([]map[string]any, 0, len(logs))
 	for _, log := range logs {
@@ -104,15 +117,14 @@ type chatCompletionUsage struct {
 }
 
 type chatCompletionResponse struct {
-	ID      string                `json:"id"`
-	Object  string                `json:"object"`
-	Created int                   `json:"created"`
-	Model   string                `json:"model"`
+	ID      string                 `json:"id"`
+	Object  string                 `json:"object"`
+	Created int                    `json:"created"`
+	Model   string                 `json:"model"`
 	Choices []chatCompletionChoice `json:"choices"`
-	Usage   chatCompletionUsage   `json:"usage"`
+	Usage   chatCompletionUsage    `json:"usage"`
 }
 
-// chatCompletionResponseFrom 把 Bifrost 响应映射为 OpenAI 兼容响应;model 字段回显请求的模型服务名。
 func chatCompletionResponseFrom(servedModel, requestedModel string, resp *schemas.BifrostChatResponse, usage usageInfo) chatCompletionResponse {
 	model := requestedModel
 	if model == "" {
@@ -142,11 +154,9 @@ func chatCompletionResponseFrom(servedModel, requestedModel string, resp *schema
 
 // --- 小工具 ---
 
-func intPtr(v int) *int { return &v }
-
+func intPtr(v int) *int       { return &v }
 func stringPtr(v string) *string { return &v }
 
-// stringPtrNil 在 cond 为 false 时返回 NULL。
 func stringPtrNil(v string, cond bool) *string {
 	if !cond {
 		return nil

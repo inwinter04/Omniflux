@@ -10,6 +10,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/inwinter04/omniflux/internal/bifrostx"
+	"github.com/inwinter04/omniflux/internal/fx"
 )
 
 // Deps 是数据面处理器的依赖集合。
@@ -17,15 +18,40 @@ type Deps struct {
 	Logger           *slog.Logger
 	Pool             *pgxpool.Pool
 	Engine           *bifrostx.Engine
+	FX               *fx.Service
 	APIKeyPepper     string
 	OnTransportError func(providerKey string)
 
 	rateLimiter *rateLimiter
+	breaker     *CandidateBreaker
 }
 
-// SetRateLimit 配置基础限流;limit<=0 或 Redis 不可用时禁用。
+// SetRateLimit 配置基础限流与候选短期熔断共享的 Redis 客户端。
 func (d *Deps) SetRateLimit(client *redis.Client, limit int) {
 	d.rateLimiter = newRateLimiter(client, limit)
+	d.breaker = NewCandidateBreaker(client)
+}
+
+// RateLimit 提供与 SetRateLimit 配套的 API Key 基础限流中间件。
+func (d Deps) RateLimit(next http.Handler) http.Handler {
+	if d.rateLimiter == nil {
+		return next
+	}
+	return d.rateLimiter.middleware(next)
+}
+
+func (d *Deps) Breaker() *CandidateBreaker {
+	if d.breaker == nil {
+		d.breaker = NewCandidateBreaker(nil)
+	}
+	return d.breaker
+}
+
+func (d *Deps) fxRatesSnapshot() map[string]float64 {
+	if d.FX != nil {
+		return d.FX.Snapshot()
+	}
+	return (&fx.Service{}).Snapshot()
 }
 
 type apiErrorOptions struct {
@@ -100,31 +126,41 @@ func newAPIErrorObject(status int, code, message string, options apiErrorOptions
 	}
 }
 
-// apiError 输出语言中立、机器可读的 OpenAI 兼容错误。
-func apiError(w http.ResponseWriter, status int, code, message string, options ...apiErrorOptions) {
-	opts := apiErrorOptions{}
-	if len(options) > 0 {
-		opts = options[0]
+func writeErrorObject(w http.ResponseWriter, status int, errObj apiErrorObject) {
+	if errObj.RequestID != "" {
+		w.Header().Set("X-Request-ID", errObj.RequestID)
 	}
-	obj := newAPIErrorObject(status, code, message, opts)
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("X-Request-ID", obj.RequestID)
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(apiErrorEnvelope{Error: obj})
+	_ = json.NewEncoder(w).Encode(apiErrorEnvelope{Error: errObj})
 }
 
-func apiErrorEvent(status int, code, message, requestID string, options ...apiErrorOptions) json.RawMessage {
-	opts := apiErrorOptions{RequestID: requestID}
-	if len(options) > 0 {
-		opts = options[0]
-		opts.RequestID = requestID
+// apiError 按 OpenAI 兼容格式返回数据面错误并携带稳定 code/reason 与 X-Request-ID。
+func apiError(w http.ResponseWriter, status int, code, message string, opts ...apiErrorOptions) {
+	var option apiErrorOptions
+	if len(opts) > 0 {
+		option = opts[0]
 	}
-	obj := newAPIErrorObject(status, code, message, opts)
-	payload, _ := json.Marshal(apiErrorEnvelope{Error: obj})
+	writeErrorObject(w, status, newAPIErrorObject(status, code, message, option))
+}
+
+func apiErrorEvent(status int, code, message, requestID string, opts ...apiErrorOptions) []byte {
+	var option apiErrorOptions
+	if len(opts) > 0 {
+		option = opts[0]
+	}
+	if option.RequestID == "" {
+		option.RequestID = requestID
+	}
+	payload, err := json.Marshal(apiErrorEnvelope{Error: newAPIErrorObject(status, code, message, option)})
+	if err != nil {
+		return []byte(`{"error":{"type":"server_error","code":"internal_error","reason":"internal_error","message":"Internal error."}}`)
+	}
 	return payload
 }
 
-// RateLimit 返回数据面限流中间件。
-func (d Deps) RateLimit(next http.Handler) http.Handler {
-	return d.rateLimiter.middleware(next)
+func writeJSON(w http.ResponseWriter, status int, data any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(data)
 }

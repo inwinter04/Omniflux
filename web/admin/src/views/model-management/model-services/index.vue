@@ -44,6 +44,9 @@ interface CandidateForm {
   output_cost_per_million: number;
   quality_score: number;
   cost_currency: string;
+  context_window: number | null;
+  capabilities: string[];
+  tags: string[];
   status: 'active' | 'disabled';
 }
 
@@ -111,6 +114,26 @@ const candidateColumns = computed<DataTableColumns<Api.Management.ModelCandidate
     render: row => `${row.output_cost_per_million} ${row.cost_currency}`
   },
   { title: $t('business.quality-score'), key: 'quality_score', width: 80 },
+  {
+    title: $t('business.capabilities-and-tags'),
+    key: 'metadata',
+    minWidth: 190,
+    render: row => {
+      const items: ReturnType<typeof h>[] = [];
+      if (row.context_window) {
+        items.push(
+          h(NTag, { size: 'tiny', type: 'info', bordered: false }, { default: () => `${Math.round(row.context_window! / 1000)}k` })
+        );
+      }
+      for (const cap of row.capabilities ?? []) {
+        items.push(h(NTag, { size: 'tiny', type: 'primary', bordered: false }, { default: () => cap }));
+      }
+      for (const tag of row.tags ?? []) {
+        items.push(h(NTag, { size: 'tiny', bordered: true }, { default: () => tag }));
+      }
+      return items.length ? h(NSpace, { size: 4 }, { default: () => items }) : '-';
+    }
+  },
   {
     title: $t('business.status'),
     key: 'status',
@@ -333,6 +356,9 @@ function makeCandidate(): CandidateForm {
     output_cost_per_million: 0,
     quality_score: 0.5,
     cost_currency: accountOptions.value[0]?.currency ?? 'USD',
+    context_window: null,
+    capabilities: [],
+    tags: [],
     status: 'active'
   };
 }
@@ -373,6 +399,9 @@ async function openDiscoveredModels() {
           : 0,
       quality_score: 0.5,
       cost_currency: accountOptions.value.find(item => item.value === accountID)?.currency ?? 'USD',
+      context_window: null,
+      capabilities: [],
+      tags: [],
       status: 'active'
     };
   });
@@ -395,6 +424,9 @@ function openEdit(row: Api.Management.ModelService) {
     output_cost_per_million: item.output_cost_per_million,
     quality_score: item.quality_score,
     cost_currency: item.cost_currency,
+    context_window: item.context_window ?? null,
+    capabilities: [...(item.capabilities ?? [])],
+    tags: [...(item.tags ?? [])],
     status: item.status === 'disabled' ? 'disabled' : 'active'
   }));
   showEdit.value = true;
@@ -422,6 +454,9 @@ function toCandidateParams(candidates: CandidateForm[]) {
     output_cost_per_million: item.output_cost_per_million,
     quality_score: item.quality_score,
     cost_currency: item.cost_currency,
+    context_window: item.context_window,
+    capabilities: item.capabilities,
+    tags: item.tags,
     status: item.status
   }));
 }

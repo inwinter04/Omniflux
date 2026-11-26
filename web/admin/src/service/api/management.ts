@@ -980,3 +980,91 @@ export function fetchUpdateUserPermissions(id: string, params: Api.Management.Up
     data: params
   });
 }
+
+export function fetchFXRates() {
+  return request<Api.Management.FXRatesPayload>({ url: '/system/fx-rates' });
+}
+
+export function fetchUpdateFXSettings(params: { auto_sync_enabled: boolean; sync_interval_hours: number }) {
+  return request<Api.Management.FXRateSettings>({
+    url: '/system/fx-rates/settings',
+    method: 'patch',
+    data: params
+  });
+}
+
+export function fetchUpdateFXRate(currency: string, params: { rate_per_usd: number; manual_override?: boolean }) {
+  return request<Api.Management.FXRateEntry>({
+    url: `/system/fx-rates/${currency}`,
+    method: 'put',
+    data: params
+  });
+}
+
+export function fetchSyncFXRates() {
+  return request<Api.Management.FXRatesPayload>({
+    url: '/system/fx-rates/sync',
+    method: 'post'
+  });
+}
+
+export function fetchCloneRoutePolicy(id: string, name?: string) {
+  return request<{ id: string; name: string }>({
+    url: `/route-policies/${id}/clone`,
+    method: 'post',
+    data: name ? { name } : undefined
+  });
+}
+
+export function fetchSimulateRoutePolicy(params: Api.Management.SimulateRoutePolicyParams) {
+  return request<Api.Management.SimulateRoutePolicyResult>({
+    url: '/route-policies/simulate',
+    method: 'post',
+    data: params
+  });
+}
+
+export function fetchPlaygroundRoutePolicy(id: string, params: Api.Management.PlaygroundRoutePolicyParams) {
+  return request<Api.Management.PlaygroundRoutePolicyResult>({
+    url: `/route-policies/${id}/playground`,
+    method: 'post',
+    data: params
+  });
+}
+
+export function fetchRoutePolicyOverview(
+  id: string,
+  params?: { days?: number; model_service_id?: string | null; source?: string | null; baseline_candidate_id?: string | null }
+) {
+  return request<Api.Management.RoutePolicyOverview>({
+    url: `/route-policies/${id}/overview`,
+    params
+  });
+}
+
+export function fetchRoutePolicyMetrics(
+  id: string,
+  params?: { days?: number; model_service_id?: string | null; source?: string | null; upstream_models?: string }
+) {
+  return request<Api.Management.RoutePolicyMetrics>({
+    url: `/route-policies/${id}/metrics`,
+    params
+  });
+}
+
+export function fetchRoutePolicyDecisions(
+  id: string,
+  params?: {
+    page?: number;
+    page_size?: number;
+    state?: string | null;
+    fallback_only?: boolean;
+    source?: string | null;
+    model_service_id?: string | null;
+  }
+) {
+  return request<Api.Management.RoutePolicyDecisionsPage>({
+    url: `/route-policies/${id}/decisions`,
+    params
+  });
+}

@@ -16,6 +16,7 @@ import (
 	"github.com/inwinter04/omniflux/internal/bifrostx"
 	"github.com/inwinter04/omniflux/internal/console"
 	"github.com/inwinter04/omniflux/internal/dataplane"
+	"github.com/inwinter04/omniflux/internal/fx"
 	"github.com/inwinter04/omniflux/internal/governance"
 	"github.com/inwinter04/omniflux/internal/infra"
 	"github.com/inwinter04/omniflux/internal/mail"
@@ -26,6 +27,8 @@ type ServerDeps struct {
 	Pool            *pgxpool.Pool
 	Redis           *redis.Client
 	Engine          *bifrostx.Engine
+	FX              *fx.Service
+	Plane           *dataplane.Deps
 	Auth            *auth.Store
 	Env             string
 	MasterKey       []byte
@@ -78,10 +81,12 @@ func New(deps ServerDeps) http.Handler {
 		Logger:           deps.Logger,
 		Pool:             deps.Pool,
 		Engine:           deps.Engine,
+		FX:               deps.FX,
 		APIKeyPepper:     deps.APIKeyPepper,
 		OnTransportError: onTransportError,
 	}
 	plane.SetRateLimit(deps.Redis, deps.RateLimitPerMin)
+	deps.Plane = &plane
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(plane.RequireAPIKey)
 		r.Use(plane.RateLimit)
@@ -121,6 +126,10 @@ func New(deps ServerDeps) http.Handler {
 			r.Get("/system/email/settings", deps.EmailSettings)
 			r.Patch("/system/email/settings", deps.UpdateEmailSettings)
 			r.Post("/system/email/test", deps.TestEmailSettings)
+			r.Get("/system/fx-rates", deps.FXRates)
+			r.Patch("/system/fx-rates/settings", deps.UpdateFXSettings)
+			r.Put("/system/fx-rates/{currency}", deps.UpdateFXRate)
+			r.Post("/system/fx-rates/sync", deps.SyncFXRates)
 			r.Get("/organizations", deps.Organizations)
 			r.Post("/organizations", deps.CreateOrganization)
 			r.Patch("/organizations/{id}", deps.UpdateOrganization)
@@ -169,8 +178,14 @@ func New(deps ServerDeps) http.Handler {
 			r.Patch("/provider-health/settings", deps.UpdateProviderHealthSettings)
 			r.Get("/route-policies", deps.RoutePolicies)
 			r.Post("/route-policies", deps.CreateRoutePolicy)
+			r.Post("/route-policies/simulate", deps.SimulateRoutePolicy)
 			r.Patch("/route-policies/{id}", deps.UpdateRoutePolicy)
 			r.Patch("/route-policies/{id}/status", deps.UpdateRoutePolicyStatus)
+			r.Post("/route-policies/{id}/clone", deps.CloneRoutePolicy)
+			r.Post("/route-policies/{id}/playground", deps.PlaygroundRoutePolicy)
+			r.Get("/route-policies/{id}/overview", deps.RoutePolicyOverview)
+			r.Get("/route-policies/{id}/metrics", deps.RoutePolicyMetrics)
+			r.Get("/route-policies/{id}/decisions", deps.RoutePolicyDecisions)
 			r.Delete("/route-policies/{id}", deps.DeleteRoutePolicy)
 			r.Get("/model-services", deps.ModelServices)
 			r.Post("/model-services", deps.CreateModelService)

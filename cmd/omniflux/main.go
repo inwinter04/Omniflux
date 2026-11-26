@@ -20,6 +20,7 @@ import (
 	"github.com/inwinter04/omniflux/internal/bifrostx"
 	"github.com/inwinter04/omniflux/internal/bootstrap"
 	"github.com/inwinter04/omniflux/internal/config"
+	"github.com/inwinter04/omniflux/internal/fx"
 	"github.com/inwinter04/omniflux/internal/governance"
 	"github.com/inwinter04/omniflux/internal/httpx"
 	"github.com/inwinter04/omniflux/internal/infra"
@@ -115,9 +116,11 @@ func run() error {
 	}
 	authStore := auth.NewStore(pool)
 	mailer := mail.NewService(pool, cfg.MasterKey)
+	fxService := fx.NewService(pool, logger)
+	fxService.Start(ctx)
 	handler := httpx.New(httpx.ServerDeps{
 		Logger: logger, Pool: pool, Redis: redisClient, Engine: engine,
-		Auth: authStore, Mailer: mailer, Env: cfg.Env,
+		FX: fxService, Auth: authStore, Mailer: mailer, Env: cfg.Env,
 		MasterKey: cfg.MasterKey, APIKeyPepper: cfg.APIKeyPepper,
 		Governance:      gov,
 		ReloadEngine:    reloadEngine,

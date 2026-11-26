@@ -1,241 +1,141 @@
 <script setup lang="ts">
-import { h, onMounted, reactive, ref, computed } from 'vue';
-import { useRoute } from 'vue-router';
-import { NButton, NPopconfirm, NSpace, NTag } from 'naive-ui';
-import type { DataTableColumns, FormInst, FormRules, SelectOption } from 'naive-ui';
-import { formatTime, statusTagType, statusText } from '@/utils/admin-status';
+import { computed, h, onMounted, ref } from 'vue';
+import { useRouter } from 'vue-router';
+import { NButton, NDropdown, NPopconfirm, NSpace, NTag, useDialog } from 'naive-ui';
+import type { DataTableColumns, DropdownOption, SelectGroupOption, SelectOption } from 'naive-ui';
+import {
+  formatTime,
+  routeStrategyTagType,
+  routeStrategyText,
+  statusTagType,
+  statusText
+} from '@/utils/admin-status';
 import { providerGroupLabel } from '@/utils/provider-catalog';
 import {
-  fetchCreateRoutePolicy,
+  fetchCloneRoutePolicy,
   fetchDeleteRoutePolicy,
+  fetchModelServices,
   fetchProviderCatalog,
   fetchRoutePolicies,
-  fetchUpdateRoutePolicy,
   fetchUpdateRoutePolicyStatus
 } from '@/service/api';
 import { $t } from '@/locales';
 import { usePermission } from '@/hooks/common/permission';
+import { useStrategyOptions, type PolicyDraftModel } from './modules/policy-shared';
+import PolicyEditorDrawer from './modules/policy-editor-drawer.vue';
+import PolicySimulatorModal from './modules/policy-simulator-modal.vue';
+import PolicyPlaygroundModal from './modules/policy-playground-modal.vue';
+import PolicyDetailDrawer from './modules/policy-detail-drawer.vue';
 
 defineOptions({
   name: 'ModelManagementRoutePolicies'
 });
 
+const router = useRouter();
+const dialog = useDialog();
 const { has } = usePermission();
 const canManage = computed(() => has('route_policy:manage'));
-const route = useRoute();
 
-const strategyOptions = computed(() => [
-  { label: $t('business.cost-first'), value: 'cost_first' },
-  { label: $t('business.quality-first'), value: 'quality_first' },
-  { label: $t('business.balanced'), value: 'balanced' }
-]);
-
-// 厂商目录驱动的约束选项;目录加载失败时保留协议级兜底选项。
-const legacyProviderOptions = [
+const loading = ref(true);
+const policies = ref<Api.Management.RoutePolicy[]>([]);
+const modelServices = ref<Api.Management.ModelService[]>([]);
+const providerOptions = ref<(SelectOption | SelectGroupOption)[]>([
   { label: 'OpenAI', value: 'openai' },
-  { label: 'Azure OpenAI', value: 'azure_openai' },
   { label: 'Anthropic', value: 'anthropic' },
   { label: 'Gemini', value: 'gemini' },
-  { label: 'Vertex AI', value: 'vertex' },
-  { label: 'AWS Bedrock', value: 'bedrock' },
   { label: 'OpenAI Compatible', value: 'openai_compatible' }
-];
+]);
 
-const constraintProviderOptions = ref<SelectOption[]>(legacyProviderOptions);
+const searchText = ref('');
+const strategyFilter = ref<string | null>(null);
+const statusFilter = ref<string | null>(null);
+
+const strategyOptions = useStrategyOptions();
+const statusOptions = computed<SelectOption[]>(() => [
+  { label: $t('business.enable'), value: 'active' },
+  { label: $t('business.disabled'), value: 'disabled' }
+]);
+
+const editorShow = ref(false);
+const editorMode = ref<'create' | 'edit'>('create');
+const editorPolicy = ref<Api.Management.RoutePolicy | null>(null);
+
+const simulatorShow = ref(false);
+const simulatorPolicyId = ref<string | null>(null);
+const simulatorDraft = ref<PolicyDraftModel | null>(null);
+
+const playgroundShow = ref(false);
+const playgroundPolicy = ref<Api.Management.RoutePolicy | null>(null);
+
+const detailShow = ref(false);
+const detailPolicy = ref<Api.Management.RoutePolicy | null>(null);
+
+const filteredPolicies = computed(() =>
+  policies.value.filter(item => {
+    if (searchText.value.trim()) {
+      const q = searchText.value.trim().toLowerCase();
+      const matchName = item.name.toLowerCase().includes(q);
+      const matchSvc = (item.bound_services ?? []).some(s => s.name.toLowerCase().includes(q));
+      if (!matchName && !matchSvc) return false;
+    }
+    if (strategyFilter.value && item.strategy !== strategyFilter.value) return false;
+    if (statusFilter.value && item.status !== statusFilter.value) return false;
+    return true;
+  })
+);
+
+const kpiSummary = computed(() => {
+  const total = policies.value.length;
+  const active = policies.value.filter(p => p.status === 'active').length;
+  const boundSvcSet = new Set<string>();
+  let req24h = 0;
+  let weightedFallback = 0;
+  for (const p of policies.value) {
+    for (const s of p.bound_services ?? []) boundSvcSet.add(s.id);
+    req24h += p.requests_24h ?? 0;
+    if (p.requests_24h && p.fallback_rate_24h !== null && p.fallback_rate_24h !== undefined) {
+      weightedFallback += p.requests_24h * p.fallback_rate_24h;
+    }
+  }
+  const fbPct = req24h > 0 ? `${Math.round((weightedFallback / req24h) * 1000) / 10}%` : '-';
+  return { total, active, boundServices: boundSvcSet.size, req24h, fbPct };
+});
 
 async function loadCatalog() {
   if (!has('provider:read')) return;
   const { data, error } = await fetchProviderCatalog();
   if (error || !data) return;
-  const options: SelectOption[] = [];
+  const options: (SelectOption | SelectGroupOption)[] = [];
   for (const group of data) {
     if (group.group === 'custom') continue;
     options.push({
       type: 'group',
       label: providerGroupLabel(group),
       key: group.group,
-      children: group.entries.map(entry => ({
-        label: entry.name,
-        value: entry.id
-      }))
+      children: group.entries.map(entry => ({ label: entry.name, value: entry.id }))
     });
   }
   options.push({
     type: 'group',
     label: $t('business.custom'),
     key: 'custom',
-    children: [
-      {
-        label: $t('business.custom-openai-compatible'),
-        value: 'openai_compatible'
-      }
-    ]
+    children: [{ label: $t('business.custom-openai-compatible'), value: 'openai_compatible' }]
   });
-  constraintProviderOptions.value = options;
+  providerOptions.value = options;
 }
-
-const loading = ref(true);
-const list = ref<Api.Management.RoutePolicy[]>([]);
-
-const showCreate = ref(false);
-const showEdit = ref(false);
-const submitting = ref(false);
-const formRef = ref<FormInst | null>(null);
-const editFormRef = ref<FormInst | null>(null);
-const formModel = reactive({
-  name: '',
-  strategy: 'balanced',
-  fallback_limit: 2,
-  provider_timeout_ms: 60000,
-  first_token_timeout_ms: 15000,
-  allowed_providers: [] as string[],
-  blocked_providers: [] as string[],
-  allowed_upstream_models: [] as string[],
-  blocked_upstream_models: [] as string[],
-  max_cost_per_million: null as number | null
-});
-const editModel = reactive({
-  id: '',
-  name: '',
-  strategy: 'balanced',
-  fallback_limit: 2,
-  provider_timeout_ms: 60000,
-  first_token_timeout_ms: 15000,
-  allowed_providers: [] as string[],
-  blocked_providers: [] as string[],
-  allowed_upstream_models: [] as string[],
-  blocked_upstream_models: [] as string[],
-  max_cost_per_million: null as number | null
-});
-
-const formRules = computed<FormRules>(() => ({
-  name: {
-    required: true,
-    message: $t('business.enter-a-policy-name'),
-    trigger: 'blur'
-  }
-}));
-const editRules = computed<FormRules>(() => ({
-  name: {
-    required: true,
-    message: $t('business.enter-a-policy-name'),
-    trigger: 'blur'
-  }
-}));
-
-function strategyLabel(value: string) {
-  return strategyOptions.value.find(item => item.value === value)?.label ?? value;
-}
-
-// 列顺序把状态、健康等关键信息排在前面:列多于一屏宽度时,这些列在常见窗口下仍然可见,其余列横向滚动查看。
-const columns = computed<DataTableColumns<Api.Management.RoutePolicy>>(() => [
-  { title: $t('business.name'), key: 'name', ellipsis: { tooltip: true }, width: 160 },
-  {
-    title: $t('business.strategy'),
-    key: 'strategy',
-    width: 180,
-    render: row => strategyLabel(row.strategy)
-  },
-  {
-    title: $t('business.status'),
-    key: 'status',
-    width: 90,
-    render(row) {
-      return h(
-        NTag,
-        { type: statusTagType(row.status), size: 'small', round: true },
-        { default: () => statusText(row.status, 'policy') }
-      );
-    }
-  },
-  { title: $t('business.version'), key: 'version', width: 70 },
-  { title: $t('business.failover-limit'), key: 'fallback_limit', width: 120 },
-  {
-    title: $t('business.upstream-timeout-ms'),
-    key: 'provider_timeout_ms',
-    width: 120
-  },
-  {
-    title: $t('business.first-token-timeout-ms'),
-    key: 'first_token_timeout_ms',
-    width: 140
-  },
-  {
-    title: $t('business.updated-at'),
-    key: 'updated_at',
-    width: 180,
-    render: row => formatTime(row.updated_at)
-  },
-  {
-    title: $t('business.actions'),
-    key: 'actions',
-    width: 230,
-    // 操作列固定在右侧:列多于一屏宽度时,行内操作不用横向滚动也能点到。
-    fixed: 'right',
-    render(row) {
-      if (!canManage.value) return '';
-      return h(
-        NSpace,
-        { size: 4 },
-        {
-          default: () => [
-            h(
-              NButton,
-              {
-                size: 'small',
-                quaternary: true,
-                type: 'primary',
-                onClick: () => openEdit(row)
-              },
-              { default: () => $t('business.edit') }
-            ),
-            // 停用会立即影响线上路由,需要确认;启用直接执行。
-            row.status === 'active'
-              ? h(
-                  NPopconfirm,
-                  { onPositiveClick: () => toggleStatus(row) },
-                  {
-                    trigger: () =>
-                      h(NButton, { size: 'small', quaternary: true, type: 'warning' }, { default: () => $t('business.disabled') }),
-                    default: () => $t('business.route-policy-disable-confirm')
-                  }
-                )
-              : h(
-                  NButton,
-                  {
-                    size: 'small',
-                    quaternary: true,
-                    type: 'success',
-                    onClick: () => toggleStatus(row)
-                  },
-                  { default: () => $t('business.enable') }
-                ),
-            h(
-              NPopconfirm,
-              { onPositiveClick: () => handleDelete(row.id) },
-              {
-                trigger: () =>
-                  h(
-                    NButton,
-                    { size: 'small', type: 'error', quaternary: true },
-                    { default: () => $t('business.delete') }
-                  ),
-                default: () => $t('business.deletion-is-blocked-when-the')
-              }
-            )
-          ]
-        }
-      );
-    }
-  }
-]);
 
 async function loadData() {
   loading.value = true;
   try {
-    const { data, error } = await fetchRoutePolicies();
-    if (!error && data) {
-      list.value = data;
+    const [polRes, svcRes] = await Promise.all([
+      fetchRoutePolicies(),
+      has('model_service:read') ? fetchModelServices() : Promise.resolve({ data: null, error: null })
+    ]);
+    if (!polRes.error && polRes.data) {
+      policies.value = polRes.data;
+    }
+    if (!svcRes.error && svcRes.data) {
+      modelServices.value = svcRes.data;
     }
   } finally {
     loading.value = false;
@@ -243,100 +143,56 @@ async function loadData() {
 }
 
 function openCreate() {
-  formModel.name = '';
-  formModel.strategy = 'balanced';
-  formModel.fallback_limit = 2;
-  formModel.provider_timeout_ms = 60000;
-  formModel.first_token_timeout_ms = 15000;
-  formModel.allowed_providers = [];
-  formModel.blocked_providers = [];
-  formModel.allowed_upstream_models = [];
-  formModel.blocked_upstream_models = [];
-  formModel.max_cost_per_million = null;
-  showCreate.value = true;
-}
-
-function buildConstraints(): Api.Management.RouteConstraints | undefined {
-  const c: Api.Management.RouteConstraints = {};
-  if (formModel.allowed_providers.length > 0) c.allowed_providers = formModel.allowed_providers;
-  if (formModel.blocked_providers.length > 0) c.blocked_providers = formModel.blocked_providers;
-  if (formModel.allowed_upstream_models.length > 0) c.allowed_upstream_models = formModel.allowed_upstream_models;
-  if (formModel.blocked_upstream_models.length > 0) c.blocked_upstream_models = formModel.blocked_upstream_models;
-  if (formModel.max_cost_per_million != null) c.max_cost_per_million = formModel.max_cost_per_million;
-  return Object.keys(c).length > 0 ? c : undefined;
+  editorMode.value = 'create';
+  editorPolicy.value = null;
+  editorShow.value = true;
 }
 
 function openEdit(row: Api.Management.RoutePolicy) {
-  editModel.id = row.id;
-  editModel.name = row.name;
-  editModel.strategy = row.strategy;
-  editModel.fallback_limit = row.fallback_limit;
-  editModel.provider_timeout_ms = row.provider_timeout_ms;
-  editModel.first_token_timeout_ms = row.first_token_timeout_ms;
-  editModel.allowed_providers = [...(row.constraints.allowed_providers ?? [])];
-  editModel.blocked_providers = [...(row.constraints.blocked_providers ?? [])];
-  editModel.allowed_upstream_models = [...(row.constraints.allowed_upstream_models ?? [])];
-  editModel.blocked_upstream_models = [...(row.constraints.blocked_upstream_models ?? [])];
-  editModel.max_cost_per_million = row.constraints.max_cost_per_million ?? null;
-  showEdit.value = true;
+  editorMode.value = 'edit';
+  editorPolicy.value = row;
+  editorShow.value = true;
 }
 
-function buildEditConstraints(): Api.Management.RouteConstraints {
-  const c: Api.Management.RouteConstraints = {};
-  if (editModel.allowed_providers.length > 0) c.allowed_providers = editModel.allowed_providers;
-  if (editModel.blocked_providers.length > 0) c.blocked_providers = editModel.blocked_providers;
-  if (editModel.allowed_upstream_models.length > 0) c.allowed_upstream_models = editModel.allowed_upstream_models;
-  if (editModel.blocked_upstream_models.length > 0) c.blocked_upstream_models = editModel.blocked_upstream_models;
-  if (editModel.max_cost_per_million != null) c.max_cost_per_million = editModel.max_cost_per_million;
-  return c;
+function openDetail(row: Api.Management.RoutePolicy) {
+  detailPolicy.value = row;
+  detailShow.value = true;
 }
 
-async function handleCreate() {
-  await formRef.value?.validate();
-  submitting.value = true;
-  try {
-    const { error } = await fetchCreateRoutePolicy({
-      name: formModel.name.trim(),
-      strategy: formModel.strategy,
-      fallback_limit: formModel.fallback_limit,
-      provider_timeout_ms: formModel.provider_timeout_ms,
-      first_token_timeout_ms: formModel.first_token_timeout_ms,
-      constraints: buildConstraints()
-    });
-    if (!error) {
-      window.$message?.success($t('business.route-policy-created'));
-      showCreate.value = false;
-      await loadData();
-    }
-  } finally {
-    submitting.value = false;
+function openSimulateForPolicy(policyId: string | null) {
+  simulatorDraft.value = null;
+  simulatorPolicyId.value = policyId;
+  simulatorShow.value = true;
+}
+
+function openSimulateForDraft(draft: PolicyDraftModel) {
+  simulatorDraft.value = draft;
+  simulatorPolicyId.value = null;
+  simulatorShow.value = true;
+}
+
+function openPlayground(row: Api.Management.RoutePolicy) {
+  playgroundPolicy.value = row;
+  playgroundShow.value = true;
+}
+
+async function handleClone(row: Api.Management.RoutePolicy) {
+  const { error } = await fetchCloneRoutePolicy(row.id);
+  if (!error) {
+    window.$message?.success($t('business.route-policy-cloned'));
+    await loadData();
   }
 }
 
-async function handleUpdate() {
-  await editFormRef.value?.validate();
-  submitting.value = true;
-  try {
-    const { error } = await fetchUpdateRoutePolicy(editModel.id, {
-      name: editModel.name.trim(),
-      strategy: editModel.strategy,
-      fallback_limit: editModel.fallback_limit,
-      provider_timeout_ms: editModel.provider_timeout_ms,
-      first_token_timeout_ms: editModel.first_token_timeout_ms,
-      constraints: buildEditConstraints()
-    });
-    if (!error) {
-      window.$message?.success($t('business.route-policy-updated'));
-      showEdit.value = false;
-      await loadData();
-    }
-  } finally {
-    submitting.value = false;
+async function handleDelete(row: Api.Management.RoutePolicy) {
+  const { error } = await fetchDeleteRoutePolicy(row.id);
+  if (!error) {
+    window.$message?.success($t('business.route-policy-deleted'));
+    await loadData();
   }
 }
 
-async function toggleStatus(row: Api.Management.RoutePolicy) {
-  const status = row.status === 'active' ? 'disabled' : 'active';
+async function handleStatusChange(row: Api.Management.RoutePolicy, status: 'active' | 'disabled') {
   const { error } = await fetchUpdateRoutePolicyStatus(row.id, status);
   if (!error) {
     window.$message?.success(
@@ -346,192 +202,287 @@ async function toggleStatus(row: Api.Management.RoutePolicy) {
   }
 }
 
-async function handleDelete(id: string) {
-  const { error } = await fetchDeleteRoutePolicy(id);
-  if (!error) {
-    window.$message?.success($t('business.route-policy-deleted'));
-    await loadData();
-  }
+function confirmDelete(row: Api.Management.RoutePolicy) {
+  dialog.warning({
+    title: $t('common.tip'),
+    content: $t('business.deletion-is-blocked-when-the'),
+    positiveText: $t('common.confirm'),
+    negativeText: $t('common.cancel'),
+    onPositiveClick: () => handleDelete(row)
+  });
 }
 
-onMounted(async () => {
-  await Promise.all([loadCatalog(), loadData()]);
-  const policyID = typeof route.query.policy === 'string' ? route.query.policy : '';
-  if (policyID) {
-    const policy = list.value.find(item => item.id === policyID);
-    if (policy) openEdit(policy);
+function moreActionOptions(_row: Api.Management.RoutePolicy): DropdownOption[] {
+  return [
+    { label: $t('business.edit'), key: 'edit' },
+    { label: $t('business.clone-policy'), key: 'clone' },
+    { label: $t('business.delete'), key: 'delete' }
+  ];
+}
+
+function handleMoreAction(row: Api.Management.RoutePolicy, key: string) {
+  if (key === 'edit') openEdit(row);
+  else if (key === 'clone') void handleClone(row);
+  else if (key === 'delete') confirmDelete(row);
+}
+
+const columns = computed<DataTableColumns<Api.Management.RoutePolicy>>(() => [
+  {
+    title: $t('business.policy-name'),
+    key: 'name',
+    minWidth: 190,
+    render: row =>
+      h(NSpace, { align: 'center', size: 6 }, () => [
+        h(
+          NButton,
+          { text: true, type: 'primary', onClick: () => openDetail(row) },
+          { default: () => row.name }
+        ),
+        h(NTag, { size: 'tiny', bordered: false }, { default: () => `v${row.version}` })
+      ])
+  },
+  {
+    title: $t('business.strategy'),
+    key: 'strategy',
+    width: 170,
+    render: row =>
+      h(NSpace, { size: 4, align: 'center' }, () => [
+        h(
+          NTag,
+          { size: 'small', type: routeStrategyTagType(row.strategy), round: true },
+          { default: () => routeStrategyText(row.strategy) }
+        ),
+        h(NTag, { size: 'tiny', bordered: false, type: 'info' }, { default: () => row.compare_currency || 'USD' })
+      ])
+  },
+  {
+    title: $t('business.bound-services'),
+    key: 'bound_services',
+    minWidth: 180,
+    render: row => {
+      const svcs = row.bound_services ?? [];
+      if (!svcs.length) return '-';
+      return h(NSpace, { size: 4 }, () =>
+        svcs.map(svc =>
+          h(
+            NTag,
+            {
+              size: 'tiny',
+              bordered: true,
+              class: 'cursor-pointer',
+              onClick: () => router.push({ name: 'model-management_model-services' })
+            },
+            { default: () => `${svc.name} (${svc.candidate_count})` }
+          )
+        )
+      );
+    }
+  },
+  {
+    title: $t('business.policy-24h-metrics'),
+    key: 'requests_24h',
+    width: 220,
+    render: row => {
+      if (!row.requests_24h) return $t('business.no-calls-in-the-last');
+      const fb =
+        row.fallback_rate_24h !== null && row.fallback_rate_24h !== undefined
+          ? `${Math.round(row.fallback_rate_24h * 1000) / 10}%`
+          : '-';
+      const ttft =
+        row.avg_ttft_ms_24h !== null && row.avg_ttft_ms_24h !== undefined
+          ? `${Math.round(row.avg_ttft_ms_24h)} ms`
+          : '-';
+      return $t('business.policy-24h-summary', { requests: row.requests_24h, fallback: fb, ttft });
+    }
+  },
+  {
+    title: $t('business.rules-and-resilience'),
+    key: 'rules',
+    width: 175,
+    render: row =>
+      $t('business.policy-resilience-summary', {
+        rules: row.rules?.length ?? 0,
+        cb: row.circuit_breaker?.enabled ? $t('business.on') : $t('business.off'),
+        fallbackLimit: row.fallback_limit
+      })
+  },
+  {
+    title: $t('business.status'),
+    key: 'status',
+    width: 90,
+    render: row =>
+      h(
+        NTag,
+        { size: 'small', type: statusTagType(row.status), round: true },
+        { default: () => statusText(row.status, 'policy') }
+      )
+  },
+  {
+    title: $t('business.updated-at'),
+    key: 'updated_at',
+    width: 165,
+    render: row => formatTime(row.updated_at)
+  },
+  {
+    title: $t('business.actions'),
+    key: 'actions',
+    width: 310,
+    fixed: 'right',
+    render: row =>
+      h(NSpace, { size: 6 }, () => [
+        h(NButton, { size: 'small', quaternary: true, onClick: () => openDetail(row) }, { default: () => $t('business.details') }),
+        h(
+          NButton,
+          { size: 'small', quaternary: true, onClick: () => openSimulateForPolicy(row.id) },
+          { default: () => $t('business.simulate') }
+        ),
+        ...(canManage.value
+          ? [
+              h(
+                NButton,
+                {
+                  size: 'small',
+                  quaternary: true,
+                  disabled: row.status !== 'active',
+                  onClick: () => openPlayground(row)
+                },
+                { default: () => $t('business.playground') }
+              ),
+              h(
+                NPopconfirm,
+                {
+                  onPositiveClick: () => handleStatusChange(row, row.status === 'active' ? 'disabled' : 'active')
+                },
+                {
+                  default: () =>
+                    row.status === 'active'
+                      ? $t('business.route-policy-disable-confirm')
+                      : $t('business.route-policy-enable-confirm'),
+                  trigger: () =>
+                    h(
+                      NButton,
+                      { size: 'small', quaternary: true, type: row.status === 'active' ? 'warning' : 'success' },
+                      { default: () => (row.status === 'active' ? $t('business.disabled') : $t('business.enable')) }
+                    )
+                }
+              ),
+              h(
+                NDropdown,
+                {
+                  options: moreActionOptions(row),
+                  onSelect: (key: string | number) => handleMoreAction(row, String(key))
+                },
+                {
+                  default: () =>
+                    h(NButton, { size: 'small', quaternary: true }, { default: () => $t('business.more') })
+                }
+              )
+            ]
+          : [])
+      ])
   }
+]);
+
+onMounted(() => {
+  void loadCatalog();
+  void loadData();
 });
 </script>
 
 <template>
-  <div class="min-h-full bg-#f6f7f9 p-4px dark:bg-#101014">
-    <NCard :title="$t('business.route-policy')" :bordered="false" class="card-wrapper">
+  <div class="flex flex-col gap-16px">
+    <NGrid :cols="4" :x-gap="12">
+      <NGi>
+        <NCard size="small" :bordered="false" class="card-wrapper">
+          <NStatistic :label="$t('business.total-policies')" :value="kpiSummary.total" />
+        </NCard>
+      </NGi>
+      <NGi>
+        <NCard size="small" :bordered="false" class="card-wrapper">
+          <NStatistic :label="$t('business.active-policies')" :value="kpiSummary.active" />
+        </NCard>
+      </NGi>
+      <NGi>
+        <NCard size="small" :bordered="false" class="card-wrapper">
+          <NStatistic :label="$t('business.bound-services')" :value="kpiSummary.boundServices" />
+        </NCard>
+      </NGi>
+      <NGi>
+        <NCard size="small" :bordered="false" class="card-wrapper">
+          <NStatistic :label="$t('business.requests-and-fallback-24h')" :value="`${kpiSummary.req24h} / ${kpiSummary.fbPct}`" />
+        </NCard>
+      </NGi>
+    </NGrid>
+
+    <NCard :title="$t('route.model-management_route-policies')" :bordered="false" class="card-wrapper">
       <template #header-extra>
         <NSpace>
-          <NButton quaternary type="primary" :loading="loading" @click="loadData">{{ $t('business.refresh') }}</NButton>
-          <NButton v-if="canManage" type="primary" @click="openCreate">{{ $t('business.create-policy') }}</NButton>
+          <NInput
+            v-model:value="searchText"
+            :placeholder="$t('business.search-policy-placeholder')"
+            size="small"
+            clearable
+            class="w-200px"
+          />
+          <NSelect
+            v-model:value="strategyFilter"
+            :options="strategyOptions"
+            :placeholder="$t('business.strategy')"
+            size="small"
+            clearable
+            class="w-150px"
+          />
+          <NSelect
+            v-model:value="statusFilter"
+            :options="statusOptions"
+            :placeholder="$t('business.status')"
+            size="small"
+            clearable
+            class="w-120px"
+          />
+          <NButton size="small" secondary @click="openSimulateForPolicy(policies[0]?.id ?? null)">
+            {{ $t('business.dry-run-simulator') }}
+          </NButton>
+          <NButton v-if="canManage" type="primary" size="small" @click="openCreate">
+            {{ $t('business.create-policy') }}
+          </NButton>
         </NSpace>
       </template>
-      <NAlert type="info" :bordered="false" class="mb-12px">
-        {{ $t('business.scoring-weights-apply-according-to') }}
-      </NAlert>
-      <NDataTable :columns="columns" :data="list" :loading="loading" :bordered="false" :scroll-x="1200" />
+
+      <NDataTable
+        :columns="columns"
+        :data="filteredPolicies"
+        :loading="loading"
+        :bordered="false"
+        :scroll-x="1460"
+        :row-key="(row: Api.Management.RoutePolicy) => row.id"
+      />
     </NCard>
 
-    <NModal v-model:show="showCreate" preset="card" :title="$t('business.create-route-policy')" class="w-520px">
-      <NForm ref="formRef" :model="formModel" :rules="formRules" label-placement="left" label-width="140">
-        <NFormItem :label="$t('business.policy-name')" path="name">
-          <NInput v-model:value="formModel.name" :placeholder="$t('business.for-example-default-balanced-policy')" />
-        </NFormItem>
-        <NFormItem :label="$t('business.scheduling-strategy')" path="strategy">
-          <NSelect v-model:value="formModel.strategy" :options="strategyOptions" />
-        </NFormItem>
-        <NFormItem :label="$t('business.failover-limit')" path="fallback_limit">
-          <NInputNumber v-model:value="formModel.fallback_limit" :min="0" class="w-full" />
-        </NFormItem>
-        <NFormItem :label="$t('business.upstream-timeout-ms')" path="provider_timeout_ms">
-          <NInputNumber v-model:value="formModel.provider_timeout_ms" :min="1" class="w-full" />
-        </NFormItem>
-        <NFormItem :label="$t('business.first-token-timeout-ms')" path="first_token_timeout_ms">
-          <NInputNumber v-model:value="formModel.first_token_timeout_ms" :min="1" class="w-full" />
-        </NFormItem>
+    <PolicyEditorDrawer
+      v-model:show="editorShow"
+      :mode="editorMode"
+      :policy="editorPolicy"
+      :provider-options="providerOptions"
+      :model-services="modelServices"
+      @saved="loadData"
+      @simulate-draft="openSimulateForDraft"
+    />
 
-        <NDivider title-placement="left">{{ $t('business.hard-constraints-optional-settable-only') }}</NDivider>
-        <NFormItem :label="$t('business.allowed-providers')" path="allowed_providers">
-          <NSelect
-            v-model:value="formModel.allowed_providers"
-            multiple
-            clearable
-            tag
-            :options="constraintProviderOptions"
-            :placeholder="$t('business.leave-blank-for-no-limit')"
-          />
-        </NFormItem>
-        <NFormItem :label="$t('business.blocked-providers')" path="blocked_providers">
-          <NSelect
-            v-model:value="formModel.blocked_providers"
-            multiple
-            clearable
-            tag
-            :options="constraintProviderOptions"
-            :placeholder="$t('business.leave-blank-for-no-limit')"
-          />
-        </NFormItem>
-        <NFormItem :label="$t('business.allowed-upstream-models')" path="allowed_upstream_models">
-          <NSelect
-            v-model:value="formModel.allowed_upstream_models"
-            multiple
-            clearable
-            filterable
-            tag
-            :placeholder="$t('business.enter-a-model-name-and')"
-          />
-        </NFormItem>
-        <NFormItem :label="$t('business.blocked-upstream-models')" path="blocked_upstream_models">
-          <NSelect
-            v-model:value="formModel.blocked_upstream_models"
-            multiple
-            clearable
-            filterable
-            tag
-            :placeholder="$t('business.enter-a-model-name-and')"
-          />
-        </NFormItem>
-        <NFormItem :label="$t('business.blended-unit-price-ceiling')" path="max_cost_per_million">
-          <NInputNumber
-            v-model:value="formModel.max_cost_per_million"
-            :min="0"
-            class="w-full"
-            :placeholder="$t('business.usd-per-million-leave-blank')"
-          />
-        </NFormItem>
-      </NForm>
-      <template #footer>
-        <NSpace justify="end">
-          <NButton @click="showCreate = false">{{ $t('business.cancel') }}</NButton>
-          <NButton type="primary" :loading="submitting" @click="handleCreate">{{ $t('business.create') }}</NButton>
-        </NSpace>
-      </template>
-    </NModal>
+    <PolicySimulatorModal
+      v-model:show="simulatorShow"
+      :policies="policies"
+      :model-services="modelServices"
+      :initial-policy-id="simulatorPolicyId"
+      :draft-override="simulatorDraft"
+    />
 
-    <NModal v-model:show="showEdit" preset="card" :title="$t('business.edit-route-policy')" class="w-620px">
-      <NForm ref="editFormRef" :model="editModel" :rules="editRules" label-placement="left" label-width="140">
-        <NFormItem :label="$t('business.policy-name')" path="name">
-          <NInput v-model:value="editModel.name" :placeholder="$t('business.policy-name')" />
-        </NFormItem>
-        <NFormItem :label="$t('business.scheduling-strategy')" path="strategy">
-          <NSelect v-model:value="editModel.strategy" :options="strategyOptions" />
-        </NFormItem>
-        <NFormItem :label="$t('business.failover-limit')" path="fallback_limit">
-          <NInputNumber v-model:value="editModel.fallback_limit" :min="0" class="w-full" />
-        </NFormItem>
-        <NFormItem :label="$t('business.upstream-timeout-ms')" path="provider_timeout_ms">
-          <NInputNumber v-model:value="editModel.provider_timeout_ms" :min="1" class="w-full" />
-        </NFormItem>
-        <NFormItem :label="$t('business.first-token-timeout-ms')" path="first_token_timeout_ms">
-          <NInputNumber v-model:value="editModel.first_token_timeout_ms" :min="1" class="w-full" />
-        </NFormItem>
+    <PolicyPlaygroundModal
+      v-model:show="playgroundShow"
+      :policy="playgroundPolicy"
+      :model-services="modelServices"
+    />
 
-        <NDivider title-placement="left">{{ $t('business.hard-constraints-optional-settable-only') }}</NDivider>
-        <NFormItem :label="$t('business.allowed-providers')" path="allowed_providers">
-          <NSelect
-            v-model:value="editModel.allowed_providers"
-            multiple
-            clearable
-            tag
-            :options="constraintProviderOptions"
-            :placeholder="$t('business.leave-blank-for-no-limit')"
-          />
-        </NFormItem>
-        <NFormItem :label="$t('business.blocked-providers')" path="blocked_providers">
-          <NSelect
-            v-model:value="editModel.blocked_providers"
-            multiple
-            clearable
-            tag
-            :options="constraintProviderOptions"
-            :placeholder="$t('business.leave-blank-for-no-limit')"
-          />
-        </NFormItem>
-        <NFormItem :label="$t('business.allowed-upstream-models')" path="allowed_upstream_models">
-          <NSelect
-            v-model:value="editModel.allowed_upstream_models"
-            multiple
-            clearable
-            filterable
-            tag
-            :placeholder="$t('business.enter-a-model-name-and')"
-          />
-        </NFormItem>
-        <NFormItem :label="$t('business.blocked-upstream-models')" path="blocked_upstream_models">
-          <NSelect
-            v-model:value="editModel.blocked_upstream_models"
-            multiple
-            clearable
-            filterable
-            tag
-            :placeholder="$t('business.enter-a-model-name-and')"
-          />
-        </NFormItem>
-        <NFormItem :label="$t('business.blended-unit-price-ceiling')" path="max_cost_per_million">
-          <NInputNumber
-            v-model:value="editModel.max_cost_per_million"
-            :min="0"
-            class="w-full"
-            :placeholder="$t('business.usd-per-million-leave-blank')"
-          />
-        </NFormItem>
-        <NAlert type="info" :bordered="false">{{ $t('business.switching-the-strategy-resets-scoring') }}</NAlert>
-      </NForm>
-      <template #footer>
-        <NSpace justify="end">
-          <NButton @click="showEdit = false">{{ $t('business.cancel') }}</NButton>
-          <NButton type="primary" :loading="submitting" @click="handleUpdate">{{ $t('business.save') }}</NButton>
-        </NSpace>
-      </template>
-    </NModal>
+    <PolicyDetailDrawer v-model:show="detailShow" :policy="detailPolicy" />
   </div>
 </template>
-
-<style scoped></style>

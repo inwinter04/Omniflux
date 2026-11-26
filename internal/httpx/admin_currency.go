@@ -49,9 +49,6 @@ func normalizeCandidateCurrencies(ctx context.Context, q rowQuerier, candidates 
 		if currency == "" {
 			currency = candidateCurrency
 		}
-		if candidateCurrency != currency {
-			return "", errors.New("candidates for the same model service must use the same settlement currency")
-		}
 		candidates[index].CostCurrency = candidateCurrency
 	}
 	if currency == "" {

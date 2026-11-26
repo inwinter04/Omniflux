@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, h, onMounted, reactive, ref, watch } from 'vue';
-import { NButton, NInputNumber, NSelect, NSpace } from 'naive-ui';
+import { NButton, NDynamicTags, NInputNumber, NSelect, NSpace } from 'naive-ui';
 import type { DataTableColumns } from 'naive-ui';
 import { settlementCurrencyOptions } from '@/utils/currency';
 import { fetchProviderModels } from '@/service/api';
@@ -15,6 +15,9 @@ interface CandidateDraft {
   output_cost_per_million: number;
   quality_score: number;
   cost_currency: string;
+  context_window: number | null;
+  capabilities: string[];
+  tags: string[];
   status: 'active' | 'disabled';
 }
 
@@ -36,6 +39,14 @@ const hasNonUSD = computed(() => props.candidates.some(item => item.cost_currenc
 const statusOptions = computed(() => [
   { label: $t('business.enable'), value: 'active' },
   { label: $t('business.disabled'), value: 'disabled' }
+]);
+
+const capabilityOptions = computed(() => [
+  { label: $t('business.cap-vision'), value: 'vision' },
+  { label: $t('business.cap-tools'), value: 'tools' },
+  { label: $t('business.cap-reasoning'), value: 'reasoning' },
+  { label: $t('business.cap-json-mode'), value: 'json_mode' },
+  { label: $t('business.cap-streaming'), value: 'streaming' }
 ]);
 
 const columns = computed<DataTableColumns<CandidateDraft>>(() => [
@@ -143,13 +154,55 @@ const columns = computed<DataTableColumns<CandidateDraft>>(() => [
   {
     title: $t('business.settlement-currency'),
     key: 'cost_currency',
-    width: 160,
+    width: 150,
     render: row =>
       h(NSelect, {
         value: row.cost_currency,
         options: settlementCurrencyOptions(),
         size: 'small',
         disabled: true
+      })
+  },
+  {
+    title: $t('business.context-window'),
+    key: 'context_window',
+    width: 120,
+    render: row =>
+      h(NInputNumber, {
+        value: row.context_window,
+        min: 1,
+        step: 4096,
+        clearable: true,
+        size: 'small',
+        placeholder: '128000',
+        'onUpdate:value': value => (row.context_window = value ?? null)
+      })
+  },
+  {
+    title: $t('business.capabilities'),
+    key: 'capabilities',
+    width: 210,
+    render: row =>
+      h(NSelect, {
+        value: row.capabilities,
+        options: capabilityOptions.value,
+        multiple: true,
+        clearable: true,
+        maxTagCount: 2,
+        size: 'small',
+        placeholder: $t('business.select-capabilities'),
+        'onUpdate:value': (value: string[]) => (row.capabilities = value ?? [])
+      })
+  },
+  {
+    title: $t('business.tags'),
+    key: 'tags',
+    width: 190,
+    render: row =>
+      h(NDynamicTags, {
+        value: row.tags,
+        size: 'small',
+        'onUpdate:value': (value: string[]) => (row.tags = value ?? [])
       })
   },
   {
@@ -207,6 +260,9 @@ function newCandidate(): CandidateDraft {
     output_cost_per_million: 0,
     quality_score: 0.5,
     cost_currency: props.accountOptions[0]?.currency ?? 'USD',
+    context_window: null,
+    capabilities: [],
+    tags: [],
     status: 'active'
   };
 }
@@ -292,7 +348,7 @@ function selectModel(row: CandidateDraft, modelID: string) {
     :data="props.candidates"
     size="small"
     :bordered="false"
-    :scroll-x="1207"
+    :scroll-x="1720"
     :max-height="420"
     :row-key="row => `${row.provider_account_id}-${row.upstream_model}-${props.candidates.indexOf(row)}`"
   />
