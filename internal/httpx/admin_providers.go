@@ -850,6 +850,9 @@ func (d ServerDeps) reloadEngine(w http.ResponseWriter, r *http.Request) bool {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 15*time.Second)
 	defer cancel()
 	if err := d.ReloadEngine(ctx); err != nil {
+		if d.Logger != nil {
+			d.Logger.Error("reload provider engine failed", "error", err)
+		}
 		adminError(w, http.StatusInternalServerError, "ENGINE_RELOAD_FAILED",
 			"provider-engine-reload-failed", nil)
 		return false

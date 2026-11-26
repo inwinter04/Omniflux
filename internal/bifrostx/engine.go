@@ -231,13 +231,17 @@ func (a *Account) SetProviderProxy(provider schemas.ModelProvider, proxyType, pr
 type Engine struct {
 	// mu 保护 client/account 的热替换;请求路径用 Client() 读取。
 	// updateMu 串行化 Reload 与 UpdateProviderProxy,防止并发热替换冲突。
-	mu       sync.RWMutex
-	updateMu sync.Mutex
-	client   *core.Bifrost
-	account  *Account
+	lifecycleCtx context.Context
+	mu           sync.RWMutex
+	updateMu     sync.Mutex
+	client       *core.Bifrost
+	account      *Account
 }
 
 func NewEngine(ctx context.Context, specs []ProviderSpec) (*Engine, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	account, err := NewAccount(specs)
 	if err != nil {
 		return nil, err
@@ -246,7 +250,7 @@ func NewEngine(ctx context.Context, specs []ProviderSpec) (*Engine, error) {
 	if err != nil {
 		return nil, fmt.Errorf("initialize bifrost: %w", err)
 	}
-	return &Engine{client: client, account: account}, nil
+	return &Engine{lifecycleCtx: ctx, client: client, account: account}, nil
 }
 
 func (e *Engine) Client() *core.Bifrost {
@@ -263,9 +267,21 @@ func (e *Engine) Account() *Account {
 
 // Reload 用新配置重建上游引擎并原子替换;旧客户端在替换后关闭。
 func (e *Engine) Reload(ctx context.Context, specs []ProviderSpec) error {
+	if ctx != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
 	e.updateMu.Lock()
 	defer e.updateMu.Unlock()
-	next, err := NewEngine(ctx, specs)
+	// Bifrost 将 Init 传入的 ctx 作为底层实例整个生命周期的上下文;
+	// Reload 调用方通常会传入短时请求/超时 ctx，若直接透传会在调用返回取消后导致后续 UpdateProvider 误判为 shutting down。
+	lifecycleCtx := e.lifecycleCtx
+	if lifecycleCtx == nil {
+		lifecycleCtx = context.Background()
+	}
+	if err := lifecycleCtx.Err(); err != nil {
+		return err
+	}
+	next, err := NewEngine(lifecycleCtx, specs)
 	if err != nil {
 		return err
 	}

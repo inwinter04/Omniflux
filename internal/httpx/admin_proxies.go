@@ -1028,6 +1028,9 @@ func (d ServerDeps) UpdateProxyGovernanceSettings(w http.ResponseWriter, r *http
 func (d ServerDeps) syncProxiesAndReload(w http.ResponseWriter, r *http.Request, providerKeys []string) bool {
 	if d.Governance != nil {
 		if err := d.Governance.SyncProviders(r.Context(), providerKeys); err != nil {
+			if d.Logger != nil {
+				d.Logger.Error("sync provider proxies failed", "provider_keys", providerKeys, "error", err)
+			}
 			adminError(w, http.StatusInternalServerError, "ENGINE_RELOAD_FAILED", "provider-engine-reload-failed", nil)
 			return false
 		}
