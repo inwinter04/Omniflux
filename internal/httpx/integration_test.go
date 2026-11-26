@@ -110,7 +110,12 @@ func setupIntegration(t *testing.T) *integrationEnv {
 		if err := proxyRows.Err(); err != nil {
 			return err
 		}
-		rows, err := pool.Query(ctx, `SELECT id, provider, name, base_url, ciphertext FROM provider_accounts WHERE status = 'active'`)
+		rows, err := pool.Query(ctx, `
+			SELECT a.id, a.provider, a.name, a.base_url, c.ciphertext
+			FROM provider_accounts a
+			JOIN provider_credentials c ON c.provider_account_id = a.id
+			WHERE a.status = 'active'
+		`)
 		if err != nil {
 			return err
 		}
