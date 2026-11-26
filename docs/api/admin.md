@@ -23,7 +23,7 @@
 | `POST /api/v1/auth/forgot-password` | 申请密码重置邮件；响应不暴露邮箱是否存在 |
 | `POST /api/v1/auth/reset-password` | 消费一次性重置令牌并设置新密码 |
 | `POST /api/v1/auth/accept-invitation` | 消费一次性邀请令牌，设置密码、激活账号并建立会话 |
-| `GET /api/v1/auth/me` | 获取当前管理员信息 |
+| `GET /api/v1/auth/me` | 获取当前用户信息（含 `role`、`roles`、`permissions`、`permissionGroupId`、`permissionGroupName`） |
 | `POST /api/v1/auth/logout` | 退出登录 |
 | `GET /api/v1/dashboard` | 首页统计概览 |
 
@@ -66,19 +66,35 @@
 | `PATCH /api/v1/applications/{id}/status` | 启用或停用应用;停用后名下 API Key 立即停止调用 |
 | `DELETE /api/v1/applications/{id}` | 删除应用(存在 Key/用量时拒绝) |
 
-## 用户
+## 用户与权限治理
+
+### 用户
 
 | 接口 | 说明 |
 | --- | --- |
-| `GET /api/v1/users` | 用户列表(需组织所有者;平台管理员可按 `organization_id` 过滤) |
-| `POST /api/v1/users` | 创建用户(平台管理员可指定归属组织) |
-| `GET /api/v1/users/invite-options` | 查询邮件邀请是否可用(需组织所有者) |
-| `POST /api/v1/users/invite` | 创建待激活用户并发送一次性邮件邀请 |
+| `GET /api/v1/users` | 用户列表（需 `user:read` 权限；平台管理员可按 `organization_id` 过滤） |
+| `POST /api/v1/users` | 创建用户（需 `user:manage` 权限；支持指定 `role` 或 `permission_group_id`，平台管理员可指定归属组织） |
+| `GET /api/v1/users/invite-options` | 查询邮件邀请是否可用（需 `user:manage` 权限） |
+| `POST /api/v1/users/invite` | 创建待激活用户并发送一次性邮件邀请（支持 `role` 或 `permission_group_id`） |
 | `POST /api/v1/users/{id}/invitation/resend` | 重发待激活用户邀请并作废旧链接 |
 | `DELETE /api/v1/users/{id}/invitation` | 撤销待激活用户邀请 |
 | `PATCH /api/v1/users/{id}` | 更新角色/状态/密码/归属组织 |
 
-`POST /api/v1/users` 可提交手工密码，或提交 `generate_password: true` 由服务端用 `crypto/rand` 生成 24 位初始密码。随机密码只在创建响应中通过 `generated_password` 返回一次，响应带 `Cache-Control: no-store`；明文不落库、不写审计、不进入 URL，管理台会提供一次性回显与复制。
+`POST /api/v1/users` 密码需满足 8–128 位且同时包含字母和数字（首尾不能有空格）；也可提交 `generate_password: true` 由服务端用 `crypto/rand` 生成 16 位可读初始密码（仅在响应 `generated_password` 返回一次，响应带 `Cache-Control: no-store`，明文不落库、不写审计）。管理台在密码框旁提供随机生成按钮，并在创建成功后统一弹出一次性凭据框（含登录地址、账号、初始密码与全量一键复制）。
+
+### 权限目录、权限组与个人微调
+
+| 接口 | 说明 |
+| --- | --- |
+| `GET /api/v1/permissions/catalog` | 查询全部 7 个模块 / 26 个权限节点目录及 5 个系统预设（`pending`/`viewer`/`developer`/`project_admin`/`org_admin`） |
+| `GET /api/v1/permission-groups` | 当前组织自定义权限组列表（平台管理员可按 `organization_id` 过滤） |
+| `POST /api/v1/permission-groups` | 创建组织级自定义权限组（需 `permission_group:manage`，且不可超出操作者自身有效权限） |
+| `PATCH /api/v1/permission-groups/{id}` | 更新自定义权限组名称、说明与权限节点 |
+| `DELETE /api/v1/permission-groups/{id}` | 删除未被成员使用的自定义权限组（被占用时返回 `409`） |
+| `GET /api/v1/users/{id}/permissions` | 查看成员所属预设/权限组、个人 Allow/Deny 覆盖及最终生效权限 |
+| `PUT /api/v1/users/{id}/permissions` | 调整成员身份或自定义权限组，并设置个人节点级 Allow/Deny 覆盖 |
+
+最终生效权限按“基础权限（权限组优先，否则取角色预设） + 个人 `allow` − 个人 `deny`”实时解析，且 `Deny` 优先于 `Allow`；`org_owner` 与 `platform_admin` 始终保留全量管理权限，禁止修改本人或上级受保护账号权限，禁止越权授予自身不具备的权限节点。
 
 ## 系统设置
 
@@ -90,7 +106,7 @@
 | `PATCH /api/v1/system/email/settings` | 修改 SMTP、发件人与公开访问地址配置(仅平台管理员) |
 | `POST /api/v1/system/email/test` | 使用已保存配置发送测试邮件(仅平台管理员) |
 
-`PATCH /api/v1/system/settings` 按完整配置提交 `public_registration_enabled`、`registration_organization_id`、`registration_role` 与 `email_verification_required`;仅在关闭公开注册时允许组织为空。公开注册默认关闭。开启前必须选择已存在组织和 `developer` / `viewer` 默认角色;同一 IP 每分钟最多提交 5 次注册。关闭邮箱验证时注册成功后立即建立会话；开启邮箱验证时先创建待验证账号并发送邮件，验证后才建立会话。操作写入审计事件 `system.settings_updated`、`user.self_registered`、`email.verification_sent` 与 `auth.email_verified`。
+`PATCH /api/v1/system/settings` 按完整配置提交 `public_registration_enabled`、`registration_organization_id`、`registration_role` 与 `email_verification_required`;仅在关闭公开注册时允许组织为空。公开注册默认关闭。开启前必须选择已存在组织和 `pending`（默认，零权限待分配）/ `viewer` / `developer` 默认角色;同一 IP 每分钟最多提交 5 次注册。关闭邮箱验证时注册成功后立即建立会话；开启邮箱验证时先创建待验证账号并发送邮件，验证后才建立会话。操作写入审计事件 `system.settings_updated`、`user.self_registered`、`email.verification_sent` 与 `auth.email_verified`。
 
 邮件令牌由服务端 `crypto/rand` 生成，HMAC-SHA256 哈希后入库，只保存哈希与有效期。验证、邀请和密码重置分别使用一次性令牌；重发会作废旧令牌，撤销邀请会立即失效当前链接。
 

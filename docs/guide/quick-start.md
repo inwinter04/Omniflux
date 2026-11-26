@@ -29,7 +29,7 @@ docker compose up -d
 | `OMNIFLUX_MASTER_KEY` | 是 | Base64 编码的 32 字节 AES 密钥,用于 Provider 凭据加密 |
 | `OMNIFLUX_API_KEY_PEPPER` | 是 | API Key 哈希 pepper,至少 32 字符 |
 | `OMNIFLUX_BOOTSTRAP_EMAIL` | 是 | 初始管理员邮箱 |
-| `OMNIFLUX_BOOTSTRAP_PASSWORD` | 是 | 初始管理员密码,至少 16 字符 |
+| `OMNIFLUX_BOOTSTRAP_PASSWORD` | 是 | 初始管理员密码，8–128 位且同时包含字母和数字（首尾不能有空格） |
 | `OMNIFLUX_RATE_LIMIT_PER_MIN` | 否 | 数据面全局默认限流(次/分钟),默认 `60`;API Key 的 `rate_limit_per_min` 可按 Key 覆盖 |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | 否 | OpenTelemetry OTLP endpoint |
 
@@ -91,7 +91,7 @@ http://127.0.0.1:8080/admin/
 
 登录后按顺序完成接入配置:创建组织与项目 → 添加 Provider 账号 → 创建路由策略 → 创建模型服务与候选 → 签发 API Key,之后即可从数据面调用模型服务。
 
-平台管理员可在「系统管理 → 系统设置」开放注册，并指定新账号的归属组织与默认角色(开发者或查看者)。开放后登录页会出现注册入口；默认保持关闭，账号仍可由组织所有者在「用户」页面创建。后台创建账号时可选择随机初始密码、手工密码或邮件邀请；随机密码创建成功后仅回显一次并支持一键复制。配置 SMTP 后，平台还支持公开注册邮箱验证、邮件邀请重发/撤销和密码重置。
+平台管理员可在「系统管理 → 系统设置」开放注册，并指定新账号的归属组织与默认角色（默认 `pending` 零权限待分配，也可选 `viewer` 或 `developer`）。开放后登录页会出现注册入口；无任何业务权限的 `pending` 用户登录后仅可见待授权提示页，无法访问业务菜单或接口。公开注册默认保持关闭，账号可由组织管理员在「用户」页面创建：直接在密码框输入或点击右侧「随机生成」生成 16 位初始密码，创建成功后弹窗回显并支持一键复制登录地址、账号、密码或全量凭据；也可在「权限组」及用户列表「配置权限」中按权限组预设与节点级 Allow/Deny 精细授权。配置 SMTP 后，平台还支持公开注册邮箱验证、邮件邀请重发/撤销和密码重置。
 
 ::: tip Provider base_url 约束
 厂商目录内的账号接口地址由系统内置,无需填写 base_url。仅「自定义 OpenAI 兼容」与本地自部署类(Ollama、LM Studio、vLLM 等)需要填写地址,此时地址不要以 `/v1` 结尾:网关会在其后自动拼接 `/v1/chat/completions` 等路径。
@@ -105,7 +105,7 @@ http://127.0.0.1:8080/admin/
 go run ./cmd/omniflux reset-password --email admin@example.com --password "<new-password>"
 ```
 
-命令只依赖 `OMNIFLUX_DATABASE_URL`,新密码与初始密码一样要求至少 16 字符。目标邮箱不存在时命令报错退出,不会静默成功。
+命令只依赖 `OMNIFLUX_DATABASE_URL`，新密码与初始密码一样要求 8–128 位且同时包含字母和数字（首尾不能有空格）。目标邮箱不存在时命令报错退出,不会静默成功。
 
 Docker 部署时通过容器执行:
 

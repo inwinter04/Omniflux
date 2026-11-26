@@ -799,3 +799,51 @@ export function fetchRevokeUserInvitation(id: string) {
     method: 'delete'
   });
 }
+
+export function fetchPermissionCatalog() {
+  return request<Api.Management.PermissionCatalog>({ url: '/permissions/catalog' });
+}
+
+export function fetchPermissionGroups(organizationId?: string) {
+  return request<Api.Management.PermissionGroup[]>({
+    url: '/permission-groups',
+    params: organizationId ? { organization_id: organizationId } : undefined
+  });
+}
+
+export function fetchCreatePermissionGroup(params: Api.Management.SavePermissionGroupParams) {
+  return request<{ id: string }>({
+    url: '/permission-groups',
+    method: 'post',
+    data: params
+  });
+}
+
+export function fetchUpdatePermissionGroup(id: string, params: Api.Management.SavePermissionGroupParams) {
+  return request({
+    url: `/permission-groups/${id}`,
+    method: 'patch',
+    data: params
+  });
+}
+
+export function fetchDeletePermissionGroup(id: string) {
+  return request({
+    url: `/permission-groups/${id}`,
+    method: 'delete'
+  });
+}
+
+export function fetchUserPermissions(id: string) {
+  return request<Api.Management.UserPermissionsDetail>({
+    url: `/users/${id}/permissions`
+  });
+}
+
+export function fetchUpdateUserPermissions(id: string, params: Api.Management.UpdateUserPermissionsParams) {
+  return request({
+    url: `/users/${id}/permissions`,
+    method: 'put',
+    data: params
+  });
+}

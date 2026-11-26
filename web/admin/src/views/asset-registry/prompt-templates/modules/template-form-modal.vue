@@ -4,6 +4,9 @@ import { NButton, NCheckbox, NInput, NInputNumber, NSelect, NSwitch } from 'naiv
 import type { DataTableColumns } from 'naive-ui';
 import { fetchCreateAsset, fetchAssetDetail, fetchModelServices, fetchUpdateAsset } from '@/service/api';
 import { $t } from '@/locales';
+import { usePermission } from '@/hooks/common/permission';
+
+const { has } = usePermission();
 import TemplateCodeEditor from './template-code-editor.vue';
 
 interface VariableDraft {
@@ -209,7 +212,7 @@ async function initialize() {
   loading.value = Boolean(assetId);
   try {
     const [modelRes, detailRes] = await Promise.all([
-      fetchModelServices(),
+      has('model_service:read') ? fetchModelServices() : Promise.resolve({ data: null, error: null }),
       assetId ? fetchAssetDetail(assetId) : Promise.resolve(null)
     ]);
     if (generation !== editGeneration || assetId !== props.assetId) return;

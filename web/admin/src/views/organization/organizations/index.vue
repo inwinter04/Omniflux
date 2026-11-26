@@ -12,7 +12,8 @@ defineOptions({
   name: 'OrganizationOrganizations'
 });
 
-const { canManage, isPlatformAdmin } = usePermission();
+const { has, isPlatformAdmin } = usePermission();
+const canManage = computed(() => has('org:manage'));
 const route = useRoute();
 
 const loading = ref(true);

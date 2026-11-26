@@ -20,7 +20,8 @@ defineOptions({
   name: 'ModelManagementRoutePolicies'
 });
 
-const { canManage } = usePermission();
+const { has } = usePermission();
+const canManage = computed(() => has('route_policy:manage'));
 const route = useRoute();
 
 const strategyOptions = computed(() => [
@@ -43,6 +44,7 @@ const legacyProviderOptions = [
 const constraintProviderOptions = ref<SelectOption[]>(legacyProviderOptions);
 
 async function loadCatalog() {
+  if (!has('provider:read')) return;
   const { data, error } = await fetchProviderCatalog();
   if (error || !data) return;
   const options: SelectOption[] = [];

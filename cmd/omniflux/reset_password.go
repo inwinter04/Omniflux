@@ -18,7 +18,7 @@ import (
 func runPasswordReset(args []string) error {
 	fs := flag.NewFlagSet("reset-password", flag.ContinueOnError)
 	email := fs.String("email", "", "target user email")
-	password := fs.String("password", "", "new password, at least 16 characters")
+	password := fs.String("password", "", "new password, 8-128 characters including letters and numbers")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -26,8 +26,8 @@ func runPasswordReset(args []string) error {
 	if normalizedEmail == "" || !strings.Contains(normalizedEmail, "@") {
 		return errors.New("--email is required")
 	}
-	if len(*password) < 16 {
-		return errors.New("--password must be at least 16 characters")
+	if err := auth.ValidatePassword(*password); err != nil {
+		return errors.New("--password must be 8-128 characters and include both letters and numbers")
 	}
 	databaseURL := strings.TrimSpace(os.Getenv("OMNIFLUX_DATABASE_URL"))
 	if databaseURL == "" {

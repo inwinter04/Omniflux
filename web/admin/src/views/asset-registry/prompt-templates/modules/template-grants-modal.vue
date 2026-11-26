@@ -23,7 +23,8 @@ const emit = defineEmits<{
   saved: [];
 }>();
 // 只读角色也能查看授权范围(审计直达会打开本弹窗),但不提供保存与移除入口;后端同样要求 project_admin。
-const { canManage } = usePermission();
+const { has } = usePermission();
+const canManage = computed(() => (props.asset?.asset_type === 'agent' ? has('agent:manage') : has('prompt:manage')));
 
 const loading = ref(false);
 const saving = ref(false);
@@ -151,9 +152,9 @@ async function initialize() {
   try {
     const [grantRes, orgRes, departmentRes, projectRes] = await Promise.all([
       fetchAssetGrants(assetId),
-      fetchOrganizations(),
-      fetchDepartments(),
-      fetchProjects()
+      has('org:read') ? fetchOrganizations() : Promise.resolve({ data: null, error: null }),
+      has('org:read') ? fetchDepartments() : Promise.resolve({ data: null, error: null }),
+      has('org:read') ? fetchProjects() : Promise.resolve({ data: null, error: null })
     ]);
     if (generation !== sessionGeneration || assetId !== props.asset?.id) return;
     if (!grantRes.error && grantRes.data) grants.value = grantRes.data;

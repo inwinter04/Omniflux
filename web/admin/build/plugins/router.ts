@@ -18,6 +18,10 @@ export function setupElegantRouter() {
         i18nKey: `route.${key}` as App.I18n.I18nKey
       };
 
+      if (key === 'pending-access') {
+        meta.hideInMenu = true;
+      }
+
       const menuOrder: Partial<Record<RouteKey, number>> = {
         home: 1,
         organization: 2,
@@ -26,7 +30,8 @@ export function setupElegantRouter() {
         organization_applications: 3,
         access: 3,
         access_users: 1,
-        'access_api-keys': 2,
+        'access_permission-groups': 2,
+        'access_api-keys': 3,
         'model-management': 3,
         'model-management_providers': 1,
         'model-management_route-policies': 2,
@@ -51,6 +56,7 @@ export function setupElegantRouter() {
         organization_departments: 'mdi:division',
         access: 'mdi:shield-account-outline',
         access_users: 'mdi:account-group-outline',
+        'access_permission-groups': 'mdi:shield-key-outline',
         'access_api-keys': 'mdi:key-chain-variant',
         'model-management': 'mdi:cube-outline',
         'model-management_providers': 'mdi:cloud-lock-outline',
@@ -68,7 +74,6 @@ export function setupElegantRouter() {
       };
 
       const routeRoles: Partial<Record<RouteKey, string[]>> = {
-        access_users: ['org_owner', 'platform_admin'],
         system: ['platform_admin'],
         system_settings: ['platform_admin']
       };

@@ -3,36 +3,23 @@ import type { ElegantConstRoute, LastLevelRouteKey, RouteKey, RouteMap } from '@
 import { isDev } from '@/constants/env';
 import { $t } from '@/locales';
 import { useSvgIcon } from '@/hooks/common/icon';
+import { canAccessRoute } from '@/router/routes/permissions';
 
 /**
- * Filter auth routes by roles
- *
- * @param routes Auth routes
- * @param roles Roles
+ * Filter auth routes by roles and fine-grained permissions
  */
-export function filterAuthRoutesByRoles(routes: ElegantConstRoute[], roles: string[]) {
-  return routes.flatMap(route => filterAuthRouteByRoles(route, roles));
+export function filterAuthRoutesByRoles(routes: ElegantConstRoute[], userInfo: Api.Auth.UserInfo) {
+  return routes.flatMap(route => filterAuthRouteByRoles(route, userInfo));
 }
 
-/**
- * Filter auth route by roles
- *
- * @param route Auth route
- * @param roles Roles
- */
-function filterAuthRouteByRoles(route: ElegantConstRoute, roles: string[]): ElegantConstRoute[] {
+function filterAuthRouteByRoles(route: ElegantConstRoute, userInfo: Api.Auth.UserInfo): ElegantConstRoute[] {
   const routeRoles = (route.meta && route.meta.roles) || [];
-
-  // if the route's "roles" is empty, then it is allowed to access
-  const isEmptyRoles = !routeRoles.length;
-
-  // if the user's role is included in the route's "roles", then it is allowed to access
-  const hasPermission = routeRoles.some(role => roles.includes(role));
+  const hasPermission = canAccessRoute(String(route.name || ''), routeRoles, userInfo);
 
   const filterRoute = { ...route };
 
   if (filterRoute.children?.length) {
-    filterRoute.children = filterRoute.children.flatMap(item => filterAuthRouteByRoles(item, roles));
+    filterRoute.children = filterRoute.children.flatMap(item => filterAuthRouteByRoles(item, userInfo));
   }
 
   // Exclude the route if it has no children after filtering
@@ -40,7 +27,24 @@ function filterAuthRouteByRoles(route: ElegantConstRoute, roles: string[]): Eleg
     return [];
   }
 
-  return hasPermission || isEmptyRoles ? [filterRoute] : [];
+  return hasPermission ? [filterRoute] : [];
+}
+
+/** Find first accessible visible leaf route key (excluding pending-access). */
+export function findFirstAccessibleLeafRoute(routes: ElegantConstRoute[]): LastLevelRouteKey | null {
+  const sorted = sortRoutesByOrder([...routes]);
+  for (const route of sorted) {
+    if (route.name === 'pending-access' || route.meta?.hideInMenu) {
+      continue;
+    }
+    if (route.children?.length) {
+      const childKey = findFirstAccessibleLeafRoute(route.children);
+      if (childKey) return childKey;
+    } else if (route.name) {
+      return route.name as LastLevelRouteKey;
+    }
+  }
+  return null;
 }
 
 /**

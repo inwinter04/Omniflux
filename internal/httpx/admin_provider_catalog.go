@@ -3,12 +3,17 @@ package httpx
 import (
 	"net/http"
 
+	"github.com/inwinter04/omniflux/internal/auth"
 	"github.com/inwinter04/omniflux/internal/bifrostx"
 )
 
 // ProviderCatalog 下发厂商目录:管理台据此渲染厂商选择器,
 // 前端不需要维护厂商清单,新增厂商只改服务端目录。
-func (d ServerDeps) ProviderCatalog(w http.ResponseWriter, _ *http.Request) {
+func (d ServerDeps) ProviderCatalog(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok || d.requirePermission(w, principal, auth.PermProviderRead) != nil {
+		return
+	}
 	type catalogGroup struct {
 		Group   string                        `json:"group"`
 		Entries []bifrostx.VendorCatalogEntry `json:"entries"`

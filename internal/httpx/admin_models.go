@@ -67,7 +67,7 @@ type createModelServiceRequest struct {
 // ModelServices 返回当前组织的模型服务列表(含候选)。
 func (d ServerDeps) ModelServices(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireViewer(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermModelServiceRead) != nil {
 		return
 	}
 	svcRows, err := d.Pool.Query(r.Context(), `
@@ -185,7 +185,7 @@ func (d ServerDeps) ModelServices(w http.ResponseWriter, r *http.Request) {
 // CreateModelService 创建模型服务与候选;候选引用的账号必须属于当前组织。
 func (d ServerDeps) CreateModelService(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermModelServiceManage) != nil {
 		return
 	}
 	var body createModelServiceRequest
@@ -349,7 +349,7 @@ func nullablePolicyID(id *uuid.UUID) any {
 // DeleteModelService 删除模型服务;存在用量记录时拒绝,否则连同候选一起删除。
 func (d ServerDeps) DeleteModelService(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermModelServiceManage) != nil {
 		return
 	}
 	serviceID, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -399,7 +399,7 @@ func (d ServerDeps) DeleteModelService(w http.ResponseWriter, r *http.Request) {
 // ModelCandidateLookup 返回候选所属的模型服务,供审计资源跳转使用。
 func (d ServerDeps) ModelCandidateLookup(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireViewer(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermModelServiceRead) != nil {
 		return
 	}
 	candidateID, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -429,7 +429,7 @@ func (d ServerDeps) ModelCandidateLookup(w http.ResponseWriter, r *http.Request)
 // 已不再提交的候选只标记 retired,保留 ID 让历史 usage 继续关联。
 func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermModelServiceManage) != nil {
 		return
 	}
 	serviceID, err := uuid.Parse(chi.URLParam(r, "id"))

@@ -55,7 +55,7 @@ type applicationResponse struct {
 // Projects 返回当前组织的项目列表,供创建 API Key 时选择。
 func (d ServerDeps) Projects(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireViewer(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermOrgRead) != nil {
 		return
 	}
 	rows, err := d.Pool.Query(r.Context(), `
@@ -85,7 +85,7 @@ func (d ServerDeps) Projects(w http.ResponseWriter, r *http.Request) {
 // Applications 返回当前组织的应用列表,供创建 API Key 时选择。
 func (d ServerDeps) Applications(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireViewer(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermOrgRead) != nil {
 		return
 	}
 	rows, err := d.Pool.Query(r.Context(), `
@@ -116,7 +116,7 @@ func (d ServerDeps) Applications(w http.ResponseWriter, r *http.Request) {
 // APIKeys 返回当前组织的 API Key 列表(不含任何密钥材料)。
 func (d ServerDeps) APIKeys(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireViewer(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermAPIKeyRead) != nil {
 		return
 	}
 	rows, err := d.Pool.Query(r.Context(), `
@@ -149,7 +149,7 @@ func (d ServerDeps) APIKeys(w http.ResponseWriter, r *http.Request) {
 // CreateAPIKey 创建 API Key;明文只在本次响应中返回一次。
 func (d ServerDeps) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermAPIKeyManage) != nil {
 		return
 	}
 	var body createAPIKeyRequest
@@ -236,7 +236,7 @@ type updateAPIKeyRequest struct {
 // 两个字段都是“传了才改”:未传保持原值,rate_limit_per_min 传 null 表示清除限流。
 func (d ServerDeps) UpdateAPIKeyStatus(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermAPIKeyManage) != nil {
 		return
 	}
 	var body updateAPIKeyRequest
@@ -324,7 +324,7 @@ func (d ServerDeps) UpdateAPIKeyStatus(w http.ResponseWriter, r *http.Request) {
 // DeleteAPIKey 软删除 API Key,立即停止认证通过且不再出现在列表中。
 func (d ServerDeps) DeleteAPIKey(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermAPIKeyManage) != nil {
 		return
 	}
 	keyID, err := uuid.Parse(chi.URLParam(r, "id"))

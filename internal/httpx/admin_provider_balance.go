@@ -34,7 +34,7 @@ type balanceEntry struct {
 // 服务端解密凭据后调用厂商余额接口,结果做归一化;不支持余额查询的厂商返回明确错误。
 func (d ServerDeps) ProviderAccountBalance(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermProviderManage) != nil {
 		return
 	}
 	accountID, err := uuid.Parse(chi.URLParam(r, "id"))

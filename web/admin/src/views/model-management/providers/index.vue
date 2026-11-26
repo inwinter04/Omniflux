@@ -29,7 +29,8 @@ import { usePermission } from '@/hooks/common/permission';
 
 defineOptions({ name: 'ModelManagementProviders' });
 
-const { canManage } = usePermission();
+const { has } = usePermission();
+const canManage = computed(() => has('provider:manage'));
 
 function providerTestMessage(result: Api.Management.ProviderTestResult) {
   if (result.reason === 'network_error') {

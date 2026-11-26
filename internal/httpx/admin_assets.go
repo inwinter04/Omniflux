@@ -198,6 +198,47 @@ func validateAssetMetadata(name, description string) (string, string, error) {
 	return name, description, nil
 }
 
+func assetReadPermission(assetType string) string {
+	if assetType == "agent" {
+		return auth.PermAgentRead
+	}
+	return auth.PermPromptRead
+}
+
+func assetManagePermission(assetType string) string {
+	if assetType == "agent" {
+		return auth.PermAgentManage
+	}
+	return auth.PermPromptManage
+}
+
+func (d ServerDeps) requireAssetAccess(w http.ResponseWriter, r *http.Request, principal auth.Principal, assetID uuid.UUID, write bool) bool {
+	if write {
+		if d.requireAnyPermission(w, principal, auth.PermPromptManage, auth.PermAgentManage) != nil {
+			return false
+		}
+	} else if d.requireAnyPermission(w, principal, auth.PermPromptRead, auth.PermAgentRead) != nil {
+		return false
+	}
+	var assetType string
+	err := d.Pool.QueryRow(r.Context(), `
+		SELECT asset_type FROM assets WHERE id = $1 AND organization_id = $2
+	`, assetID, principal.OrganizationID).Scan(&assetType)
+	if errors.Is(err, pgx.ErrNoRows) {
+		adminError(w, http.StatusNotFound, "ASSET_NOT_FOUND", "asset-does-not-exist-or-does", nil)
+		return false
+	}
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "ASSET_DETAIL_FAILED", "failed-to-query-asset-details", nil)
+		return false
+	}
+	perm := assetReadPermission(assetType)
+	if write {
+		perm = assetManagePermission(assetType)
+	}
+	return d.requirePermission(w, principal, perm) == nil
+}
+
 func parseAssetID(r *http.Request) (uuid.UUID, error) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -208,7 +249,7 @@ func parseAssetID(r *http.Request) (uuid.UUID, error) {
 
 func (d ServerDeps) Assets(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireViewer(w, principal) != nil {
+	if !ok {
 		return
 	}
 	assetType := r.URL.Query().Get("type")
@@ -216,15 +257,26 @@ func (d ServerDeps) Assets(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusBadRequest, "ASSET_TYPE_INVALID", "asset-types-support-only-prompt-template", nil)
 		return
 	}
+	if assetType != "" {
+		if d.requirePermission(w, principal, assetReadPermission(assetType)) != nil {
+			return
+		}
+	} else if d.requireAnyPermission(w, principal, auth.PermPromptRead, auth.PermAgentRead) != nil {
+		return
+	}
+	canPrompt := principal.HasPermission(auth.PermPromptRead)
+	canAgent := principal.HasPermission(auth.PermAgentRead)
 	rows, err := d.Pool.Query(r.Context(), `
 		SELECT a.id, a.asset_type, a.name, a.description, u.email, a.status,
 		       a.latest_version, cv.id, cv.version, a.created_at, a.updated_at
 		FROM assets a
 		JOIN users u ON u.id = a.owner_user_id
 		LEFT JOIN asset_versions cv ON cv.id = a.current_version_id
-		WHERE a.organization_id = $1 AND ($2 = '' OR a.asset_type = $2)
+		WHERE a.organization_id = $1
+		  AND ($2 = '' OR a.asset_type = $2)
+		  AND (($3 AND a.asset_type = 'prompt_template') OR ($4 AND a.asset_type = 'agent'))
 		ORDER BY a.updated_at DESC
-	`, principal.OrganizationID, assetType)
+	`, principal.OrganizationID, assetType, canPrompt, canAgent)
 	if err != nil {
 		adminError(w, http.StatusInternalServerError, "ASSET_LIST_FAILED", "failed-to-query-assets", nil)
 		return
@@ -262,12 +314,15 @@ func scanAssetResponse(scan func(dest ...any) error) (assetResponse, error) {
 
 func (d ServerDeps) AssetDetail(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireViewer(w, principal) != nil {
+	if !ok {
 		return
 	}
 	assetID, err := parseAssetID(r)
 	if err != nil {
 		writeAssetError(w, err, "ASSET_ID_INVALID", "invalid-asset-id")
+		return
+	}
+	if !d.requireAssetAccess(w, r, principal, assetID, false) {
 		return
 	}
 	var detail assetDetailResponse
@@ -336,21 +391,26 @@ func (d ServerDeps) AssetDetail(w http.ResponseWriter, r *http.Request) {
 
 func (d ServerDeps) CreateAsset(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok || d.requireAnyPermission(w, principal, auth.PermPromptManage, auth.PermAgentManage) != nil {
 		return
 	}
 	var body createAssetRequest
 	if !d.decodeJSON(w, r, &body) {
 		return
 	}
+	assetType := body.AssetType
+	if assetType == "" {
+		assetType = "prompt_template"
+	}
+	if assetType == "prompt_template" || assetType == "agent" {
+		if d.requirePermission(w, principal, assetManagePermission(assetType)) != nil {
+			return
+		}
+	}
 	name, description, err := validateAssetMetadata(body.Name, body.Description)
 	if err != nil {
 		writeAssetError(w, err, "ASSET_CREATE_FAILED", "create-asset-failed")
 		return
-	}
-	assetType := body.AssetType
-	if assetType == "" {
-		assetType = "prompt_template"
 	}
 	canonical, modelServiceID, err := normalizeTypedAssetSpec(assetType, body.Spec)
 	if err != nil {
@@ -401,12 +461,15 @@ func (d ServerDeps) CreateAsset(w http.ResponseWriter, r *http.Request) {
 
 func (d ServerDeps) UpdateAsset(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok {
 		return
 	}
 	assetID, err := parseAssetID(r)
 	if err != nil {
 		writeAssetError(w, err, "ASSET_UPDATE_FAILED", "update-asset-failed")
+		return
+	}
+	if !d.requireAssetAccess(w, r, principal, assetID, true) {
 		return
 	}
 	var body updateAssetRequest
@@ -496,12 +559,15 @@ func (d ServerDeps) UpdateAsset(w http.ResponseWriter, r *http.Request) {
 
 func (d ServerDeps) PublishAsset(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok {
 		return
 	}
 	assetID, err := parseAssetID(r)
 	if err != nil {
 		writeAssetError(w, err, "ASSET_PUBLISH_FAILED", "publish-asset-failed")
+		return
+	}
+	if !d.requireAssetAccess(w, r, principal, assetID, true) {
 		return
 	}
 	var body assetVersionRequest
@@ -578,12 +644,15 @@ func (d ServerDeps) PublishAsset(w http.ResponseWriter, r *http.Request) {
 
 func (d ServerDeps) RollbackAsset(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok {
 		return
 	}
 	assetID, err := parseAssetID(r)
 	if err != nil {
 		writeAssetError(w, err, "ASSET_ROLLBACK_FAILED", "rollback-asset-failed")
+		return
+	}
+	if !d.requireAssetAccess(w, r, principal, assetID, true) {
 		return
 	}
 	var body rollbackAssetRequest
@@ -659,12 +728,15 @@ func (d ServerDeps) RollbackAsset(w http.ResponseWriter, r *http.Request) {
 
 func (d ServerDeps) UpdateAssetStatus(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok {
 		return
 	}
 	assetID, err := parseAssetID(r)
 	if err != nil {
 		writeAssetError(w, err, "ASSET_STATUS_FAILED", "update-asset-status-failed")
+		return
+	}
+	if !d.requireAssetAccess(w, r, principal, assetID, true) {
 		return
 	}
 	var body updateAssetStatusRequest

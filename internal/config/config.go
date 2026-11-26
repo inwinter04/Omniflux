@@ -7,6 +7,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/inwinter04/omniflux/internal/auth"
 )
 
 type Config struct {
@@ -51,8 +53,8 @@ func Load() (Config, error) {
 	if c.BootstrapEmail == "" || !strings.Contains(c.BootstrapEmail, "@") {
 		return c, errors.New("OMNIFLUX_BOOTSTRAP_EMAIL is invalid")
 	}
-	if len(c.BootstrapPassword) < 16 {
-		return c, errors.New("OMNIFLUX_BOOTSTRAP_PASSWORD must be at least 16 characters")
+	if err := auth.ValidatePassword(c.BootstrapPassword); err != nil {
+		return c, errors.New("OMNIFLUX_BOOTSTRAP_PASSWORD must be 8-128 characters and include both letters and numbers")
 	}
 	return c, nil
 }

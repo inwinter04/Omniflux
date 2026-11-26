@@ -14,7 +14,8 @@ import AgentFormModal from './modules/agent-form-modal.vue';
 
 defineOptions({ name: 'AssetRegistryAgents' });
 
-const { canManage } = usePermission();
+const { has } = usePermission();
+const canManage = computed(() => has('agent:manage'));
 const route = useRoute();
 const router = useRouter();
 

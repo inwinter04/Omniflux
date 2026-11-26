@@ -2,37 +2,23 @@
 import { computed, onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useMessage } from 'naive-ui';
-import { getPaletteColorByNumber, mixColor } from '@sa/color';
 import { $t } from '@/locales';
 import { fetchRegistrationOptions, fetchResendVerification } from '@/service/api';
-import { useAppStore } from '@/store/modules/app';
 import { useAuthStore } from '@/store/modules/auth';
-import { useThemeStore } from '@/store/modules/theme';
 import { useNaiveForm } from '@/hooks/common/form';
+import { validatePasswordPolicy } from '@/utils/password';
+import AuthShell from '../components/auth-shell.vue';
 
 defineOptions({
   name: 'Register'
 });
 
 const router = useRouter();
-const appStore = useAppStore();
-const themeStore = useThemeStore();
 const authStore = useAuthStore();
 const message = useMessage();
 const { formRef, validate } = useNaiveForm();
 const checking = ref(true);
 const verificationSent = ref(false);
-
-const bgThemeColor = computed(() =>
-  themeStore.darkMode ? getPaletteColorByNumber(themeStore.themeColor, 600) : themeStore.themeColor
-);
-
-const bgColor = computed(() => {
-  const COLOR_WHITE = '#ffffff';
-  const ratio = themeStore.darkMode ? 0.5 : 0.2;
-
-  return mixColor(COLOR_WHITE, themeStore.themeColor, ratio);
-});
 
 interface FormModel {
   email: string;
@@ -57,8 +43,9 @@ const rules = computed<Record<keyof FormModel, App.Global.FormRule[]>>(() => ({
   password: [
     { required: true, message: $t('business.please-enter-a-password') },
     {
-      validator: (_rule: unknown, value: string) => !value || value.length >= 16,
-      message: $t('business.password-must-be-at-least')
+      validator: (_rule: unknown, value: string) => !value || validatePasswordPolicy(value),
+      message: $t('business.password-must-be-at-least'),
+      trigger: 'blur'
     }
   ],
   confirmPassword: [
@@ -102,94 +89,73 @@ async function handleResend() {
 </script>
 
 <template>
-  <div class="relative size-full flex-center overflow-hidden" :style="{ backgroundColor: bgColor }">
-    <WaveBg :theme-color="bgThemeColor" />
-    <NCard :bordered="false" class="relative z-4 w-auto rd-12px">
-      <NSpin :show="checking">
-        <div class="w-400px lt-sm:w-300px">
-          <header class="flex-y-center justify-between">
-            <SystemLogo class="size-64px lt-sm:size-48px" />
-            <h3 class="text-28px text-primary font-500 lt-sm:text-22px">{{ $t('system.title') }}</h3>
-            <div class="i-flex-col">
-              <ThemeSchemaSwitch
-                :theme-schema="themeStore.themeScheme"
-                :show-tooltip="false"
-                class="text-20px lt-sm:text-18px"
-                @switch="themeStore.toggleThemeScheme"
-              />
-              <LangSwitch
-                v-if="themeStore.header.multilingual.visible"
-                :lang="appStore.locale"
-                :lang-options="appStore.localeOptions"
-                :show-tooltip="false"
-                @change-lang="appStore.changeLocale"
-              />
-            </div>
-          </header>
-          <main class="pt-24px">
-            <h3 class="text-18px text-primary font-medium">{{ $t('business.create-an-account') }}</h3>
-            <NForm v-if="!verificationSent" ref="formRef" class="pt-24px" :model="model" :rules="rules" size="large" :show-label="false">
-              <NFormItem path="email">
-                <NInput
-                  v-model:value="model.email"
-                  :input-props="{ autocomplete: 'username' }"
-                  :placeholder="$t('business.email')"
-                />
-              </NFormItem>
-              <NFormItem path="password">
-                <NInput
-                  v-model:value="model.password"
-                  type="password"
-                  show-password-on="click"
-                  :input-props="{ autocomplete: 'new-password' }"
-                  :placeholder="$t('business.password')"
-                />
-              </NFormItem>
-              <NFormItem path="confirmPassword">
-                <NInput
-                  v-model:value="model.confirmPassword"
-                  type="password"
-                  show-password-on="click"
-                  :input-props="{ autocomplete: 'new-password' }"
-                  :placeholder="$t('business.confirm-password')"
-                  @keyup.enter="handleSubmit"
-                />
-              </NFormItem>
-              <NSpace vertical :size="12">
-                <NButton
-                  type="primary"
-                  size="large"
-                  round
-                  block
-                  :loading="authStore.registerLoading"
-                  @click="handleSubmit"
-                >
-                  {{ $t('business.register') }}
-                </NButton>
-                <NButton quaternary size="large" block @click="router.push({ name: 'login' })">
-                  {{ $t('business.back-to-log-in') }}
-                </NButton>
-              </NSpace>
-            </NForm>
-            <NAlert v-if="verificationSent" type="success" :show-icon="true" class="mt-24px">
-              {{ $t('business.verification-email-description') }}
-            </NAlert>
-            <NSpace v-if="verificationSent" vertical :size="12" class="mt-16px">
-              <NButton size="large" round block :loading="authStore.registerLoading" @click="handleResend">
-                {{ $t('business.resend-verification-email') }}
-              </NButton>
-              <NButton quaternary size="large" block @click="router.push({ name: 'login' })">
-                {{ $t('business.back-to-log-in') }}
-              </NButton>
-            </NSpace>
-          </main>
+  <AuthShell>
+    <NSpin :show="checking">
+      <h3 class="text-18px text-primary font-medium">{{ $t('business.create-an-account') }}</h3>
+      <NForm v-if="!verificationSent" ref="formRef" class="pt-24px" :model="model" :rules="rules" size="large" :show-label="false">
+        <NFormItem path="email">
+          <NInput
+            v-model:value="model.email"
+            :input-props="{ autocomplete: 'username' }"
+            :placeholder="$t('business.email')"
+          />
+        </NFormItem>
+        <NFormItem path="password">
+          <div class="w-full">
+            <NInput
+              v-model:value="model.password"
+              type="password"
+              show-password-on="click"
+              :input-props="{ autocomplete: 'new-password' }"
+              :placeholder="$t('business.password')"
+            />
+            <PasswordStrength :password="model.password" />
+          </div>
+        </NFormItem>
+        <NFormItem path="confirmPassword">
+          <NInput
+            v-model:value="model.confirmPassword"
+            type="password"
+            show-password-on="click"
+            :input-props="{ autocomplete: 'new-password' }"
+            :placeholder="$t('business.confirm-password')"
+            @keyup.enter="handleSubmit"
+          />
+        </NFormItem>
+        <NButton
+          type="primary"
+          size="large"
+          round
+          block
+          :loading="authStore.registerLoading"
+          @click="handleSubmit"
+        >
+          {{ $t('business.register') }}
+        </NButton>
+        <div class="mt-16px flex-center gap-6px text-14px text-#6b7280">
+          <span>{{ $t('business.already-have-account') }}</span>
+          <NButton text type="primary" @click="router.push({ name: 'login' })">
+            {{ $t('business.back-to-log-in') }}
+          </NButton>
         </div>
-      </NSpin>
-    </NCard>
-  </div>
+      </NForm>
+      <template v-else>
+        <NAlert type="success" :show-icon="true" class="mt-24px">
+          {{ $t('business.verification-email-description') }}
+        </NAlert>
+        <NSpace vertical :size="12" class="mt-16px">
+          <NButton size="large" round block :loading="authStore.registerLoading" @click="handleResend">
+            {{ $t('business.resend-verification-email') }}
+          </NButton>
+          <div class="flex-center">
+            <NButton text type="primary" @click="router.push({ name: 'login' })">
+              {{ $t('business.back-to-log-in') }}
+            </NButton>
+          </div>
+        </NSpace>
+      </template>
+    </NSpin>
+  </AuthShell>
 </template>
 
 <style scoped></style>
-
-
-

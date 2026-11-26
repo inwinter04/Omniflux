@@ -49,15 +49,20 @@ func (s *Store) Resolve(ctx context.Context, secret string) (Principal, bool, er
 		return Principal{}, false, nil
 	}
 	row := s.pool.QueryRow(ctx, `
-		SELECT s.id, s.created_at, u.id, u.organization_id, u.email, u.role
+		SELECT s.id, s.created_at, u.id, u.organization_id, u.email, u.role,
+		       u.permission_group_id, COALESCE(pg.name, ''), COALESCE(pg.permissions, '{}'::text[])
 		FROM sessions s
 		JOIN users u ON u.id = s.user_id
+		LEFT JOIN permission_groups pg ON pg.id = u.permission_group_id
 		WHERE s.secret_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > now() AND u.status = 'active'
 	`, hashSession(secret))
 	var principal Principal
 	var sessionID, userID, organizationID uuid.UUID
 	var createdAt time.Time
-	if err := row.Scan(&sessionID, &createdAt, &userID, &organizationID, &principal.Email, &principal.Role); err != nil {
+	var groupID uuid.NullUUID
+	var groupName string
+	var groupPerms []string
+	if err := row.Scan(&sessionID, &createdAt, &userID, &organizationID, &principal.Email, &principal.Role, &groupID, &groupName, &groupPerms); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Principal{}, false, nil
 		}
@@ -67,6 +72,41 @@ func (s *Store) Resolve(ctx context.Context, secret string) (Principal, bool, er
 	principal.UserID = userID
 	principal.OrganizationID = organizationID
 	principal.SessionIssuedAt = createdAt.UTC().Format(time.RFC3339)
+	hasGroup := groupID.Valid
+	if groupID.Valid {
+		id := groupID.UUID
+		principal.PermissionGroupID = &id
+		principal.PermissionGroupName = groupName
+	}
+
+	var allow, deny []string
+	if principal.Role != "platform_admin" && principal.Role != "org_owner" {
+		rows, err := s.pool.Query(ctx, `
+			SELECT permission, effect
+			FROM user_permission_overrides
+			WHERE user_id = $1
+		`, userID)
+		if err != nil {
+			return Principal{}, false, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var perm, effect string
+			if err := rows.Scan(&perm, &effect); err != nil {
+				return Principal{}, false, err
+			}
+			switch effect {
+			case "allow":
+				allow = append(allow, perm)
+			case "deny":
+				deny = append(deny, perm)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return Principal{}, false, err
+		}
+	}
+	principal.Permissions = ResolveEffectivePermissions(principal.Role, groupPerms, hasGroup, allow, deny)
 	return principal, true, nil
 }
 

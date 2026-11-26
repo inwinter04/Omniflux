@@ -348,10 +348,10 @@ func (d ServerDeps) agentAdminContext(w http.ResponseWriter, r *http.Request, wr
 		return principal, uuid.Nil, false
 	}
 	if write {
-		if d.requireProjectAdmin(w, principal) != nil {
+		if d.requirePermission(w, principal, auth.PermAgentManage) != nil {
 			return principal, uuid.Nil, false
 		}
-	} else if d.requireViewer(w, principal) != nil {
+	} else if d.requirePermission(w, principal, auth.PermAgentRead) != nil {
 		return principal, uuid.Nil, false
 	}
 	assetID, err := parseAssetID(r)

@@ -22,7 +22,7 @@ Starting from v0.1.0, Omniflux is in a stabilization phase; breaking changes to 
 - **Unified model services** — separate business-facing logical models from provider deployments, with plan/region presets, automatic model discovery and batch selection, organization/department/project grants, independent status controls, and multidimensional health insights.
 - **Balance and cost governance** — declare each model service's settlement currency, aggregate USD, CNY and other currencies separately, preserve original balance units, and keep quota-window usage and reset times distinct from monetary balances.
 - **Governed routing** — select candidates using hard constraints plus cost, quality, latency, and reliability scores.
-- **Multi-tenant governance** — organize departments, projects, applications, users, roles, and API keys.
+- **Multi-tenant & fine-grained RBAC governance** — organize departments, projects, applications, users, custom permission group presets, per-user Allow/Deny overrides, zero-permission `pending` guest isolation, and API keys.
 - **Metering and attribution** — attribute requests, tokens, and cost to projects, applications, keys, providers, and models.
 - **Auditable decisions** — retain administrative actions, sign-in events, and policy decisions.
 - **Operational visibility** — liveness/readiness probes, structured logs, and Prometheus metrics.
@@ -52,7 +52,7 @@ docker compose up -d
 | `OMNIFLUX_MASTER_KEY` | Yes | Base64-encoded 32-byte AES key |
 | `OMNIFLUX_API_KEY_PEPPER` | Yes | Pepper for API key hashing, at least 32 characters |
 | `OMNIFLUX_BOOTSTRAP_EMAIL` | Yes | Initial administrator email |
-| `OMNIFLUX_BOOTSTRAP_PASSWORD` | Yes | Initial administrator password, at least 16 characters |
+| `OMNIFLUX_BOOTSTRAP_PASSWORD` | Yes | Initial administrator password, 8–128 characters containing both letters and numbers (no leading/trailing spaces) |
 
 The full variable list (HTTP address, rate limiting, OpenTelemetry) is documented in the [docs site · Quick start](https://inwinter04.github.io/Omniflux/guide/quick-start) (Chinese).
 
@@ -79,7 +79,7 @@ go run ./cmd/omniflux
 
 Open the admin console at `http://127.0.0.1:8080/admin/` and sign in with the bootstrap credentials. An empty database is seeded with a platform administrator on first start; never use the sample values in production.
 
-A platform administrator can enable public registration under **System → System Settings** and select its destination organization and default role. Public registration is disabled by default. Admin-created accounts support server-generated initial passwords with one-time display and copying, email invitations, public-registration verification, and password resets. SMTP passwords are encrypted at rest.
+A platform administrator can enable public registration under **System → System Settings** and select its destination organization and default role (defaults to `pending`, a zero-permission state isolated to a notice page until permissions are assigned); public registration is disabled by default. Admin-created accounts support typing a password directly or generating a 16-character random initial password beside the input, with a one-time modal to copy the login URL, account, password, or all credentials, alongside email invitations, public-registration verification, and password resets (SMTP passwords encrypted at rest). Administrators can also manage organization-level **Permission Groups** and per-user **Allow/Deny** permission overrides.
 
 ## Data plane API
 

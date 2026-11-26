@@ -27,7 +27,7 @@ type providerModelResponse struct {
 
 func (d ServerDeps) ProviderModels(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermProviderManage) != nil {
 		return
 	}
 	accountID, err := uuid.Parse(chi.URLParam(r, "id"))

@@ -36,8 +36,8 @@ func (d ServerDeps) Register(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusBadRequest, "REGISTRATION_EMAIL_INVALID", "invalid-email-format", nil)
 		return
 	}
-	if len(body.Password) < 16 {
-		adminError(w, http.StatusBadRequest, "REGISTRATION_PASSWORD_WEAK", "password-must-be-at-least-16", nil)
+	if err := auth.ValidatePassword(body.Password); err != nil {
+		adminError(w, http.StatusBadRequest, "REGISTRATION_PASSWORD_WEAK", "password-policy-unsatisfied", nil)
 		return
 	}
 	ip := clientIP(r)
@@ -55,7 +55,7 @@ func (d ServerDeps) Register(w http.ResponseWriter, r *http.Request) {
 		FROM system_settings
 		WHERE singleton AND public_registration_enabled
 		  AND registration_organization_id IS NOT NULL
-		  AND registration_role IN ('developer', 'viewer')
+		  AND registration_role IN ('pending', 'developer', 'viewer')
 	`).Scan(&configuredOrganizationID, &configuredRole, &verificationRequired)
 	if errors.Is(err, pgx.ErrNoRows) {
 		adminError(w, http.StatusForbidden, "REGISTRATION_DISABLED", "registration-is-not-enabled", nil)
@@ -85,7 +85,7 @@ func (d ServerDeps) Register(w http.ResponseWriter, r *http.Request) {
 			FROM system_settings
 			WHERE singleton AND public_registration_enabled
 			  AND registration_organization_id IS NOT NULL
-			  AND registration_role IN ('developer', 'viewer')
+			  AND registration_role IN ('pending', 'developer', 'viewer')
 			FOR SHARE
 		`).Scan(&organizationID, &role, &verificationRequired)
 		if errors.Is(settingsErr, pgx.ErrNoRows) {

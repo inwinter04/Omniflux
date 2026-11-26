@@ -20,7 +20,8 @@ defineOptions({
   name: 'ObservabilityBudgets'
 });
 
-const { canManage } = usePermission();
+const { has } = usePermission();
+const canManage = computed(() => has('budget:manage'));
 const route = useRoute();
 
 const loading = ref(true);
@@ -332,9 +333,9 @@ async function loadData() {
   try {
     const [budgetsRes, projectsRes, applicationsRes, keysRes] = await Promise.all([
       fetchBudgets(),
-      fetchProjects(),
-      fetchApplications(),
-      fetchApiKeys()
+      has('org:read') ? fetchProjects() : Promise.resolve({ data: null, error: null }),
+      has('org:read') ? fetchApplications() : Promise.resolve({ data: null, error: null }),
+      has('api_key:read') ? fetchApiKeys() : Promise.resolve({ data: null, error: null })
     ]);
     if (!budgetsRes.error && budgetsRes.data) {
       list.value = budgetsRes.data;

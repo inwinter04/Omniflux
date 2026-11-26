@@ -29,7 +29,7 @@ declare namespace Api {
     interface SystemSettings {
       public_registration_enabled: boolean;
       registration_organization_id: string | null;
-      registration_role: 'developer' | 'viewer';
+      registration_role: 'pending' | 'developer' | 'viewer';
       email_verification_required: boolean;
       updated_by: string | null;
       updated_at: string;
@@ -39,7 +39,7 @@ declare namespace Api {
       public_registration_enabled: boolean;
       registration_organization_id: string | null;
       email_verification_required: boolean;
-      registration_role: 'developer' | 'viewer';
+      registration_role: 'pending' | 'developer' | 'viewer';
     }
 
     interface Project {
@@ -630,6 +630,9 @@ declare namespace Api {
       id: string;
       email: string;
       role: string;
+      permission_group_id?: string | null;
+      permission_group_name?: string | null;
+      override_count?: number;
       status: string;
       last_login_at: string | null;
       created_at: string;
@@ -639,7 +642,8 @@ declare namespace Api {
       email: string;
       password?: string;
       generate_password: boolean;
-      role: string;
+      role?: string;
+      permission_group_id?: string;
       organization_id?: string;
     }
 
@@ -653,6 +657,58 @@ declare namespace Api {
       status?: string;
       password?: string;
       organization_id?: string;
+    }
+
+    interface PermissionModule {
+      key: string;
+      permissions: string[];
+    }
+
+    interface SystemPreset {
+      role: string;
+      permissions: string[];
+    }
+
+    interface PermissionCatalog {
+      modules: PermissionModule[];
+      presets: SystemPreset[];
+    }
+
+    interface PermissionGroup {
+      id: string;
+      organization_id: string;
+      name: string;
+      description: string;
+      permissions: string[];
+      member_count: number;
+      created_at: string;
+      updated_at: string;
+    }
+
+    interface SavePermissionGroupParams {
+      name: string;
+      description: string;
+      permissions: string[];
+      organization_id?: string;
+    }
+
+    interface UserPermissionsDetail {
+      user_id: string;
+      email: string;
+      role: string;
+      permission_group_id: string | null;
+      permission_group_name: string | null;
+      base_permissions: string[];
+      allow: string[];
+      deny: string[];
+      effective_permissions: string[];
+    }
+
+    interface UpdateUserPermissionsParams {
+      role?: string;
+      permission_group_id?: string | null;
+      allow: string[];
+      deny: string[];
     }
 
     interface EmailSettings {
@@ -681,7 +737,8 @@ declare namespace Api {
 
     interface InviteUserParams {
       email: string;
-      role: string;
+      role?: string;
+      permission_group_id?: string;
       organization_id?: string;
     }
 

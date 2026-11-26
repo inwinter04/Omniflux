@@ -38,7 +38,7 @@ var (
 // Departments 返回当前组织的部门列表,供项目创建与展示使用。
 func (d ServerDeps) Departments(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireViewer(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermOrgRead) != nil {
 		return
 	}
 	rows, err := d.Pool.Query(r.Context(), `
@@ -67,7 +67,7 @@ func (d ServerDeps) Departments(w http.ResponseWriter, r *http.Request) {
 // CreateProject 在指定部门下创建项目。
 func (d ServerDeps) CreateProject(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermOrgManage) != nil {
 		return
 	}
 	var body createProjectRequest
@@ -117,7 +117,7 @@ func (d ServerDeps) CreateProject(w http.ResponseWriter, r *http.Request) {
 // DeleteProject 删除项目;存在关联应用、API Key 或用量记录时拒绝,避免级联删除业务数据。
 func (d ServerDeps) DeleteProject(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermOrgManage) != nil {
 		return
 	}
 	projectID, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -217,7 +217,7 @@ func (d ServerDeps) DeleteProject(w http.ResponseWriter, r *http.Request) {
 // CreateApplication 在指定项目下创建应用。
 func (d ServerDeps) CreateApplication(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermOrgManage) != nil {
 		return
 	}
 	var body createApplicationRequest
@@ -267,7 +267,7 @@ func (d ServerDeps) CreateApplication(w http.ResponseWriter, r *http.Request) {
 // DeleteApplication 删除应用;存在关联 API Key 或用量记录时拒绝。
 func (d ServerDeps) DeleteApplication(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermOrgManage) != nil {
 		return
 	}
 	applicationID, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -356,7 +356,7 @@ type updateProjectRequest struct {
 // UpdateProject 更新项目名称。
 func (d ServerDeps) UpdateProject(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermOrgManage) != nil {
 		return
 	}
 	var body updateProjectRequest
@@ -409,7 +409,7 @@ type updateApplicationRequest struct {
 // UpdateApplication 更新应用名称。
 func (d ServerDeps) UpdateApplication(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermOrgManage) != nil {
 		return
 	}
 	var body updateApplicationRequest
@@ -466,7 +466,7 @@ type createDepartmentRequest struct {
 // CreateDepartment 创建部门;需要组织管理员权限。
 func (d ServerDeps) CreateDepartment(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermOrgManage) != nil {
 		return
 	}
 	var body createDepartmentRequest
@@ -499,7 +499,7 @@ func (d ServerDeps) CreateDepartment(w http.ResponseWriter, r *http.Request) {
 // UpdateDepartment 更新部门名称。
 func (d ServerDeps) UpdateDepartment(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermOrgManage) != nil {
 		return
 	}
 	var body createDepartmentRequest
@@ -548,7 +548,7 @@ func (d ServerDeps) UpdateDepartment(w http.ResponseWriter, r *http.Request) {
 // DeleteDepartment 删除部门;存在关联项目时拒绝(FK RESTRICT 保证)。
 func (d ServerDeps) DeleteDepartment(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermOrgManage) != nil {
 		return
 	}
 	departmentID, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -622,7 +622,10 @@ func isPlatformAdmin(principal auth.Principal) bool {
 // Organizations 返回组织列表:platform_admin 可见全部组织,其余角色仅可见自己所在组织。
 func (d ServerDeps) Organizations(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireViewer(w, principal) != nil {
+	if !ok {
+		return
+	}
+	if !isPlatformAdmin(principal) && d.requirePermission(w, principal, auth.PermOrgRead) != nil {
 		return
 	}
 	// platform_admin 返回全部组织;其余角色仅能看到自己所在组织。
@@ -712,7 +715,7 @@ func (d ServerDeps) UpdateOrganization(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !isPlatformAdmin(principal) {
-		if d.requireAdmin(w, principal) != nil {
+		if d.requirePermission(w, principal, auth.PermOrgManage) != nil {
 			return
 		}
 		if orgID != principal.OrganizationID {

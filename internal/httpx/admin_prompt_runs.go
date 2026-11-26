@@ -66,7 +66,7 @@ type promptRunContext struct {
 
 func (d ServerDeps) RunPromptAsset(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermPromptManage) != nil {
 		return
 	}
 	assetID, err := parseAssetID(r)
@@ -348,7 +348,7 @@ func (d ServerDeps) streamPromptRun(w http.ResponseWriter, r *http.Request, prin
 
 func (d ServerDeps) PromptRunHistory(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireViewer(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermPromptRead) != nil {
 		return
 	}
 	assetID, err := parseAssetID(r)

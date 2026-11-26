@@ -23,6 +23,7 @@ declare module "@elegant-router/types" {
     "accept-invitation": "/accept-invitation";
     "access": "/access";
     "access_api-keys": "/access/api-keys";
+    "access_permission-groups": "/access/permission-groups";
     "access_users": "/access/users";
     "asset-registry": "/asset-registry";
     "asset-registry_agents": "/asset-registry/agents";
@@ -45,6 +46,7 @@ declare module "@elegant-router/types" {
     "organization_departments": "/organization/departments";
     "organization_organizations": "/organization/organizations";
     "organization_projects": "/organization/projects";
+    "pending-access": "/pending-access";
     "register": "/register";
     "reset-password": "/reset-password";
     "system": "/system";
@@ -94,6 +96,7 @@ declare module "@elegant-router/types" {
     | "model-management"
     | "observability"
     | "organization"
+    | "pending-access"
     | "register"
     | "reset-password"
     | "system"
@@ -121,10 +124,12 @@ declare module "@elegant-router/types" {
     | "forgot-password"
     | "iframe-page"
     | "login"
+    | "pending-access"
     | "register"
     | "reset-password"
     | "verify-email"
     | "access_api-keys"
+    | "access_permission-groups"
     | "access_users"
     | "asset-registry_agents"
     | "asset-registry_evaluations"

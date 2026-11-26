@@ -14,6 +14,7 @@ import { useTabStore } from '../tab';
 import {
   filterAuthRoutesByRoles,
   filterRoutesByDev,
+  findFirstAccessibleLeafRoute,
   getBreadcrumbsByRoute,
   getCacheRouteNames,
   getGlobalMenusByAuthRoutes,
@@ -23,6 +24,7 @@ import {
   transformMenuToSearchMenus,
   updateLocaleOfGlobalMenus
 } from './shared';
+import { hasAnyBusinessPermission } from '@/router/routes/permissions';
 
 export const useRouteStore = defineStore(SetupStoreId.Route, () => {
   const authStore = useAuthStore();
@@ -137,6 +139,9 @@ export const useRouteStore = defineStore(SetupStoreId.Route, () => {
     menus.value = [];
     cacheRoutes.value = [];
     excludeCacheRoutes.value = [];
+    const defaultHome = import.meta.env.VITE_ROUTE_HOME;
+    setRouteHome(defaultHome);
+    handleUpdateRootRouteRedirect(defaultHome);
     setIsInitAuthRoute(false);
     setIsInitConstantRoute(false);
     resetVueRoutes();
@@ -202,9 +207,21 @@ export const useRouteStore = defineStore(SetupStoreId.Route, () => {
     if (authStore.isStaticSuper) {
       addAuthRoutes(staticAuthRoutes);
     } else {
-      const filteredAuthRoutes = filterAuthRoutesByRoles(staticAuthRoutes, authStore.userInfo.roles);
+      const filteredAuthRoutes = filterAuthRoutesByRoles(staticAuthRoutes, authStore.userInfo);
 
       addAuthRoutes(filteredAuthRoutes);
+
+      if (!hasAnyBusinessPermission(authStore.userInfo)) {
+        setRouteHome('pending-access');
+        handleUpdateRootRouteRedirect('pending-access');
+      } else {
+        const defaultHome = import.meta.env.VITE_ROUTE_HOME;
+        const firstLeaf = isRouteExistByRouteName(defaultHome, filteredAuthRoutes)
+          ? defaultHome
+          : findFirstAccessibleLeafRoute(filteredAuthRoutes) || 'pending-access';
+        setRouteHome(firstLeaf);
+        handleUpdateRootRouteRedirect(firstLeaf);
+      }
     }
 
     handleConstantAndAuthRoutes();

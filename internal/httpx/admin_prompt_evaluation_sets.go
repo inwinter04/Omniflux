@@ -29,7 +29,7 @@ type evaluationSetOverview struct {
 
 func (d ServerDeps) AllPromptEvaluationSets(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireViewer(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermEvaluationRead) != nil {
 		return
 	}
 	rows, err := d.Pool.Query(r.Context(), `
@@ -65,7 +65,7 @@ func (d ServerDeps) AllPromptEvaluationSets(w http.ResponseWriter, r *http.Reque
 
 func (d ServerDeps) UpdatePromptEvaluationSet(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermEvaluationManage) != nil {
 		return
 	}
 	assetID, err := parseAssetID(r)

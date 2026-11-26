@@ -15,14 +15,15 @@ import (
 )
 
 type inviteUserRequest struct {
-	Email          string `json:"email"`
-	Role           string `json:"role"`
-	OrganizationID string `json:"organization_id"`
+	Email             string `json:"email"`
+	Role              string `json:"role"`
+	PermissionGroupID string `json:"permission_group_id"`
+	OrganizationID    string `json:"organization_id"`
 }
 
 func (d ServerDeps) InviteUser(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireOwner(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermUserManage) != nil {
 		return
 	}
 	var body inviteUserRequest
@@ -30,19 +31,52 @@ func (d ServerDeps) InviteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	email := normalizeEmail(body.Email)
-	body.Role = strings.TrimSpace(body.Role)
+	role := strings.TrimSpace(body.Role)
 	if email == "" || !strings.Contains(email, "@") {
 		adminError(w, http.StatusBadRequest, "USER_EMAIL_INVALID", "invalid-email-format", nil)
-		return
-	}
-	if !assignableRoles[body.Role] {
-		adminError(w, http.StatusBadRequest, "USER_ROLE_INVALID", "roles-support-only-org-admin-project", nil)
 		return
 	}
 	targetOrgID, targetOrgOK := d.inviteTargetOrganization(w, r, principal, body.OrganizationID)
 	if !targetOrgOK {
 		return
 	}
+
+	var permissionGroupID any
+	var permissionGroupPtr *uuid.UUID
+	groupIDParam := strings.TrimSpace(body.PermissionGroupID)
+	if groupIDParam != "" {
+		parsedGroupID, parseErr := uuid.Parse(groupIDParam)
+		if parseErr != nil {
+			adminError(w, http.StatusBadRequest, "PERMISSION_GROUP_ID_INVALID", "invalid-permission-group-id", nil)
+			return
+		}
+		var groupPerms []string
+		if err := d.Pool.QueryRow(r.Context(), `
+			SELECT permissions FROM permission_groups WHERE id = $1 AND organization_id = $2
+		`, parsedGroupID, targetOrgID).Scan(&groupPerms); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				adminError(w, http.StatusBadRequest, "PERMISSION_GROUP_NOT_FOUND", "permission-group-does-not-exist", nil)
+				return
+			}
+			adminError(w, http.StatusInternalServerError, "USER_INVITE_FAILED", "failed-to-invite-user", nil)
+			return
+		}
+		if !ensureWithinPrincipalPermissions(w, principal, auth.NormalizePermissions(groupPerms)) {
+			return
+		}
+		role = "viewer"
+		permissionGroupID = parsedGroupID
+		permissionGroupPtr = &parsedGroupID
+	} else {
+		if !assignableRoles[role] {
+			adminError(w, http.StatusBadRequest, "USER_ROLE_INVALID", "roles-support-only-org-admin-project", nil)
+			return
+		}
+		if !ensureWithinPrincipalPermissions(w, principal, auth.PresetPermissions(role)) {
+			return
+		}
+	}
+
 	if !d.requireEmailService(r.Context(), w) {
 		return
 	}
@@ -69,24 +103,29 @@ func (d ServerDeps) InviteUser(w http.ResponseWriter, r *http.Request) {
 	var token string
 	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
 		if _, insertErr := tx.Exec(r.Context(), `
-			INSERT INTO users(id,organization_id,email,password_hash,role,status)
-			VALUES($1,$2,$3,$4,$5,'pending_email_verification')
-		`, userID, targetOrgID, email, temporaryHash, body.Role); insertErr != nil {
+			INSERT INTO users(id,organization_id,email,password_hash,role,permission_group_id,status)
+			VALUES($1,$2,$3,$4,$5,$6,'pending_email_verification')
+		`, userID, targetOrgID, email, temporaryHash, role, permissionGroupID); insertErr != nil {
 			return insertErr
 		}
 		var tokenErr error
 		token, _, tokenErr = d.createEmailToken(r.Context(), tx, createEmailTokenParams{
 			purpose: "user_invitation", email: email, organizationID: &targetOrgID,
-			userID: &userID, role: body.Role, ttl: userInvitationTTL,
+			userID: &userID, role: role, permissionGroupID: permissionGroupPtr, ttl: userInvitationTTL,
 		})
 		if tokenErr != nil {
 			return tokenErr
 		}
-		if auditErr := writeAuditEvent(r.Context(), tx, targetOrgID, principal.UserID, "user.created", "user", userID.String(), nil, map[string]any{"email": email, "role": body.Role, "status": "pending_email_verification"}); auditErr != nil {
+		createdState := map[string]any{"email": email, "role": role, "status": "pending_email_verification"}
+		invitedState := map[string]any{"email": email, "role": role}
+		if permissionGroupPtr != nil {
+			createdState["permission_group_id"] = permissionGroupPtr.String()
+			invitedState["permission_group_id"] = permissionGroupPtr.String()
+		}
+		if auditErr := writeAuditEvent(r.Context(), tx, targetOrgID, principal.UserID, "user.created", "user", userID.String(), nil, createdState); auditErr != nil {
 			return auditErr
 		}
-		return writeAuditEvent(r.Context(), tx, targetOrgID, principal.UserID, "user.invited", "user", userID.String(), nil,
-			map[string]any{"email": email, "role": body.Role})
+		return writeAuditEvent(r.Context(), tx, targetOrgID, principal.UserID, "user.invited", "user", userID.String(), nil, invitedState)
 	})
 	if err != nil {
 		adminError(w, http.StatusInternalServerError, "USER_INVITE_FAILED", "failed-to-invite-user", nil)
@@ -101,7 +140,7 @@ func (d ServerDeps) InviteUser(w http.ResponseWriter, r *http.Request) {
 
 func (d ServerDeps) ResendUserInvitation(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireOwner(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermUserManage) != nil {
 		return
 	}
 	userID, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -115,14 +154,15 @@ func (d ServerDeps) ResendUserInvitation(w http.ResponseWriter, r *http.Request)
 	var email string
 	var organizationID uuid.UUID
 	var role string
+	var groupID uuid.NullUUID
 	if isPlatformAdmin(principal) {
 		err = d.Pool.QueryRow(r.Context(), `
-			SELECT id,email,organization_id,role FROM users WHERE id=$1 AND status='pending_email_verification'
-		`, userID).Scan(&userID, &email, &organizationID, &role)
+			SELECT id,email,organization_id,role,permission_group_id FROM users WHERE id=$1 AND status='pending_email_verification'
+		`, userID).Scan(&userID, &email, &organizationID, &role, &groupID)
 	} else {
 		err = d.Pool.QueryRow(r.Context(), `
-			SELECT id,email,organization_id,role FROM users WHERE id=$1 AND organization_id=$2 AND status='pending_email_verification'
-		`, userID, principal.OrganizationID).Scan(&userID, &email, &organizationID, &role)
+			SELECT id,email,organization_id,role,permission_group_id FROM users WHERE id=$1 AND organization_id=$2 AND status='pending_email_verification'
+		`, userID, principal.OrganizationID).Scan(&userID, &email, &organizationID, &role, &groupID)
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		adminError(w, http.StatusNotFound, "USER_INVITE_NOT_FOUND", "pending-invitation-does-not-exist", nil)
@@ -132,12 +172,17 @@ func (d ServerDeps) ResendUserInvitation(w http.ResponseWriter, r *http.Request)
 		adminError(w, http.StatusInternalServerError, "USER_INVITE_RESEND_FAILED", "failed-to-resend-invitation", nil)
 		return
 	}
+	var groupPtr *uuid.UUID
+	if groupID.Valid {
+		id := groupID.UUID
+		groupPtr = &id
+	}
 	var token string
 	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
 		var tokenErr error
 		token, _, tokenErr = d.createEmailToken(r.Context(), tx, createEmailTokenParams{
 			purpose: "user_invitation", email: email, organizationID: &organizationID,
-			userID: &userID, role: role, ttl: userInvitationTTL,
+			userID: &userID, role: role, permissionGroupID: groupPtr, ttl: userInvitationTTL,
 		})
 		if tokenErr != nil {
 			return tokenErr
@@ -160,8 +205,8 @@ func (d ServerDeps) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
 	if !decodeStrictJSON(w, r, &body) {
 		return
 	}
-	if len(body.Password) < 16 {
-		adminError(w, http.StatusBadRequest, "USER_PASSWORD_WEAK", "password-must-be-at-least-16", nil)
+	if err := auth.ValidatePassword(body.Password); err != nil {
+		adminError(w, http.StatusBadRequest, "USER_PASSWORD_WEAK", "password-policy-unsatisfied", nil)
 		return
 	}
 	hash, err := auth.HashPassword(body.Password)
@@ -253,7 +298,7 @@ func (d ServerDeps) requireEmailService(ctx context.Context, w http.ResponseWrit
 
 func (d ServerDeps) RevokeUserInvitation(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireOwner(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermUserManage) != nil {
 		return
 	}
 	userID, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -288,7 +333,7 @@ func (d ServerDeps) RevokeUserInvitation(w http.ResponseWriter, r *http.Request)
 
 func (d ServerDeps) InviteOptions(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireOwner(w, principal) != nil {
+	if !ok || d.requireAnyPermission(w, principal, auth.PermUserRead, auth.PermUserManage) != nil {
 		return
 	}
 	settings, err := d.Mailer.Config(r.Context())

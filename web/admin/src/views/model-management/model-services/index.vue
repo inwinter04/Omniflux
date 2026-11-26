@@ -29,7 +29,8 @@ import ModelServiceGrantsModal from './modules/model-service-grants-modal.vue';
 
 defineOptions({ name: 'ModelManagementModelServices' });
 
-const { canManage } = usePermission();
+const { has } = usePermission();
+const canManage = computed(() => has('model_service:manage'));
 
 const route = useRoute();
 const router = useRouter();
@@ -298,8 +299,8 @@ async function loadData() {
   try {
     const [servicesRes, accountsRes, policiesRes] = await Promise.all([
       fetchModelServices(),
-      fetchProviderAccounts(),
-      fetchRoutePolicies()
+      has('provider:read') ? fetchProviderAccounts() : Promise.resolve({ data: null, error: null }),
+      has('route_policy:read') ? fetchRoutePolicies() : Promise.resolve({ data: null, error: null })
     ]);
     if (!servicesRes.error && servicesRes.data) list.value = servicesRes.data;
     if (!accountsRes.error && accountsRes.data) {

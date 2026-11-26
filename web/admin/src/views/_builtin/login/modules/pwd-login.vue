@@ -74,17 +74,20 @@ async function handleSubmit() {
         :placeholder="$t('business.password')"
       />
     </NFormItem>
-    <NSpace vertical :size="12">
-      <NButton type="primary" size="large" round block :loading="authStore.loginLoading" @click="handleSubmit">
-        {{ $t('business.log-in') }}
+    <div class="-mt-8px mb-16px flex justify-end">
+      <NButton text type="primary" size="small" @click="router.push({ name: 'forgot-password' })">
+        {{ $t('business.forgot-password-link') }}
       </NButton>
-      <NButton quaternary size="large" block @click="router.push({ name: 'forgot-password' })">
-        {{ $t('business.forgot-password') }}
+    </div>
+    <NButton type="primary" size="large" round block :loading="authStore.loginLoading" @click="handleSubmit">
+      {{ $t('business.log-in') }}
+    </NButton>
+    <div v-if="registrationEnabled" class="mt-16px flex-center gap-6px text-14px text-#6b7280">
+      <span>{{ $t('business.no-account-yet') }}</span>
+      <NButton text type="primary" @click="router.push({ name: 'register' })">
+        {{ $t('business.register-now') }}
       </NButton>
-      <NButton v-if="registrationEnabled" quaternary size="large" block @click="router.push({ name: 'register' })">
-        {{ $t('business.create-an-account') }}
-      </NButton>
-    </NSpace>
+    </div>
   </NForm>
 </template>
 

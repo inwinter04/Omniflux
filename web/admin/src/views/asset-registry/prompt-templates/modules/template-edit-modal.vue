@@ -2,6 +2,9 @@
 import { computed, reactive, ref, watch } from 'vue';
 import { fetchAssetDetail, fetchModelServices, fetchUpdateAsset } from '@/service/api';
 import { $t } from '@/locales';
+import { usePermission } from '@/hooks/common/permission';
+
+const { has } = usePermission();
 import JsonEditor from './json-editor.vue';
 import { schemaFromExample } from './json-schema';
 import TemplateCodeEditor from './template-code-editor.vue';
@@ -83,7 +86,10 @@ async function initialize() {
   detail.value = null;
   loading.value = true;
   try {
-    const [detailRes, modelRes] = await Promise.all([fetchAssetDetail(assetId), fetchModelServices()]);
+    const [detailRes, modelRes] = await Promise.all([
+      fetchAssetDetail(assetId),
+      has('model_service:read') ? fetchModelServices() : Promise.resolve({ data: null, error: null })
+    ]);
     if (generation !== editGeneration || assetId !== props.assetId) return;
     if (!modelRes.error && modelRes.data) models.value = modelRes.data;
     if (detailRes.error || !detailRes.data) return;

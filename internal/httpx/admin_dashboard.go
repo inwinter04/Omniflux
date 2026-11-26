@@ -27,7 +27,7 @@ type dashboardResponse struct {
 // Dashboard 返回首页概览统计:资源规模、近 7 天用量与预算状态。
 func (d ServerDeps) Dashboard(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireViewer(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermDashboardRead) != nil {
 		return
 	}
 	var res dashboardResponse

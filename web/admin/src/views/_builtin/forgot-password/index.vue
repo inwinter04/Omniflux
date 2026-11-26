@@ -49,9 +49,10 @@ async function handleSubmit() {
         {{ $t('business.send-reset-email') }}
       </NButton>
     </NForm>
-    <NButton quaternary size="large" block class="mt-12px" @click="$router.push({ name: 'login' })">
-      {{ $t('business.back-to-log-in') }}
-    </NButton>
+    <div class="mt-16px flex-center">
+      <NButton text type="primary" @click="$router.push({ name: 'login' })">
+        {{ $t('business.back-to-log-in') }}
+      </NButton>
+    </div>
   </AuthShell>
 </template>
-

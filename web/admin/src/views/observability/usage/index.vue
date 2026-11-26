@@ -18,10 +18,14 @@ import {
 import { $t } from '@/locales';
 import { useAppStore } from '@/store/modules/app';
 import { useEcharts } from '@/hooks/common/echarts';
+import { usePermission } from '@/hooks/common/permission';
 
 defineOptions({
   name: 'ObservabilityUsage'
 });
+
+const { has } = usePermission();
+const canExport = computed(() => has('usage:export'));
 
 const summaryLoading = ref(true);
 const recordsLoading = ref(true);
@@ -481,10 +485,10 @@ async function exportCsv() {
 
 async function loadFilterOptions() {
   const [projectRes, applicationRes, apiKeyRes, modelServiceRes] = await Promise.all([
-    fetchProjects(),
-    fetchApplications(),
-    fetchApiKeys(),
-    fetchModelServices()
+    has('org:read') ? fetchProjects() : Promise.resolve({ data: null, error: null }),
+    has('org:read') ? fetchApplications() : Promise.resolve({ data: null, error: null }),
+    has('api_key:read') ? fetchApiKeys() : Promise.resolve({ data: null, error: null }),
+    has('model_service:read') ? fetchModelServices() : Promise.resolve({ data: null, error: null })
   ]);
   if (!projectRes.error && projectRes.data) projects.value = projectRes.data;
   if (!applicationRes.error && applicationRes.data) applications.value = applicationRes.data;
@@ -515,7 +519,7 @@ onMounted(() => {
     <NCard :bordered="false" class="card-wrapper">
       <template #header>{{ $t('business.usage-report') }}</template>
       <template #header-extra>
-        <NButton :loading="exporting" @click="exportCsv">{{ $t('business.exportCsv') }}</NButton>
+        <NButton v-if="canExport" :loading="exporting" @click="exportCsv">{{ $t('business.exportCsv') }}</NButton>
       </template>
 
       <NForm :model="filters" label-placement="top" :show-feedback="false" class="mb-12px">

@@ -166,8 +166,8 @@ func (d ServerDeps) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusInternalServerError, "PASSWORD_RESET_FAILED", "failed-to-reset-password", nil)
 		return
 	}
-	if len(body.Password) < 16 {
-		adminError(w, http.StatusBadRequest, "PASSWORD_RESET_WEAK", "password-must-be-at-least-16", nil)
+	if err := auth.ValidatePassword(body.Password); err != nil {
+		adminError(w, http.StatusBadRequest, "PASSWORD_RESET_WEAK", "password-policy-unsatisfied", nil)
 		return
 	}
 	hash, err := auth.HashPassword(body.Password)

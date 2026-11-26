@@ -9,9 +9,41 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/argon2"
 )
+
+const (
+	MinPasswordLength = 8
+	MaxPasswordLength = 128
+)
+
+var ErrPasswordWeak = errors.New("password does not meet policy")
+
+// ValidatePassword 校验密码是否满足 8–128 个字符、无首尾空白且同时包含字母和数字的要求。
+func ValidatePassword(password string) error {
+	if password == "" || strings.TrimSpace(password) != password {
+		return ErrPasswordWeak
+	}
+	length := utf8.RuneCountInString(password)
+	if length < MinPasswordLength || length > MaxPasswordLength {
+		return ErrPasswordWeak
+	}
+	var hasLetter, hasDigit bool
+	for _, r := range password {
+		if unicode.IsLetter(r) {
+			hasLetter = true
+		} else if unicode.IsDigit(r) {
+			hasDigit = true
+		}
+		if hasLetter && hasDigit {
+			return nil
+		}
+	}
+	return ErrPasswordWeak
+}
 
 const argonMemory uint32 = 64 * 1024
 const argonTime uint32 = 3
@@ -53,7 +85,7 @@ func VerifyPassword(encoded, password string) (bool, error) {
 	return subtle.ConstantTimeCompare(got, want) == 1, nil
 }
 
-const generatedPasswordLength = 24
+const generatedPasswordLength = 16
 
 var generatedPasswordClasses = [3][]byte{
 	[]byte("abcdefghjkmnpqrstuvwxyz"),

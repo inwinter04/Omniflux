@@ -62,7 +62,7 @@ type createProviderAccountRequest struct {
 // ProviderAccounts 返回当前组织的 供应商账号列表(不含凭据)。
 func (d ServerDeps) ProviderAccounts(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireViewer(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermProviderRead) != nil {
 		return
 	}
 	rows, err := d.Pool.Query(r.Context(), `
@@ -152,7 +152,7 @@ func (d ServerDeps) ProviderAccounts(w http.ResponseWriter, r *http.Request) {
 // CreateProviderAccount 创建 供应商账号并把 API Key 用主密钥加密入库。
 func (d ServerDeps) CreateProviderAccount(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermProviderManage) != nil {
 		return
 	}
 	var body createProviderAccountRequest
@@ -252,7 +252,7 @@ func (d ServerDeps) CreateProviderAccount(w http.ResponseWriter, r *http.Request
 // 已退役候选会随账号删除,历史 usage 保留 provider/upstream_model,仅失去 candidate_id 关联。
 func (d ServerDeps) DeleteProviderAccount(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermProviderManage) != nil {
 		return
 	}
 	accountID, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -341,7 +341,7 @@ type updateProviderAccountRequest struct {
 // UpdateProviderAccount 更新账号名称、区域、Base URL 与结算币种;API Key 留空表示不更换。
 func (d ServerDeps) UpdateProviderAccount(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermProviderManage) != nil {
 		return
 	}
 	accountID, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -505,7 +505,7 @@ func (d ServerDeps) loadProviderAccess(ctx context.Context, organizationID, acco
 // azure_openai/vertex/bedrock 的认证模型特殊,暂不支持在线测试。
 func (d ServerDeps) TestProviderAccount(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermProviderManage) != nil {
 		return
 	}
 	accountID, err := uuid.Parse(chi.URLParam(r, "id"))

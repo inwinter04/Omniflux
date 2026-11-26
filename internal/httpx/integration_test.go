@@ -269,8 +269,8 @@ func TestIntegrationGovernance(t *testing.T) {
 		}
 		data := envelope["data"].(map[string]any)
 		password := data["generated_password"].(string)
-		if len(password) != 24 {
-			t.Fatalf("generated password length = %d, want 24", len(password))
+		if len(password) != 16 {
+			t.Fatalf("generated password length = %d, want 16", len(password))
 		}
 		var auditAfter string
 		if err := env.pool.QueryRow(context.Background(), `
@@ -508,6 +508,189 @@ func TestIntegrationGovernance(t *testing.T) {
 		code, _ = doJSON(t, acmeSession, http.MethodGet, "/api/v1/auth/me", nil)
 		if code != http.StatusOK {
 			t.Fatalf("me after move status = %d", code)
+		}
+	})
+
+	var pendingUserID string
+	var pendingSession *http.Client
+	t.Run("password policy allows 8+ alphanumeric and rejects weak passwords", func(t *testing.T) {
+		for _, weak := range []string{"abc1234", "12345678", "abcdefgh", " abc12345", "abc12345 "} {
+			code, _ := doJSON(t, admin, http.MethodPost, "/api/v1/users", map[string]any{
+				"email": "weak-pw@test.local", "password": weak, "role": "pending",
+			})
+			if code != http.StatusBadRequest {
+				t.Fatalf("weak password %q status = %d, want 400", weak, code)
+			}
+		}
+		code, body := doJSON(t, admin, http.MethodPost, "/api/v1/users", map[string]any{
+			"email": "policy-pending@test.local", "password": "pass1234", "role": "pending",
+		})
+		if code != http.StatusOK {
+			t.Fatalf("create user with 8-char alphanumeric password status = %d body = %v", code, body)
+		}
+		pendingUserID = body["data"].(map[string]any)["id"].(string)
+		pendingSession = sessionClient(t, "policy-pending@test.local", "pass1234")
+	})
+
+	t.Run("pending role is isolated to auth/me and returns 403 on business endpoints", func(t *testing.T) {
+		code, body := doJSON(t, pendingSession, http.MethodGet, "/api/v1/auth/me", nil)
+		if code != http.StatusOK {
+			t.Fatalf("pending me status = %d body = %v", code, body)
+		}
+		me := body["data"].(map[string]any)
+		if me["role"] != "pending" {
+			t.Fatalf("pending me role = %v, want pending", me["role"])
+		}
+		if perms, ok := me["permissions"].([]any); !ok || len(perms) != 0 {
+			t.Fatalf("pending permissions = %v, want empty slice", me["permissions"])
+		}
+		for _, path := range []string{
+			"/api/v1/dashboard",
+			"/api/v1/provider-catalog",
+			"/api/v1/assets",
+			"/api/v1/usage/summary",
+		} {
+			code, _ := doJSON(t, pendingSession, http.MethodGet, path, nil)
+			if code != http.StatusForbidden {
+				t.Fatalf("pending GET %s status = %d, want 403", path, code)
+			}
+		}
+	})
+
+	t.Run("viewer role respects default read boundary", func(t *testing.T) {
+		code, body := doJSON(t, admin, http.MethodPost, "/api/v1/users", map[string]any{
+			"email": "viewer-boundary@test.local", "password": "viewer123", "role": "viewer",
+		})
+		if code != http.StatusOK {
+			t.Fatalf("create viewer status = %d body = %v", code, body)
+		}
+		viewerSession := sessionClient(t, "viewer-boundary@test.local", "viewer123")
+		for _, path := range []string{"/api/v1/dashboard", "/api/v1/usage/summary"} {
+			code, _ := doJSON(t, viewerSession, http.MethodGet, path, nil)
+			if code != http.StatusOK {
+				t.Fatalf("viewer GET %s status = %d, want 200", path, code)
+			}
+		}
+		for _, path := range []string{"/api/v1/audit-events", "/api/v1/usage/records/export"} {
+			code, _ := doJSON(t, viewerSession, http.MethodGet, path, nil)
+			if code != http.StatusForbidden {
+				t.Fatalf("viewer GET %s status = %d, want 403", path, code)
+			}
+		}
+	})
+
+	t.Run("custom permission groups, user overrides, and escalation prevention", func(t *testing.T) {
+		code, body := doJSON(t, admin, http.MethodPost, "/api/v1/permission-groups", map[string]any{
+			"name":        "ops-reader",
+			"description": "read dashboard and usage",
+			"permissions": []string{"dashboard:read", "usage:read", "prompt:read"},
+		})
+		if code != http.StatusOK {
+			t.Fatalf("create permission group status = %d body = %v", code, body)
+		}
+		groupID := body["data"].(map[string]any)["id"].(string)
+
+		code, body = doJSON(t, admin, http.MethodGet, "/api/v1/permission-groups", nil)
+		if code != http.StatusOK {
+			t.Fatalf("list permission groups status = %d body = %v", code, body)
+		}
+		foundGroup := false
+		for _, item := range body["data"].([]any) {
+			if item.(map[string]any)["id"] == groupID {
+				foundGroup = true
+				break
+			}
+		}
+		if !foundGroup {
+			t.Fatalf("created permission group %s not found in list", groupID)
+		}
+
+		code, _ = doJSON(t, admin, http.MethodPatch, "/api/v1/permission-groups/"+groupID, map[string]any{
+			"name":        "ops-reader",
+			"description": "updated read group",
+			"permissions": []string{"dashboard:read", "usage:read", "prompt:read"},
+		})
+		if code != http.StatusOK {
+			t.Fatalf("update permission group status = %d", code)
+		}
+
+		code, _ = doJSON(t, admin, http.MethodPut, "/api/v1/users/"+pendingUserID+"/permissions", map[string]any{
+			"permission_group_id": groupID,
+			"allow":               []string{"usage:read"},
+			"deny":                []string{"usage:read"},
+		})
+		if code != http.StatusBadRequest {
+			t.Fatalf("conflicting allow/deny status = %d, want 400", code)
+		}
+
+		code, body = doJSON(t, admin, http.MethodPut, "/api/v1/users/"+pendingUserID+"/permissions", map[string]any{
+			"permission_group_id": groupID,
+			"allow":               []string{"api_key:read"},
+			"deny":                []string{"usage:read"},
+		})
+		if code != http.StatusOK {
+			t.Fatalf("update user permissions status = %d body = %v", code, body)
+		}
+
+		code, _ = doJSON(t, admin, http.MethodDelete, "/api/v1/permission-groups/"+groupID, nil)
+		if code != http.StatusConflict {
+			t.Fatalf("delete in-use permission group status = %d, want 409", code)
+		}
+
+		for _, path := range []string{"/api/v1/dashboard", "/api/v1/assets?type=prompt_template", "/api/v1/api-keys"} {
+			code, _ := doJSON(t, pendingSession, http.MethodGet, path, nil)
+			if code != http.StatusOK {
+				t.Fatalf("overridden user GET %s status = %d, want 200", path, code)
+			}
+		}
+		code, _ = doJSON(t, pendingSession, http.MethodGet, "/api/v1/usage/summary", nil)
+		if code != http.StatusForbidden {
+			t.Fatalf("denied permission GET /api/v1/usage/summary status = %d, want 403", code)
+		}
+
+		code, body = doJSON(t, admin, http.MethodPost, "/api/v1/users", map[string]any{
+			"email": "limited-admin@test.local", "password": "limited123", "role": "project_admin",
+		})
+		if code != http.StatusOK {
+			t.Fatalf("create limited admin status = %d body = %v", code, body)
+		}
+		limitedAdminID := body["data"].(map[string]any)["id"].(string)
+		code, _ = doJSON(t, admin, http.MethodPut, "/api/v1/users/"+limitedAdminID+"/permissions", map[string]any{
+			"role":  "project_admin",
+			"allow": []string{"user:read", "user:manage", "permission_group:read", "permission_group:manage"},
+			"deny":  []string{},
+		})
+		if code != http.StatusOK {
+			t.Fatalf("grant user management to limited admin status = %d", code)
+		}
+		limitedSession := sessionClient(t, "limited-admin@test.local", "limited123")
+		code, _ = doJSON(t, limitedSession, http.MethodPost, "/api/v1/permission-groups", map[string]any{
+			"name":        "escalated-group",
+			"permissions": []string{"dashboard:read", "audit:read"},
+		})
+		if code != http.StatusForbidden {
+			t.Fatalf("escalation create group status = %d, want 403", code)
+		}
+		code, _ = doJSON(t, limitedSession, http.MethodPut, "/api/v1/users/"+pendingUserID+"/permissions", map[string]any{
+			"role":  "viewer",
+			"allow": []string{"audit:read"},
+			"deny":  []string{},
+		})
+		if code != http.StatusForbidden {
+			t.Fatalf("escalation grant audit:read status = %d, want 403", code)
+		}
+
+		code, _ = doJSON(t, admin, http.MethodPut, "/api/v1/users/"+pendingUserID+"/permissions", map[string]any{
+			"role":  "pending",
+			"allow": []string{},
+			"deny":  []string{},
+		})
+		if code != http.StatusOK {
+			t.Fatalf("unbind user group status = %d", code)
+		}
+		code, _ = doJSON(t, admin, http.MethodDelete, "/api/v1/permission-groups/"+groupID, nil)
+		if code != http.StatusOK {
+			t.Fatalf("delete unbound permission group status = %d, want 200", code)
 		}
 	})
 

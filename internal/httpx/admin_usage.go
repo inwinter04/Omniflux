@@ -190,7 +190,7 @@ func buildUsageFilters(r *http.Request, organizationID uuid.UUID) (string, []any
 // UsageTrend 返回按天聚合的趋势数据,支持总览/模型/项目/应用/供应商维度。
 func (d ServerDeps) UsageTrend(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireViewer(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermUsageRead) != nil {
 		return
 	}
 	whereSQL, args, err := buildUsageFilters(r, principal.OrganizationID)
@@ -285,7 +285,7 @@ func (d ServerDeps) UsageTrend(w http.ResponseWriter, r *http.Request) {
 // UsageSummary 返回近 N 天的请求/Token/成本汇总,默认 7 天,上限 90 天。
 func (d ServerDeps) UsageSummary(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireViewer(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermUsageRead) != nil {
 		return
 	}
 	days, err := strconv.Atoi(r.URL.Query().Get("days"))
@@ -631,7 +631,7 @@ func (d ServerDeps) UsageSummary(w http.ResponseWriter, r *http.Request) {
 // UsageRecords 返回用量明细分页,支持项目/应用/Key/模型/状态/来源/时间筛选。
 func (d ServerDeps) UsageRecords(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireViewer(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermUsageRead) != nil {
 		return
 	}
 	page, pageSize := parsePaging(r)
@@ -757,7 +757,7 @@ func (d ServerDeps) UsageRecords(w http.ResponseWriter, r *http.Request) {
 // UsageRecordsExport 导出当前筛选条件下的用量明细 CSV。
 func (d ServerDeps) UsageRecordsExport(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireViewer(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermUsageExport) != nil {
 		return
 	}
 	whereSQL, args, err := buildUsageFilters(r, principal.OrganizationID)
@@ -984,7 +984,7 @@ type auditEventsPage struct {
 // AuditEvents 返回当前组织审计事件分页,支持身份/动作/资源/结果/时间筛选。
 func (d ServerDeps) AuditEvents(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireViewer(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermAuditRead) != nil {
 		return
 	}
 	page, pageSize := parsePaging(r)
@@ -1113,7 +1113,7 @@ type auditEventDetailResponse struct {
 // AuditEventDetail 返回单条审计事件的完整内容,含 before/after 状态与请求来源。
 func (d ServerDeps) AuditEventDetail(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireViewer(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermAuditRead) != nil {
 		return
 	}
 	eventID, err := uuid.Parse(chi.URLParam(r, "id"))

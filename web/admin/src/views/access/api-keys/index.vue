@@ -19,7 +19,8 @@ defineOptions({
   name: 'AccessApiKeys'
 });
 
-const { canManage } = usePermission();
+const { has } = usePermission();
+const canManage = computed(() => has('api_key:manage'));
 const route = useRoute();
 
 const loading = ref(true);
@@ -247,8 +248,8 @@ async function loadData() {
   try {
     const [keysRes, projectsRes, applicationsRes] = await Promise.all([
       fetchApiKeys(),
-      fetchProjects(),
-      fetchApplications()
+      has('org:read') ? fetchProjects() : Promise.resolve({ data: null, error: null }),
+      has('org:read') ? fetchApplications() : Promise.resolve({ data: null, error: null })
     ]);
     if (!keysRes.error && keysRes.data) {
       list.value = keysRes.data;

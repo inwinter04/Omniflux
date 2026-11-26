@@ -22,7 +22,8 @@ import JsonEditor from '../prompt-templates/modules/json-editor.vue';
 
 defineOptions({ name: 'AssetRegistryEvaluations' });
 
-const { canManage } = usePermission();
+const { has } = usePermission();
+const canManage = computed(() => has('evaluation:manage'));
 
 interface CaseDraft {
   id?: string;
@@ -259,8 +260,8 @@ onMounted(async () => {
   try {
     const [setRes, assetRes, modelRes] = await Promise.all([
       fetchAllPromptEvaluationSets(),
-      fetchAssets('prompt_template'),
-      fetchModelServices()
+      has('prompt:read') ? fetchAssets('prompt_template') : Promise.resolve({ data: null, error: null }),
+      has('model_service:read') ? fetchModelServices() : Promise.resolve({ data: null, error: null })
     ]);
     if (!setRes.error && setRes.data) overviews.value = setRes.data;
     if (!assetRes.error && assetRes.data) assets.value = assetRes.data;

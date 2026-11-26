@@ -140,7 +140,21 @@ func (d ServerDeps) Me(w http.ResponseWriter, r *http.Request) {
 		adminFail(w, http.StatusUnauthorized, "authentication-required")
 		return
 	}
-	adminOK(w, adminUserInfoResponse{UserID: principal.UserID.String(), UserName: principal.Email, Roles: adminRoles(principal.Role), Buttons: []string{}})
+	info := adminUserInfoResponse{
+		UserID:      principal.UserID.String(),
+		UserName:    principal.Email,
+		Role:        principal.Role,
+		Roles:       adminRoles(principal.Role),
+		Permissions: principal.PermissionList(),
+		Buttons:     []string{},
+	}
+	if principal.PermissionGroupID != nil {
+		gid := principal.PermissionGroupID.String()
+		info.PermissionGroupID = &gid
+		gname := principal.PermissionGroupName
+		info.PermissionGroupName = &gname
+	}
+	adminOK(w, info)
 }
 
 func (d ServerDeps) recordLogin(ctx context.Context, organizationID, userID *uuid.UUID, email, ip, agent, result string) {
@@ -221,10 +235,14 @@ type adminUserResponse struct {
 }
 
 type adminUserInfoResponse struct {
-	UserID   string   `json:"userId"`
-	UserName string   `json:"userName"`
-	Roles    []string `json:"roles"`
-	Buttons  []string `json:"buttons"`
+	UserID              string   `json:"userId"`
+	UserName            string   `json:"userName"`
+	Role                string   `json:"role"`
+	Roles               []string `json:"roles"`
+	Permissions         []string `json:"permissions"`
+	PermissionGroupID   *string  `json:"permissionGroupId"`
+	PermissionGroupName *string  `json:"permissionGroupName"`
+	Buttons             []string `json:"buttons"`
 }
 
 func adminRoles(role string) []string {

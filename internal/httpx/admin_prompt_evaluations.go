@@ -59,7 +59,7 @@ type evaluationRunTarget struct {
 
 func (d ServerDeps) PromptEvaluationSets(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireViewer(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermEvaluationRead) != nil {
 		return
 	}
 	assetID, err := parseAssetID(r)
@@ -124,7 +124,7 @@ func (d ServerDeps) PromptEvaluationSets(w http.ResponseWriter, r *http.Request)
 
 func (d ServerDeps) CreatePromptEvaluationSet(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermEvaluationManage) != nil {
 		return
 	}
 	assetID, err := parseAssetID(r)
@@ -179,7 +179,7 @@ func (d ServerDeps) CreatePromptEvaluationSet(w http.ResponseWriter, r *http.Req
 
 func (d ServerDeps) DeletePromptEvaluationSet(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermEvaluationManage) != nil {
 		return
 	}
 	assetID, err := parseAssetID(r)
@@ -224,7 +224,7 @@ func (d ServerDeps) DeletePromptEvaluationSet(w http.ResponseWriter, r *http.Req
 
 func (d ServerDeps) EvaluatePromptAsset(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermEvaluationManage) != nil {
 		return
 	}
 	assetID, err := parseAssetID(r)

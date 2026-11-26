@@ -11,7 +11,8 @@ defineOptions({
   name: 'OrganizationDepartments'
 });
 
-const { canManage } = usePermission();
+const { has } = usePermission();
+const canManage = computed(() => has('org:manage'));
 const route = useRoute();
 
 const loading = ref(true);

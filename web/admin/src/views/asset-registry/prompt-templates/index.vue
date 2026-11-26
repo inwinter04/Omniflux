@@ -15,7 +15,8 @@ import TemplateVersionsModal from './modules/template-versions-modal.vue';
 
 defineOptions({ name: 'AssetRegistryPromptTemplates' });
 
-const { canManage } = usePermission();
+const { has } = usePermission();
+const canManage = computed(() => has('prompt:manage'));
 
 const loading = ref(true);
 const list = ref<Api.Management.Asset[]>([]);

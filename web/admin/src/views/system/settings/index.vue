@@ -49,15 +49,16 @@ const orgOptions = ref<SelectOption[]>([]);
 const settings = reactive<Api.Management.SystemSettings>({
   public_registration_enabled: false,
   registration_organization_id: null,
-  registration_role: 'viewer',
+  registration_role: 'pending',
   email_verification_required: false,
   updated_by: null,
   updated_at: ''
 });
 
 const roleOptions = computed(() => [
-  { label: $t('business.developer'), value: 'developer' },
-  { label: $t('business.viewer'), value: 'viewer' }
+  { label: $t('business.pending-role-recommended'), value: 'pending' },
+  { label: $t('business.viewer'), value: 'viewer' },
+  { label: $t('business.developer'), value: 'developer' }
 ]);
 
 const rules = computed<FormRules>(() => ({

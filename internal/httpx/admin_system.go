@@ -14,6 +14,7 @@ import (
 )
 
 var registrationRoles = map[string]bool{
+	"pending":   true,
 	"developer": true,
 	"viewer":    true,
 }
@@ -178,7 +179,7 @@ func (d ServerDeps) RegistrationOptions(w http.ResponseWriter, r *http.Request) 
 	err := d.Pool.QueryRow(r.Context(), `
 		SELECT public_registration_enabled
 		   AND registration_organization_id IS NOT NULL
-		   AND registration_role IN ('developer', 'viewer'),
+		   AND registration_role IN ('pending', 'developer', 'viewer'),
 		   email_verification_required
 		FROM system_settings WHERE singleton
 	`).Scan(&enabled, &emailVerificationRequired)

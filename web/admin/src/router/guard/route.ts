@@ -4,6 +4,7 @@ import { localStg } from '@/utils/storage';
 import { useAuthStore } from '@/store/modules/auth';
 import { useRouteStore } from '@/store/modules/route';
 import { getRouteName } from '@/router/elegant/transform';
+import { canAccessRoute, hasAnyBusinessPermission } from '@/router/routes/permissions';
 
 /**
  * create route guard
@@ -19,6 +20,7 @@ export function createRouteGuard(router: Router) {
     }
 
     const authStore = useAuthStore();
+    const routeStore = useRouteStore();
 
     const rootRoute: RouteKey = 'root';
     const loginRoute: RouteKey = 'login';
@@ -28,8 +30,8 @@ export function createRouteGuard(router: Router) {
     const needLogin = !to.meta.constant;
     const routeRoles = to.meta.roles || [];
 
-    const hasRole = authStore.userInfo.roles.some(role => routeRoles.includes(role));
-    const hasAuth = authStore.isStaticSuper || !routeRoles.length || hasRole;
+    const hasAuth =
+      authStore.isStaticSuper || canAccessRoute(String(to.name || ''), routeRoles, authStore.userInfo);
 
     // if it is login route when logged in, then switch to the root page
     if (to.name === loginRoute && isLogin) {
@@ -46,8 +48,19 @@ export function createRouteGuard(router: Router) {
       return { name: loginRoute, query: { redirect: to.fullPath } };
     }
 
+    const hasBusiness = hasAnyBusinessPermission(authStore.userInfo);
+    if (!hasBusiness && to.name !== 'pending-access') {
+      return { name: 'pending-access', replace: true };
+    }
+    if (hasBusiness && to.name === 'pending-access') {
+      return { name: rootRoute, replace: true };
+    }
+
     // if the user is logged in but does not have authorization, then switch to the 403 page
     if (!hasAuth) {
+      if (to.redirectedFrom?.name === 'root' && routeStore.routeHome && routeStore.routeHome !== to.name) {
+        return { name: routeStore.routeHome, replace: true };
+      }
       return { name: noAuthorizationRoute };
     }
 

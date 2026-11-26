@@ -11,40 +11,24 @@ import (
 	"github.com/inwinter04/omniflux/internal/auth"
 )
 
-// requireAdmin 校验当前 principal 至少是 org_admin;不足时写出 403。
-func (d ServerDeps) requireAdmin(w http.ResponseWriter, principal auth.Principal) error {
-	if err := auth.RequireRole(principal, "org_admin"); err != nil {
-		adminError(w, http.StatusForbidden, "PERMISSION_DENIED", "organization-admin-permission-is-required", nil)
+// requirePermission 校验当前 principal 拥有指定细粒度权限节点;不足时写出 403。
+func (d ServerDeps) requirePermission(w http.ResponseWriter, principal auth.Principal, permission string) error {
+	if err := auth.RequirePermission(principal, permission); err != nil {
+		adminError(w, http.StatusForbidden, "PERMISSION_DENIED", "permission-denied", map[string]any{"permission": permission})
 		return err
 	}
 	return nil
 }
 
-// requireViewer 校验至少是 viewer,用于只读接口。
-func (d ServerDeps) requireViewer(w http.ResponseWriter, principal auth.Principal) error {
-	if err := auth.RequireRole(principal, "viewer"); err != nil {
-		adminError(w, http.StatusForbidden, "PERMISSION_DENIED", "at-least-viewer-permission-is-required", nil)
-		return err
+// requireAnyPermission 校验当前 principal 至少拥有给定权限节点之一;不足时写出 403。
+func (d ServerDeps) requireAnyPermission(w http.ResponseWriter, principal auth.Principal, permissions ...string) error {
+	for _, perm := range permissions {
+		if principal.HasPermission(perm) {
+			return nil
+		}
 	}
-	return nil
-}
-
-// requireProjectAdmin 校验至少是 project_admin,用于业务资源写接口。
-func (d ServerDeps) requireProjectAdmin(w http.ResponseWriter, principal auth.Principal) error {
-	if err := auth.RequireRole(principal, "project_admin"); err != nil {
-		adminError(w, http.StatusForbidden, "PERMISSION_DENIED", "project-admin-permission-is-required", nil)
-		return err
-	}
-	return nil
-}
-
-// requireOwner 校验至少是 org_owner,用于用户管理等最高权限接口。
-func (d ServerDeps) requireOwner(w http.ResponseWriter, principal auth.Principal) error {
-	if err := auth.RequireRole(principal, "org_owner"); err != nil {
-		adminError(w, http.StatusForbidden, "PERMISSION_DENIED", "organization-owner-permission-is-required", nil)
-		return err
-	}
-	return nil
+	adminError(w, http.StatusForbidden, "PERMISSION_DENIED", "permission-denied", nil)
+	return auth.ErrPermissionDenied
 }
 
 // decodeJSON 解析请求体;失败时写出 400。

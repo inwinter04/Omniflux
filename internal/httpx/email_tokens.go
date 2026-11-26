@@ -18,22 +18,24 @@ const (
 )
 
 type emailTokenRecord struct {
-	ID             uuid.UUID
-	Purpose        string
-	OrganizationID uuid.NullUUID
-	UserID         uuid.NullUUID
-	Email          string
-	Role           pgtype.Text
-	ExpiresAt      time.Time
+	ID                uuid.UUID
+	Purpose           string
+	OrganizationID    uuid.NullUUID
+	UserID            uuid.NullUUID
+	Email             string
+	Role              pgtype.Text
+	PermissionGroupID uuid.NullUUID
+	ExpiresAt         time.Time
 }
 
 type createEmailTokenParams struct {
-	purpose        string
-	email          string
-	organizationID *uuid.UUID
-	userID         *uuid.UUID
-	role           string
-	ttl            time.Duration
+	purpose           string
+	email             string
+	organizationID    *uuid.UUID
+	userID            *uuid.UUID
+	role              string
+	permissionGroupID *uuid.UUID
+	ttl               time.Duration
 }
 
 func (d ServerDeps) createEmailToken(ctx context.Context, q rowQuerier, params createEmailTokenParams) (string, uuid.UUID, error) {
@@ -43,12 +45,15 @@ func (d ServerDeps) createEmailToken(ctx context.Context, q rowQuerier, params c
 	}
 	tokenHash := auth.HashEmailToken(d.APIKeyPepper, params.purpose, token)
 	id := uuid.New()
-	var organizationID, userID any
+	var organizationID, userID, permissionGroupID any
 	if params.organizationID != nil {
 		organizationID = *params.organizationID
 	}
 	if params.userID != nil {
 		userID = *params.userID
+	}
+	if params.permissionGroupID != nil {
+		permissionGroupID = *params.permissionGroupID
 	}
 	var role any
 	if params.role != "" {
@@ -61,9 +66,9 @@ func (d ServerDeps) createEmailToken(ctx context.Context, q rowQuerier, params c
 		return "", uuid.UUID{}, err
 	}
 	if _, err := q.Exec(ctx, `
-		INSERT INTO email_tokens(id,purpose,token_hash,organization_id,user_id,email,role,expires_at)
-		VALUES($1,$2,$3,$4,$5,$6,$7,now()+$8::interval)
-	`, id, params.purpose, tokenHash, organizationID, userID, params.email, role, params.ttl.String()); err != nil {
+		INSERT INTO email_tokens(id,purpose,token_hash,organization_id,user_id,email,role,permission_group_id,expires_at)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,now()+$9::interval)
+	`, id, params.purpose, tokenHash, organizationID, userID, params.email, role, permissionGroupID, params.ttl.String()); err != nil {
 		return "", uuid.UUID{}, err
 	}
 	return token, id, nil
@@ -75,9 +80,9 @@ func (d ServerDeps) consumeEmailToken(ctx context.Context, q rowQuerier, purpose
 	err := q.QueryRow(ctx, `
 		UPDATE email_tokens SET consumed_at=now()
 		WHERE token_hash=$1 AND purpose=$2 AND consumed_at IS NULL AND expires_at>now()
-		RETURNING id,purpose,organization_id,user_id,email,role,expires_at
+		RETURNING id,purpose,organization_id,user_id,email,role,permission_group_id,expires_at
 	`, tokenHash, purpose).Scan(
-		&record.ID, &record.Purpose, &record.OrganizationID, &record.UserID, &record.Email, &record.Role, &record.ExpiresAt,
+		&record.ID, &record.Purpose, &record.OrganizationID, &record.UserID, &record.Email, &record.Role, &record.PermissionGroupID, &record.ExpiresAt,
 	)
 	return record, err
 }

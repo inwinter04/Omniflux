@@ -6,6 +6,7 @@ import { $t } from '@/locales';
 import { useAuthStore } from '@/store/modules/auth';
 import { useRouterPush } from '@/hooks/common/router';
 import { localStg } from '@/utils/storage';
+import { usePermission } from '@/hooks/common/permission';
 
 defineOptions({
   name: 'Home'
@@ -13,6 +14,7 @@ defineOptions({
 
 const authStore = useAuthStore();
 const { routerPush } = useRouterPush();
+const { has } = usePermission();
 
 const ready = ref<'loading' | 'ready' | 'unavailable'>('loading');
 const loading = ref(true);
@@ -24,28 +26,34 @@ interface QuickLink {
   route: string;
 }
 
-const quickLinks = computed<QuickLink[]>(() => [
-  {
-    title: $t('business.provider-account'),
-    description: $t('business.connect-upstream-model-providers'),
-    route: '/model-management/providers'
-  },
-  {
-    title: $t('business.model-service'),
-    description: $t('business.configure-logical-models-for-business'),
-    route: '/model-management/model-services'
-  },
-  {
-    title: 'API Key',
-    description: $t('business.issue-access-credentials-for-business'),
-    route: '/access/api-keys'
-  },
-  {
-    title: $t('business.budget'),
-    description: $t('business.set-cost-control-windows'),
-    route: '/observability/budgets'
-  }
-]);
+const quickLinks = computed<QuickLink[]>(() =>
+  [
+    {
+      title: $t('business.provider-account'),
+      description: $t('business.connect-upstream-model-providers'),
+      route: '/model-management/providers',
+      perm: 'provider:read'
+    },
+    {
+      title: $t('business.model-service'),
+      description: $t('business.configure-logical-models-for-business'),
+      route: '/model-management/model-services',
+      perm: 'model_service:read'
+    },
+    {
+      title: 'API Key',
+      description: $t('business.issue-access-credentials-for-business'),
+      route: '/access/api-keys',
+      perm: 'api_key:read'
+    },
+    {
+      title: $t('business.budget'),
+      description: $t('business.set-cost-control-windows'),
+      route: '/observability/budgets',
+      perm: 'budget:read'
+    }
+  ].filter(item => has(item.perm))
+);
 
 function go(route: string) {
   void routerPush({ path: route });
@@ -324,7 +332,9 @@ onMounted(() => {
     <NCard :title="$t('business.current-session')" :bordered="false" class="card-wrapper">
       <NDescriptions :column="1" label-placement="left" bordered>
         <NDescriptionsItem :label="$t('business.login-email')">{{ authStore.userInfo.userName }}</NDescriptionsItem>
-        <NDescriptionsItem :label="$t('business.roles')">{{ authStore.userInfo.roles.join(' / ') }}</NDescriptionsItem>
+        <NDescriptionsItem :label="$t('business.roles')">
+          {{ authStore.userInfo.permissionGroupName || authStore.userInfo.role || authStore.userInfo.roles.join(' / ') }}
+        </NDescriptionsItem>
         <NDescriptionsItem :label="$t('business.session-mode')">
           {{ $t('business.server-side-cookie-session') }}
         </NDescriptionsItem>

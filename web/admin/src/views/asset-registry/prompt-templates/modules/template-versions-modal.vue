@@ -19,7 +19,8 @@ const emit = defineEmits<{
   saved: [];
 }>();
 
-const { canManage } = usePermission();
+const { has } = usePermission();
+const canManage = computed(() => (props.asset?.asset_type === 'agent' ? has('agent:manage') : has('prompt:manage')));
 
 const loading = ref(false);
 const diffLoading = ref(false);

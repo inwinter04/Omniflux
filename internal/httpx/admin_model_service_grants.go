@@ -25,7 +25,7 @@ type modelServiceGrantResponse struct {
 
 func (d ServerDeps) ModelServiceGrants(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireViewer(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermModelServiceRead) != nil {
 		return
 	}
 	serviceID, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -66,7 +66,7 @@ func (d ServerDeps) ModelServiceGrants(w http.ResponseWriter, r *http.Request) {
 
 func (d ServerDeps) UpsertModelServiceGrant(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermModelServiceManage) != nil {
 		return
 	}
 	serviceID, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -159,7 +159,7 @@ func (d ServerDeps) UpsertModelServiceGrant(w http.ResponseWriter, r *http.Reque
 
 func (d ServerDeps) RevokeModelServiceGrant(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermModelServiceManage) != nil {
 		return
 	}
 	serviceID, err := uuid.Parse(chi.URLParam(r, "id"))

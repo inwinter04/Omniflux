@@ -31,12 +31,15 @@ type upsertAssetGrantRequest struct {
 
 func (d ServerDeps) AssetGrants(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireViewer(w, principal) != nil {
+	if !ok {
 		return
 	}
 	assetID, err := parseAssetID(r)
 	if err != nil {
 		writeAssetError(w, err, "ASSET_GRANT_LIST_FAILED", "failed-to-query-asset-grants")
+		return
+	}
+	if !d.requireAssetAccess(w, r, principal, assetID, false) {
 		return
 	}
 	var exists bool
@@ -84,12 +87,15 @@ func (d ServerDeps) AssetGrants(w http.ResponseWriter, r *http.Request) {
 
 func (d ServerDeps) UpsertAssetGrant(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok {
 		return
 	}
 	assetID, err := parseAssetID(r)
 	if err != nil {
 		writeAssetError(w, err, "ASSET_GRANT_SAVE_FAILED", "save-asset-grant-failed")
+		return
+	}
+	if !d.requireAssetAccess(w, r, principal, assetID, true) {
 		return
 	}
 	var body upsertAssetGrantRequest
@@ -183,12 +189,15 @@ func (d ServerDeps) UpsertAssetGrant(w http.ResponseWriter, r *http.Request) {
 
 func (d ServerDeps) RevokeAssetGrant(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok {
 		return
 	}
 	assetID, err := parseAssetID(r)
 	if err != nil {
 		writeAssetError(w, err, "ASSET_GRANT_REVOKE_FAILED", "revoke-asset-grant-failed")
+		return
+	}
+	if !d.requireAssetAccess(w, r, principal, assetID, true) {
 		return
 	}
 	grantID, parseErr := uuid.Parse(chi.URLParam(r, "grantID"))

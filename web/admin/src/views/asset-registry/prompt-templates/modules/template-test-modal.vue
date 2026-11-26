@@ -14,7 +14,10 @@ import {
   streamPromptRun
 } from '@/service/api';
 import { $t } from '@/locales';
+import { usePermission } from '@/hooks/common/permission';
 import MarkdownPreview from './markdown-preview.vue';
+
+const { has } = usePermission();
 import TemplateRunResult from './template-run-result.vue';
 
 const props = defineProps<{
@@ -165,7 +168,10 @@ async function initialize() {
   selectedSpec.value = null;
   selectedVersionID.value = null;
   try {
-    const [detailRes, modelRes] = await Promise.all([fetchAssetDetail(assetId), fetchModelServices()]);
+    const [detailRes, modelRes] = await Promise.all([
+      fetchAssetDetail(assetId),
+      has('model_service:read') ? fetchModelServices() : Promise.resolve({ data: null, error: null })
+    ]);
     if (generation !== sessionGeneration || assetId !== props.asset?.id) return;
     if (!modelRes.error && modelRes.data) models.value = modelRes.data;
     if (detailRes.error || !detailRes.data) return;

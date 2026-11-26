@@ -2,6 +2,9 @@
 import { computed, reactive, ref, watch } from 'vue';
 import { fetchAssetDetail, fetchAssets, fetchCreateAsset, fetchModelServices, fetchUpdateAsset } from '@/service/api';
 import { $t } from '@/locales';
+import { usePermission } from '@/hooks/common/permission';
+
+const { has } = usePermission();
 
 const props = defineProps<{
   show: boolean;
@@ -77,7 +80,10 @@ async function initialize() {
     temperature: 0.7, top_p: 1, max_tokens: 2048, max_history_messages: 20
   });
   try {
-    const [promptRes, modelRes] = await Promise.all([fetchAssets('prompt_template'), fetchModelServices()]);
+    const [promptRes, modelRes] = await Promise.all([
+      has('prompt:read') ? fetchAssets('prompt_template') : Promise.resolve({ data: null, error: null }),
+      has('model_service:read') ? fetchModelServices() : Promise.resolve({ data: null, error: null })
+    ]);
     if (generation !== editGeneration) return;
     if (!promptRes.error && promptRes.data) prompts.value = promptRes.data;
     if (!modelRes.error && modelRes.data) models.value = modelRes.data;

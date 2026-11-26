@@ -43,7 +43,7 @@ func (d ServerDeps) updateStatusWithAudit(ctx context.Context, sql string, args 
 
 func (d ServerDeps) UpdateProviderAccountStatus(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermProviderManage) != nil {
 		return
 	}
 	accountID, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -75,7 +75,7 @@ func (d ServerDeps) UpdateProviderAccountStatus(w http.ResponseWriter, r *http.R
 
 func (d ServerDeps) UpdateModelServiceStatus(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermModelServiceManage) != nil {
 		return
 	}
 	serviceID, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -104,7 +104,7 @@ func (d ServerDeps) UpdateModelServiceStatus(w http.ResponseWriter, r *http.Requ
 
 func (d ServerDeps) UpdateModelCandidateStatus(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermModelServiceManage) != nil {
 		return
 	}
 	candidateID, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -135,7 +135,7 @@ func (d ServerDeps) UpdateModelCandidateStatus(w http.ResponseWriter, r *http.Re
 
 func (d ServerDeps) UpdateProjectStatus(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermOrgManage) != nil {
 		return
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -164,7 +164,7 @@ func (d ServerDeps) UpdateProjectStatus(w http.ResponseWriter, r *http.Request) 
 
 func (d ServerDeps) UpdateApplicationStatus(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermOrgManage) != nil {
 		return
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -193,7 +193,7 @@ func (d ServerDeps) UpdateApplicationStatus(w http.ResponseWriter, r *http.Reque
 
 func (d ServerDeps) UpdateRoutePolicyStatus(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermRoutePolicyManage) != nil {
 		return
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))

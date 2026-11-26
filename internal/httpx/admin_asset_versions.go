@@ -50,12 +50,15 @@ func queryAssetVersion(ctx context.Context, q rowQuerier, organizationID, assetI
 
 func (d ServerDeps) AssetVersion(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireViewer(w, principal) != nil {
+	if !ok {
 		return
 	}
 	assetID, err := parseAssetID(r)
 	if err != nil {
 		writeAssetError(w, err, "ASSET_VERSION_FAILED", "query-asset-version-failed")
+		return
+	}
+	if !d.requireAssetAccess(w, r, principal, assetID, false) {
 		return
 	}
 	versionID, parseErr := uuid.Parse(chi.URLParam(r, "versionID"))
@@ -73,12 +76,15 @@ func (d ServerDeps) AssetVersion(w http.ResponseWriter, r *http.Request) {
 
 func (d ServerDeps) AssetVersionDiff(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireViewer(w, principal) != nil {
+	if !ok {
 		return
 	}
 	assetID, err := parseAssetID(r)
 	if err != nil {
 		writeAssetError(w, err, "ASSET_DIFF_FAILED", "failed-to-generate-the-version-diff")
+		return
+	}
+	if !d.requireAssetAccess(w, r, principal, assetID, false) {
 		return
 	}
 	fromID, fromErr := uuid.Parse(r.URL.Query().Get("from"))
@@ -115,7 +121,7 @@ func (d ServerDeps) AssetVersionDiff(w http.ResponseWriter, r *http.Request) {
 
 func (d ServerDeps) RenderAssetPreview(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireProjectAdmin(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermPromptRead) != nil {
 		return
 	}
 	assetID, err := parseAssetID(r)

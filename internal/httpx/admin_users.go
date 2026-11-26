@@ -17,24 +17,28 @@ import (
 
 // 可分配的角色:org_owner 只在 bootstrap 产生,不允许通过用户管理授予。
 var assignableRoles = map[string]bool{
-	"org_admin": true, "project_admin": true, "developer": true, "viewer": true,
+	"org_admin": true, "project_admin": true, "developer": true, "viewer": true, "pending": true,
 }
 
 type userResponse struct {
-	ID         string  `json:"id"`
-	Email      string  `json:"email"`
-	Role       string  `json:"role"`
-	Status     string  `json:"status"`
-	LastUsedAt *string `json:"last_login_at"`
-	CreatedAt  string  `json:"created_at"`
+	ID                  string  `json:"id"`
+	Email               string  `json:"email"`
+	Role                string  `json:"role"`
+	PermissionGroupID   *string `json:"permission_group_id"`
+	PermissionGroupName *string `json:"permission_group_name"`
+	OverrideCount       int64   `json:"override_count"`
+	Status              string  `json:"status"`
+	LastUsedAt          *string `json:"last_login_at"`
+	CreatedAt           string  `json:"created_at"`
 }
 
 type createUserRequest struct {
-	Email            string `json:"email"`
-	Password         string `json:"password"`
-	GeneratePassword bool   `json:"generate_password"`
-	Role             string `json:"role"`
-	OrganizationID   string `json:"organization_id"`
+	Email             string `json:"email"`
+	Password          string `json:"password"`
+	GeneratePassword  bool   `json:"generate_password"`
+	Role              string `json:"role"`
+	PermissionGroupID string `json:"permission_group_id"`
+	OrganizationID    string `json:"organization_id"`
 }
 
 type createUserResponse struct {
@@ -61,10 +65,10 @@ func timeStringPtr(src any) (*string, error) {
 	}
 }
 
-// Users 返回当前组织用户列表;需要组织所有者权限。
+// Users 返回当前组织用户列表;需要 user:read 权限。
 func (d ServerDeps) Users(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireOwner(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermUserRead) != nil {
 		return
 	}
 	// platform_admin 可通过 organization_id 参数查看任意组织的用户;默认只看自己组织。
@@ -80,8 +84,13 @@ func (d ServerDeps) Users(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	rows, err := d.Pool.Query(r.Context(), `
-		SELECT id, email, role, status, last_login_at, created_at
-		FROM users WHERE organization_id = $1 ORDER BY created_at ASC
+		SELECT u.id, u.email, u.role, u.permission_group_id, pg.name,
+		       (SELECT count(*) FROM user_permission_overrides o WHERE o.user_id = u.id) AS override_count,
+		       u.status, u.last_login_at, u.created_at
+		FROM users u
+		LEFT JOIN permission_groups pg ON pg.id = u.permission_group_id
+		WHERE u.organization_id = $1
+		ORDER BY u.created_at ASC
 	`, listOrgID)
 	if err != nil {
 		adminError(w, http.StatusInternalServerError, "USER_LIST_FAILED", "failed-to-query-users", nil)
@@ -92,12 +101,19 @@ func (d ServerDeps) Users(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var item userResponse
 		var id uuid.UUID
+		var groupID uuid.NullUUID
+		var groupName *string
 		var lastLoginSrc, createdSrc any
-		if err := rows.Scan(&id, &item.Email, &item.Role, &item.Status, &lastLoginSrc, &createdSrc); err != nil {
+		if err := rows.Scan(&id, &item.Email, &item.Role, &groupID, &groupName, &item.OverrideCount, &item.Status, &lastLoginSrc, &createdSrc); err != nil {
 			adminError(w, http.StatusInternalServerError, "USER_LIST_FAILED", "failed-to-query-users", nil)
 			return
 		}
 		item.ID = id.String()
+		if groupID.Valid {
+			gid := groupID.UUID.String()
+			item.PermissionGroupID = &gid
+			item.PermissionGroupName = groupName
+		}
 		lastLogin, err := timeStringPtr(lastLoginSrc)
 		if err != nil {
 			adminError(w, http.StatusInternalServerError, "USER_LIST_FAILED", "failed-to-query-users", nil)
@@ -115,10 +131,10 @@ func (d ServerDeps) Users(w http.ResponseWriter, r *http.Request) {
 	adminOK(w, list)
 }
 
-// CreateUser 在当前组织创建管理员/成员账号;需要组织所有者权限。
+// CreateUser 在当前组织创建管理员/成员账号;需要 user:manage 权限。
 func (d ServerDeps) CreateUser(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireOwner(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermUserManage) != nil {
 		return
 	}
 	var body createUserRequest
@@ -142,38 +158,54 @@ func (d ServerDeps) CreateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		password = generated
-	} else if len(password) < 16 {
-		adminError(w, http.StatusBadRequest, "USER_PASSWORD_WEAK", "password-must-be-at-least-16", nil)
+	} else if err := auth.ValidatePassword(password); err != nil {
+		adminError(w, http.StatusBadRequest, "USER_PASSWORD_WEAK", "password-policy-unsatisfied", nil)
 		return
 	}
-	body.Role = strings.TrimSpace(body.Role)
-	if !assignableRoles[body.Role] {
-		adminError(w, http.StatusBadRequest, "USER_ROLE_INVALID", "roles-support-only-org-admin-project", nil)
-		return
-	}
+
 	// platform_admin 可把新用户直接归属到任意组织;其余角色只能在当前组织创建。
-	targetOrgID := principal.OrganizationID
-	if body.OrganizationID != "" {
-		if !isPlatformAdmin(principal) {
-			adminError(w, http.StatusForbidden, "PERMISSION_DENIED", "only-platform-admins-can-assign-a", nil)
+	targetOrgID, targetOrgOK := d.inviteTargetOrganization(w, r, principal, strings.TrimSpace(body.OrganizationID))
+	if !targetOrgOK {
+		return
+	}
+
+	role := strings.TrimSpace(body.Role)
+	var permissionGroupID any
+	var groupIDStr string
+	groupIDParam := strings.TrimSpace(body.PermissionGroupID)
+	if groupIDParam != "" {
+		parsedGroupID, parseErr := uuid.Parse(groupIDParam)
+		if parseErr != nil {
+			adminError(w, http.StatusBadRequest, "PERMISSION_GROUP_ID_INVALID", "invalid-permission-group-id", nil)
 			return
 		}
-		parsed, err := uuid.Parse(body.OrganizationID)
-		if err != nil {
-			adminError(w, http.StatusBadRequest, "USER_ORG_INVALID", "invalid-organization-id-t4rbtt", nil)
-			return
-		}
-		var orgCount int
-		if err := d.Pool.QueryRow(r.Context(), `SELECT count(*) FROM organizations WHERE id = $1`, parsed).Scan(&orgCount); err != nil {
+		var groupPerms []string
+		if err := d.Pool.QueryRow(r.Context(), `
+			SELECT permissions FROM permission_groups WHERE id = $1 AND organization_id = $2
+		`, parsedGroupID, targetOrgID).Scan(&groupPerms); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				adminError(w, http.StatusBadRequest, "PERMISSION_GROUP_NOT_FOUND", "permission-group-does-not-exist", nil)
+				return
+			}
 			adminError(w, http.StatusInternalServerError, "USER_CREATE_FAILED", "failed-to-create-the-user", nil)
 			return
 		}
-		if orgCount == 0 {
-			adminError(w, http.StatusBadRequest, "USER_ORG_NOT_FOUND", "target-organization-does-not-exist", nil)
+		if !ensureWithinPrincipalPermissions(w, principal, auth.NormalizePermissions(groupPerms)) {
 			return
 		}
-		targetOrgID = parsed
+		role = "viewer"
+		permissionGroupID = parsedGroupID
+		groupIDStr = parsedGroupID.String()
+	} else {
+		if !assignableRoles[role] {
+			adminError(w, http.StatusBadRequest, "USER_ROLE_INVALID", "roles-support-only-org-admin-project", nil)
+			return
+		}
+		if !ensureWithinPrincipalPermissions(w, principal, auth.PresetPermissions(role)) {
+			return
+		}
 	}
+
 	var count int
 	if err := d.Pool.QueryRow(r.Context(), `SELECT count(*) FROM users WHERE email = $1`, email).Scan(&count); err != nil {
 		adminError(w, http.StatusInternalServerError, "USER_CREATE_FAILED", "failed-to-create-the-user", nil)
@@ -189,12 +221,16 @@ func (d ServerDeps) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userID := uuid.New()
+	auditAfter := map[string]any{"email": email, "role": role}
+	if groupIDStr != "" {
+		auditAfter["permission_group_id"] = groupIDStr
+	}
 	err = d.execWithAudit(r.Context(), `
-		INSERT INTO users(id, organization_id, email, password_hash, role)
-		VALUES ($1,$2,$3,$4,$5)
-	`, []any{userID, targetOrgID, email, hash, body.Role},
+		INSERT INTO users(id, organization_id, email, password_hash, role, permission_group_id)
+		VALUES ($1,$2,$3,$4,$5,$6)
+	`, []any{userID, targetOrgID, email, hash, role, permissionGroupID},
 		targetOrgID, principal.UserID, "user.created", "user", userID.String(),
-		nil, map[string]any{"email": email, "role": body.Role})
+		nil, auditAfter)
 	if err != nil {
 		adminError(w, http.StatusInternalServerError, "USER_CREATE_FAILED", "failed-to-create-the-user", nil)
 		return
@@ -210,7 +246,7 @@ func (d ServerDeps) CreateUser(w http.ResponseWriter, r *http.Request) {
 // UpdateUser 修改角色/状态/重置密码;org_owner 账号不可修改,也不能禁用自己或改自己的角色。
 func (d ServerDeps) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	if !ok || d.requireOwner(w, principal) != nil {
+	if !ok || d.requirePermission(w, principal, auth.PermUserManage) != nil {
 		return
 	}
 	var body updateUserRequest
@@ -248,17 +284,26 @@ func (d ServerDeps) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusBadRequest, "USER_SELF_ROLE", "you-cannot-change-your-own-role", nil)
 		return
 	}
-	if body.Role != nil && !assignableRoles[*body.Role] {
-		adminError(w, http.StatusBadRequest, "USER_ROLE_INVALID", "roles-support-only-org-admin-project", nil)
-		return
+	if body.Role != nil {
+		role := strings.TrimSpace(*body.Role)
+		if !assignableRoles[role] {
+			adminError(w, http.StatusBadRequest, "USER_ROLE_INVALID", "roles-support-only-org-admin-project", nil)
+			return
+		}
+		body.Role = &role
+		if !ensureWithinPrincipalPermissions(w, principal, auth.PresetPermissions(role)) {
+			return
+		}
 	}
 	if body.Status != nil && *body.Status != "active" && *body.Status != "disabled" {
 		adminError(w, http.StatusBadRequest, "USER_STATUS_INVALID", "status-supports-only-active-or-disabled", nil)
 		return
 	}
-	if body.Password != nil && len(*body.Password) < 16 {
-		adminError(w, http.StatusBadRequest, "USER_PASSWORD_WEAK", "password-must-be-at-least-16", nil)
-		return
+	if body.Password != nil {
+		if err := auth.ValidatePassword(*body.Password); err != nil {
+			adminError(w, http.StatusBadRequest, "USER_PASSWORD_WEAK", "password-policy-unsatisfied", nil)
+			return
+		}
 	}
 	var hash any
 	if body.Password != nil {
@@ -273,19 +318,27 @@ func (d ServerDeps) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	// 读取、校验和写入放在同一事务并锁定用户行,避免组织迁移并发时使用过期归属。
 	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
 		var current struct {
-			Role   string
-			Status string
-			OrgID  uuid.UUID
+			Role       string
+			Status     string
+			OrgID      uuid.UUID
+			GroupID    uuid.NullUUID
+			GroupPerms []string
 		}
 		var queryErr error
 		if isPlatformAdmin(principal) {
 			queryErr = tx.QueryRow(r.Context(), `
-				SELECT role, status, organization_id FROM users WHERE id = $1 FOR UPDATE
-			`, userID).Scan(&current.Role, &current.Status, &current.OrgID)
+				SELECT u.role, u.status, u.organization_id, u.permission_group_id, COALESCE(pg.permissions, '{}'::text[])
+				FROM users u
+				LEFT JOIN permission_groups pg ON pg.id = u.permission_group_id
+				WHERE u.id = $1 FOR UPDATE OF u
+			`, userID).Scan(&current.Role, &current.Status, &current.OrgID, &current.GroupID, &current.GroupPerms)
 		} else {
 			queryErr = tx.QueryRow(r.Context(), `
-				SELECT role, status, organization_id FROM users WHERE id = $1 AND organization_id = $2 FOR UPDATE
-			`, userID, principal.OrganizationID).Scan(&current.Role, &current.Status, &current.OrgID)
+				SELECT u.role, u.status, u.organization_id, u.permission_group_id, COALESCE(pg.permissions, '{}'::text[])
+				FROM users u
+				LEFT JOIN permission_groups pg ON pg.id = u.permission_group_id
+				WHERE u.id = $1 AND u.organization_id = $2 FOR UPDATE OF u
+			`, userID, principal.OrganizationID).Scan(&current.Role, &current.Status, &current.OrgID, &current.GroupID, &current.GroupPerms)
 		}
 		if errors.Is(queryErr, pgx.ErrNoRows) {
 			return pgx.ErrNoRows
@@ -295,6 +348,16 @@ func (d ServerDeps) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		}
 		if (current.Role == "org_owner" || current.Role == "platform_admin") && !isPlatformAdmin(principal) {
 			return errOwnerProtected
+		}
+		if userID != principal.UserID && !isPlatformAdmin(principal) && principal.Role != "org_owner" {
+			curAllow, curDeny, loadErr := loadUserOverrides(r.Context(), tx, userID)
+			if loadErr != nil {
+				return loadErr
+			}
+			curEffective := permissionMapToSlice(auth.ResolveEffectivePermissions(current.Role, current.GroupPerms, current.GroupID.Valid, curAllow, curDeny))
+			if !withinPrincipalPermissions(principal, curEffective) {
+				return errPermissionEscalation
+			}
 		}
 
 		newRole, newStatus := current.Role, current.Status
@@ -309,27 +372,30 @@ func (d ServerDeps) UpdateUser(w http.ResponseWriter, r *http.Request) {
 			auditOrgID = *targetOrgID
 		}
 
+		clearGroup := body.Role != nil
 		var tag pgconn.CommandTag
 		var execErr error
 		if isPlatformAdmin(principal) {
 			tag, execErr = tx.Exec(r.Context(), `
 				UPDATE users SET
 					role = COALESCE($2, role),
+					permission_group_id = CASE WHEN $6 THEN NULL ELSE permission_group_id END,
 					status = COALESCE($3, status),
 					password_hash = COALESCE($4, password_hash),
 					organization_id = COALESCE($5, organization_id),
 					updated_at = now(), failed_login_count = 0, locked_until = NULL
 				WHERE id = $1
-			`, userID, body.Role, body.Status, hash, targetOrgID)
+			`, userID, body.Role, body.Status, hash, targetOrgID, clearGroup)
 		} else {
 			tag, execErr = tx.Exec(r.Context(), `
 				UPDATE users SET
 					role = COALESCE($3, role),
+					permission_group_id = CASE WHEN $6 THEN NULL ELSE permission_group_id END,
 					status = COALESCE($4, status),
 					password_hash = COALESCE($5, password_hash),
 					updated_at = now(), failed_login_count = 0, locked_until = NULL
 				WHERE id = $1 AND organization_id = $2
-			`, userID, principal.OrganizationID, body.Role, body.Status, hash)
+			`, userID, principal.OrganizationID, body.Role, body.Status, hash, clearGroup)
 		}
 		if execErr != nil {
 			return execErr
@@ -351,6 +417,10 @@ func (d ServerDeps) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	})
 	if errors.Is(err, errOwnerProtected) {
 		adminError(w, http.StatusForbidden, "USER_OWNER_PROTECTED", "the-organization-owner-account-cannot-be", nil)
+		return
+	}
+	if errors.Is(err, errPermissionEscalation) {
+		adminError(w, http.StatusForbidden, "PERMISSION_ESCALATION_DENIED", "permission-escalation-denied", nil)
 		return
 	}
 	if errors.Is(err, pgx.ErrNoRows) {

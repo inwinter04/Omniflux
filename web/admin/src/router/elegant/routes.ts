@@ -68,8 +68,19 @@ export const generatedRoutes: GeneratedRoute[] = [
         meta: {
           title: 'access_api-keys',
           i18nKey: 'route.access_api-keys',
-          order: 2,
+          order: 3,
           icon: 'mdi:key-chain-variant'
+        }
+      },
+      {
+        name: 'access_permission-groups',
+        path: '/access/permission-groups',
+        component: 'view.access_permission-groups',
+        meta: {
+          title: 'access_permission-groups',
+          i18nKey: 'route.access_permission-groups',
+          order: 2,
+          icon: 'mdi:shield-key-outline'
         }
       },
       {
@@ -80,8 +91,7 @@ export const generatedRoutes: GeneratedRoute[] = [
           title: 'access_users',
           i18nKey: 'route.access_users',
           order: 1,
-          icon: 'mdi:account-group-outline',
-          roles: ['org_owner', 'platform_admin']
+          icon: 'mdi:account-group-outline'
         }
       }
     ]
@@ -326,6 +336,16 @@ export const generatedRoutes: GeneratedRoute[] = [
         }
       }
     ]
+  },
+  {
+    name: 'pending-access',
+    path: '/pending-access',
+    component: 'layout.blank$view.pending-access',
+    meta: {
+      title: 'pending-access',
+      i18nKey: 'route.pending-access',
+      hideInMenu: true
+    }
   },
   {
     name: 'register',

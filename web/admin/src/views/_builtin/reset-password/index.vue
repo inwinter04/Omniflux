@@ -5,6 +5,7 @@ import { useMessage } from 'naive-ui';
 import { $t } from '@/locales';
 import { fetchResetPassword } from '@/service/api';
 import { useNaiveForm } from '@/hooks/common/form';
+import { validatePasswordPolicy } from '@/utils/password';
 import AuthShell from '../components/auth-shell.vue';
 
 defineOptions({
@@ -23,8 +24,9 @@ const rules = {
   password: [
     { required: true, message: $t('business.please-enter-a-password') },
     {
-      validator: (_rule: unknown, value: string) => !value || value.length >= 16,
-      message: $t('business.password-must-be-at-least')
+      validator: (_rule: unknown, value: string) => !value || validatePasswordPolicy(value),
+      message: $t('business.password-must-be-at-least'),
+      trigger: 'blur'
     }
   ],
   confirmPassword: [
@@ -53,13 +55,16 @@ async function handleSubmit() {
     </NAlert>
     <NForm v-else ref="formRef" class="pt-24px" :model="model" :rules="rules" size="large" :show-label="false">
       <NFormItem path="password">
-        <NInput
-          v-model:value="model.password"
-          type="password"
-          show-password-on="click"
-          :input-props="{ autocomplete: 'new-password' }"
-          :placeholder="$t('business.new-password')"
-        />
+        <div class="w-full">
+          <NInput
+            v-model:value="model.password"
+            type="password"
+            show-password-on="click"
+            :input-props="{ autocomplete: 'new-password' }"
+            :placeholder="$t('business.new-password')"
+          />
+          <PasswordStrength :password="model.password" />
+        </div>
       </NFormItem>
       <NFormItem path="confirmPassword">
         <NInput
