@@ -277,7 +277,7 @@ const columns = computed<DataTableColumns<Api.Management.PlatformProxy>>(() => [
   {
     title: $t('business.proxy-type'),
     key: 'proxy_type',
-    width: 90,
+    width: 100,
     render: row =>
       h(
         NTag,
@@ -292,7 +292,7 @@ const columns = computed<DataTableColumns<Api.Management.PlatformProxy>>(() => [
     ellipsis: { tooltip: true },
     render: row => row.proxy_url || '-'
   },
-  { title: $t('business.active-accounts'), key: 'active_accounts', width: 100 },
+  { title: $t('business.active-accounts'), key: 'active_accounts', width: 130 },
   {
     title: $t('business.updated-at'),
     key: 'updated_at',
@@ -302,7 +302,7 @@ const columns = computed<DataTableColumns<Api.Management.PlatformProxy>>(() => [
   {
     title: $t('business.actions'),
     key: 'actions',
-    width: 200,
+    width: 215,
     fixed: 'right',
     render: row =>
       h(NSpace, { size: 4 }, {
@@ -805,7 +805,7 @@ onMounted(loadData);
     </NCard>
 
     <NModal v-model:show="showCreate" preset="card" :title="$t('business.create-proxy')" class="w-680px">
-      <NForm ref="formRef" :model="formModel" :rules="formRules" label-placement="left" label-width="140">
+      <NForm ref="formRef" :model="formModel" :rules="formRules" label-placement="top">
         <NFormItem :label="$t('business.proxy-provider')" path="provider_keys">
           <NSelect
             :value="formModel.provider_keys"
@@ -872,7 +872,7 @@ onMounted(loadData);
     </NModal>
 
     <NModal v-model:show="showEdit" preset="card" :title="$t('business.edit-proxy')" class="w-680px">
-      <NForm ref="editFormRef" :model="editModel" :rules="editRules" label-placement="left" label-width="140">
+      <NForm ref="editFormRef" :model="editModel" :rules="editRules" label-placement="top">
         <NFormItem :label="$t('business.proxy-provider')" path="provider_keys">
           <NSelect
             :value="editModel.provider_keys"
@@ -942,28 +942,30 @@ onMounted(loadData);
       <NAlert type="info" :bordered="false" class="mb-16px">
         {{ $t('business.proxy-policy-hint') }}
       </NAlert>
-      <NForm :model="settingsForm" label-placement="left" label-width="210">
+      <NForm :model="settingsForm" label-placement="top">
         <NFormItem :label="$t('business.enabled')">
           <NSwitch v-model:value="settingsForm.enabled" />
         </NFormItem>
-        <NFormItem :label="$t('business.probe-interval-seconds')">
-          <NInputNumber v-model:value="settingsForm.probe_interval_seconds" :min="15" :max="3600" class="w-full" />
-        </NFormItem>
-        <NFormItem :label="$t('business.fast-probe-interval-seconds')">
-          <NInputNumber v-model:value="settingsForm.fast_probe_interval_seconds" :min="3" :max="120" class="w-full" />
-        </NFormItem>
-        <NFormItem :label="$t('business.probe-timeout-seconds')">
-          <NInputNumber v-model:value="settingsForm.probe_timeout_seconds" :min="2" :max="60" class="w-full" />
-        </NFormItem>
-        <NFormItem :label="$t('business.fail-threshold')">
-          <NInputNumber v-model:value="settingsForm.fail_threshold" :min="1" :max="20" class="w-full" />
-        </NFormItem>
-        <NFormItem :label="$t('business.recover-threshold')">
-          <NInputNumber v-model:value="settingsForm.recover_threshold" :min="1" :max="20" class="w-full" />
-        </NFormItem>
-        <NFormItem :label="$t('business.switch-cooldown-seconds')">
-          <NInputNumber v-model:value="settingsForm.switch_cooldown_seconds" :min="0" :max="86400" class="w-full" />
-        </NFormItem>
+        <NGrid :cols="2" :x-gap="16">
+          <NFormItemGi :label="$t('business.probe-interval-seconds')">
+            <NInputNumber v-model:value="settingsForm.probe_interval_seconds" :min="15" :max="3600" class="w-full" />
+          </NFormItemGi>
+          <NFormItemGi :label="$t('business.fast-probe-interval-seconds')">
+            <NInputNumber v-model:value="settingsForm.fast_probe_interval_seconds" :min="3" :max="120" class="w-full" />
+          </NFormItemGi>
+          <NFormItemGi :label="$t('business.probe-timeout-seconds')">
+            <NInputNumber v-model:value="settingsForm.probe_timeout_seconds" :min="2" :max="60" class="w-full" />
+          </NFormItemGi>
+          <NFormItemGi :label="$t('business.fail-threshold')">
+            <NInputNumber v-model:value="settingsForm.fail_threshold" :min="1" :max="20" class="w-full" />
+          </NFormItemGi>
+          <NFormItemGi :label="$t('business.recover-threshold')">
+            <NInputNumber v-model:value="settingsForm.recover_threshold" :min="1" :max="20" class="w-full" />
+          </NFormItemGi>
+          <NFormItemGi :label="$t('business.switch-cooldown-seconds')">
+            <NInputNumber v-model:value="settingsForm.switch_cooldown_seconds" :min="0" :max="86400" class="w-full" />
+          </NFormItemGi>
+        </NGrid>
         <NFormItem :label="$t('business.failback-mode')">
           <NRadioGroup v-model:value="settingsForm.failback_mode">
             <div class="flex flex-col gap-6px">

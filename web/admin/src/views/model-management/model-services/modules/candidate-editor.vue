@@ -92,7 +92,7 @@ const columns = computed<DataTableColumns<CandidateDraft>>(() => [
   {
     title: $t('business.priority'),
     key: 'priority',
-    width: 90,
+    width: 95,
     render: row =>
       h(NInputNumber, {
         value: row.priority,
@@ -104,7 +104,7 @@ const columns = computed<DataTableColumns<CandidateDraft>>(() => [
   {
     title: $t('business.weight'),
     key: 'weight',
-    width: 85,
+    width: 90,
     render: row =>
       h(NInputNumber, {
         value: row.weight,
@@ -208,7 +208,7 @@ const columns = computed<DataTableColumns<CandidateDraft>>(() => [
   {
     title: $t('business.status'),
     key: 'status',
-    width: 90,
+    width: 110,
     render: row =>
       h(NSelect, {
         value: row.status,
@@ -220,7 +220,7 @@ const columns = computed<DataTableColumns<CandidateDraft>>(() => [
   {
     title: '',
     key: 'actions',
-    width: 72,
+    width: 84,
     // 窄屏下表格需要横向滚动时,删除按钮固定在右侧,保证始终可见。
     fixed: 'right',
     render: row =>

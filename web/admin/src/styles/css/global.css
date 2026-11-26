@@ -18,3 +18,37 @@ html {
 .n-tooltip {
   max-width: min(480px, 80vw);
 }
+
+/* 英文模式下优化表格、按钮与表单标签的断词及紧凑排版 */
+html[lang='en-US'] .n-data-table .n-data-table-th {
+  font-size: 13px;
+  line-height: 1.3;
+  word-break: normal;
+  overflow-wrap: break-word;
+}
+
+html[lang='en-US'] .n-data-table .n-data-table-th,
+html[lang='en-US'] .n-data-table .n-data-table-td {
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+html[lang='en-US'] .n-button .n-button__content,
+html[lang='en-US'] .n-tag .n-tag__content {
+  white-space: nowrap;
+}
+
+html[lang='en-US'] .n-tabs .n-tabs-tab {
+  font-size: 13.5px;
+}
+
+html[lang='en-US'] .n-descriptions .n-descriptions-table-header {
+  word-break: normal;
+  overflow-wrap: break-word;
+  white-space: normal;
+}
+
+html[lang='en-US'] .n-form-item-label {
+  word-break: normal;
+  overflow-wrap: break-word;
+}

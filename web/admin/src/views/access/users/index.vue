@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, h, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
-import { NButton, NModal, NPopconfirm, NSpace, NTag } from 'naive-ui';
-import type { DataTableColumns, FormInst, FormRules, SelectGroupOption } from 'naive-ui';
+import { NButton, NDropdown, NModal, NSpace, NTag } from 'naive-ui';
+import type { DataTableColumns, DropdownOption, FormInst, FormRules, SelectGroupOption } from 'naive-ui';
 import { formatTime, statusTagType, statusText } from '@/utils/admin-status';
 import { generateInitialPassword, validatePasswordPolicy } from '@/utils/password';
 import {
@@ -199,12 +199,79 @@ const editRules = computed<FormRules>(() => ({
   ]
 }));
 
+function rowMoreOptions(row: Api.Management.User): DropdownOption[] {
+  const protectedAccount = row.role === 'org_owner' || row.role === 'platform_admin';
+  const canModifyRow = canManage.value && !(protectedAccount && !isPlatformAdmin.value);
+  const options: DropdownOption[] = [];
+  if (canModifyRow) {
+    options.push({ label: $t('business.reset-password'), key: 'reset-password' });
+    if (row.status === 'pending_email_verification') {
+      options.push(
+        { label: $t('business.resend-invitation'), key: 'resend-invitation' },
+        { label: $t('business.revoke-invitation'), key: 'revoke-invitation' }
+      );
+    }
+  }
+  if (isPlatformAdmin.value && !protectedAccount) {
+    options.push({ label: $t('business.move-organization'), key: 'move-organization' });
+  }
+  if (canModifyRow && row.id !== currentUserId.value) {
+    if (options.length > 0) {
+      options.push({ type: 'divider', key: 'divider-lifecycle' });
+    }
+    options.push({
+      label: row.status === 'active' ? $t('business.disable') : $t('business.enable'),
+      key: 'toggle-status',
+      props: row.status === 'active' ? { style: { color: '#d03050' } } : undefined
+    });
+  }
+  return options;
+}
+
+function handleRowMoreAction(key: string | number, row: Api.Management.User) {
+  if (key === 'reset-password') {
+    openEdit(row);
+    return;
+  }
+  if (key === 'resend-invitation') {
+    void handleResendInvitation(row);
+    return;
+  }
+  if (key === 'revoke-invitation') {
+    window.$dialog?.warning({
+      title: $t('business.revoke-invitation'),
+      content: $t('business.revoke-invitation-confirm'),
+      positiveText: $t('common.confirm'),
+      negativeText: $t('common.cancel'),
+      onPositiveClick: () => handleRevokeInvitation(row)
+    });
+    return;
+  }
+  if (key === 'move-organization') {
+    openMove(row);
+    return;
+  }
+  if (key === 'toggle-status') {
+    if (row.status === 'active') {
+      window.$dialog?.warning({
+        title: $t('business.disable'),
+        content: $t('business.all-sessions-of-this-user'),
+        positiveText: $t('common.confirm'),
+        negativeText: $t('common.cancel'),
+        onPositiveClick: () => handleToggleStatus(row, 'disabled')
+      });
+    } else {
+      void handleToggleStatus(row, 'active');
+    }
+  }
+}
+
 const columns = computed<DataTableColumns<Api.Management.User>>(() => [
   { title: $t('business.email'), key: 'email', ellipsis: { tooltip: true }, width: 200 },
   {
     title: $t('business.identity-preset-or-group'),
     key: 'role',
-    width: 185,
+    minWidth: 190,
     render(row) {
       const tags = [
         row.permission_group_name
@@ -234,7 +301,7 @@ const columns = computed<DataTableColumns<Api.Management.User>>(() => [
   {
     title: $t('business.status'),
     key: 'status',
-    width: 95,
+    width: 115,
     render(row) {
       return h(
         NTag,
@@ -258,11 +325,10 @@ const columns = computed<DataTableColumns<Api.Management.User>>(() => [
   {
     title: $t('business.actions'),
     key: 'actions',
-    width: 320,
+    width: 220,
     fixed: 'right',
     render(row) {
       const protectedAccount = row.role === 'org_owner' || row.role === 'platform_admin';
-      const canModifyRow = canManage.value && !(protectedAccount && !isPlatformAdmin.value);
       const actions = [
         h(
           NButton,
@@ -289,92 +355,21 @@ const columns = computed<DataTableColumns<Api.Management.User>>(() => [
           )
         );
       }
-      if (canModifyRow) {
+      const moreOptions = rowMoreOptions(row);
+      if (moreOptions.length > 0) {
         actions.push(
           h(
-            NButton,
+            NDropdown,
             {
-              size: 'small',
-              quaternary: true,
-              type: 'primary',
-              onClick: () => openEdit(row)
+              trigger: 'click',
+              options: moreOptions,
+              onSelect: key => handleRowMoreAction(key, row)
             },
-            { default: () => $t('business.reset-password') }
+            {
+              default: () => h(NButton, { size: 'small', quaternary: true }, { default: () => $t('business.more') })
+            }
           )
         );
-        if (row.status === 'pending_email_verification') {
-          actions.push(
-            h(
-              NButton,
-              {
-                size: 'small',
-                quaternary: true,
-                type: 'primary',
-                onClick: () => handleResendInvitation(row)
-              },
-              { default: () => $t('business.resend-invitation') }
-            ),
-            h(
-              NPopconfirm,
-              { onPositiveClick: () => handleRevokeInvitation(row) },
-              {
-                trigger: () =>
-                  h(
-                    NButton,
-                    { size: 'small', type: 'warning', quaternary: true },
-                    { default: () => $t('business.revoke-invitation') }
-                  ),
-                default: () => $t('business.revoke-invitation-confirm')
-              }
-            )
-          );
-        }
-      }
-      if (isPlatformAdmin.value && !protectedAccount) {
-        actions.push(
-          h(
-            NButton,
-            {
-              size: 'small',
-              quaternary: true,
-              type: 'warning',
-              onClick: () => openMove(row)
-            },
-            { default: () => $t('business.move-organization') }
-          )
-        );
-      }
-      if (canModifyRow && row.id !== currentUserId.value) {
-        if (row.status === 'active') {
-          actions.push(
-            h(
-              NPopconfirm,
-              { onPositiveClick: () => handleToggleStatus(row, 'disabled') },
-              {
-                trigger: () =>
-                  h(
-                    NButton,
-                    { size: 'small', type: 'warning', quaternary: true },
-                    { default: () => $t('business.disable') }
-                  ),
-                default: () => $t('business.all-sessions-of-this-user')
-              }
-            )
-          );
-        } else {
-          actions.push(
-            h(
-              NButton,
-              {
-                size: 'small',
-                type: 'primary',
-                quaternary: true,
-                onClick: () => handleToggleStatus(row, 'active')
-              },
-              { default: () => $t('business.enable') }
-            )
-          );
-        }
       }
       return h(NSpace, { size: 4 }, { default: () => actions });
     }
@@ -737,7 +732,7 @@ onMounted(async () => {
     </NCard>
 
     <NModal v-model:show="showCreate" preset="card" :title="$t('business.create-user')" class="w-560px">
-      <NForm ref="formRef" :model="formModel" :rules="formRules" label-placement="left" label-width="136">
+      <NForm ref="formRef" :model="formModel" :rules="formRules" label-placement="top">
         <NFormItem :label="$t('business.email')" path="email">
           <NInput v-model:value="formModel.email" placeholder="user@example.com" />
         </NFormItem>
@@ -832,7 +827,7 @@ onMounted(async () => {
     </NModal>
 
     <NModal v-model:show="showEdit" preset="card" :title="$t('business.reset-password')" class="w-520px">
-      <NForm ref="editFormRef" :model="editModel" :rules="editRules" label-placement="left" label-width="100">
+      <NForm ref="editFormRef" :model="editModel" :rules="editRules" label-placement="top">
         <NFormItem :label="$t('business.email')">
           <NInput :value="editModel.email" disabled />
         </NFormItem>
@@ -864,7 +859,7 @@ onMounted(async () => {
     </NModal>
 
     <NModal v-model:show="showMove" preset="card" :title="$t('business.move-organization')" class="w-440px">
-      <NForm ref="moveFormRef" :model="moveModel" label-placement="left" label-width="100">
+      <NForm ref="moveFormRef" :model="moveModel" label-placement="top">
         <NFormItem :label="$t('business.email')">
           <NInput :value="moveModel.email" disabled />
         </NFormItem>
@@ -978,7 +973,7 @@ onMounted(async () => {
     </NDrawer>
 
     <NModal v-model:show="showSaveGroupModal" preset="card" :title="$t('business.save-as-permission-group')" class="w-460px">
-      <NForm ref="saveGroupFormRef" :model="saveGroupModel" :rules="saveGroupRules" label-placement="left" label-width="100">
+      <NForm ref="saveGroupFormRef" :model="saveGroupModel" :rules="saveGroupRules" label-placement="top">
         <NFormItem :label="$t('business.permission-group-name')" path="name">
           <NInput v-model:value="saveGroupModel.name" />
         </NFormItem>

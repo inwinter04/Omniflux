@@ -371,7 +371,7 @@ const columns = computed<DataTableColumns<Api.Management.ProviderAccount>>(() =>
   {
     title: $t('business.settlement-currency'),
     key: 'billing_currency',
-    width: 95,
+    width: 105,
     render: row => h('span', {}, row.billing_currency)
   },
   {
@@ -474,14 +474,14 @@ const checkHistoryColumns = computed<DataTableColumns<Api.Management.ProviderAcc
   {
     title: $t('business.probe-status'),
     key: 'status',
-    width: 90,
+    width: 105,
     render: row =>
       h(NTag, { size: 'small', round: true, type: healthTagType(row.status) }, { default: () => healthStatusText(row.status) })
   },
   {
     title: $t('business.http-status-code'),
     key: 'http_status',
-    width: 95,
+    width: 110,
     render: row => (row.http_status !== null ? String(row.http_status) : '-')
   },
   {
@@ -689,14 +689,14 @@ const modelColumns = computed<DataTableColumns<Api.Management.ProviderModel>>(()
   {
     title: $t('business.input-price-usd-per-million-1858l67'),
     key: 'input_cost_per_million',
-    width: 210,
+    width: 150,
     render: row =>
       row.input_cost_per_million === null ? $t('business.no-data') : formatCostUSD(row.input_cost_per_million)
   },
   {
     title: $t('business.output-price-usd-per-million-72p7y2'),
     key: 'output_cost_per_million',
-    width: 210,
+    width: 150,
     render: row =>
       row.output_cost_per_million === null ? $t('business.no-data') : formatCostUSD(row.output_cost_per_million)
   }
@@ -939,7 +939,7 @@ onMounted(async () => {
     </NCard>
 
     <NModal v-model:show="showCreate" preset="card" :title="$t('business.create-provider-account')" class="w-640px">
-      <NForm ref="formRef" :model="formModel" :rules="formRules" label-placement="left" label-width="100">
+      <NForm ref="formRef" :model="formModel" :rules="formRules" label-placement="top">
         <NFormItem :label="$t('business.provider')" path="provider">
           <NSelect
             :value="selectedFamilyID"
@@ -971,14 +971,16 @@ onMounted(async () => {
           <NInput v-model:value="formModel.region" :placeholder="$t('business.optional-for-example-north-china')" />
         </NFormItem>
         <NFormItem :label="$t('business.settlement-currency')">
-          <NSelect v-model:value="formModel.billing_currency" :options="settlementCurrencyOptions()" />
-          <NText depth="3" class="mt-4px block text-12px">{{ $t('business.used-for-model-cost-route') }}</NText>
+          <div class="w-full">
+            <NSelect v-model:value="formModel.billing_currency" :options="settlementCurrencyOptions()" />
+            <NText depth="3" class="mt-4px block text-12px">{{ $t('business.used-for-model-cost-route') }}</NText>
+          </div>
         </NFormItem>
-        <NFormItem v-if="selectedVendor?.api_key_url" label=" " :show-feedback="false">
+        <div v-if="selectedVendor?.api_key_url" class="mb-12px">
           <NButton text type="primary" @click="openApiKeyUrl">
             {{ $t('business.open-provider-console-to-get') }}
           </NButton>
-        </NFormItem>
+        </div>
         <NFormItem label="API Key" path="api_key">
           <NInput
             v-model:value="formModel.api_key"
@@ -1000,10 +1002,12 @@ onMounted(async () => {
     </NModal>
 
     <NModal v-model:show="showEdit" preset="card" :title="$t('business.edit-provider-account')" class="w-600px">
-      <NForm ref="editFormRef" :model="editModel" :rules="editRules" label-placement="left" label-width="100">
+      <NForm ref="editFormRef" :model="editModel" :rules="editRules" label-placement="top">
         <NFormItem :label="$t('business.provider')">
-          <NTag :bordered="false">{{ providerLabel(editModel.provider) }}</NTag>
-          <NText depth="2">{{ editVendor ? providerVersionLabel(editVendor) : '' }}</NText>
+          <NSpace align="center" :size="8">
+            <NTag :bordered="false">{{ providerLabel(editModel.provider) }}</NTag>
+            <NText depth="2">{{ editVendor ? providerVersionLabel(editVendor) : '' }}</NText>
+          </NSpace>
         </NFormItem>
         <NFormItem v-if="editVendor?.website_url" :label="$t('business.website')">
           <NButton text type="primary" @click="openWebsite(editVendor)">{{ editVendor.website_url }} ↗</NButton>
@@ -1102,22 +1106,24 @@ onMounted(async () => {
       <NAlert type="info" :bordered="false" class="mb-16px">
         {{ $t('business.provider-health-settings-hint') }}
       </NAlert>
-      <NForm :model="healthSettings" label-placement="left" label-width="220">
+      <NForm :model="healthSettings" label-placement="top">
         <NFormItem :label="$t('business.enable-auto-health-check')">
           <NSwitch v-model:value="healthSettings.enabled" />
         </NFormItem>
-        <NFormItem :label="$t('business.check-interval-seconds')">
-          <NInputNumber v-model:value="healthSettings.interval_seconds" :min="60" :max="86400" class="w-full" />
-        </NFormItem>
-        <NFormItem :label="$t('business.check-timeout-seconds')">
-          <NInputNumber v-model:value="healthSettings.timeout_seconds" :min="3" :max="60" class="w-full" />
-        </NFormItem>
-        <NFormItem :label="$t('business.degraded-latency-ms')">
-          <NInputNumber v-model:value="healthSettings.degraded_latency_ms" :min="500" :max="60000" class="w-full" />
-        </NFormItem>
-        <NFormItem :label="$t('business.failure-threshold')">
-          <NInputNumber v-model:value="healthSettings.failure_threshold" :min="1" :max="10" class="w-full" />
-        </NFormItem>
+        <NGrid :cols="2" :x-gap="16">
+          <NFormItemGi :label="$t('business.check-interval-seconds')">
+            <NInputNumber v-model:value="healthSettings.interval_seconds" :min="60" :max="86400" class="w-full" />
+          </NFormItemGi>
+          <NFormItemGi :label="$t('business.check-timeout-seconds')">
+            <NInputNumber v-model:value="healthSettings.timeout_seconds" :min="3" :max="60" class="w-full" />
+          </NFormItemGi>
+          <NFormItemGi :label="$t('business.degraded-latency-ms')">
+            <NInputNumber v-model:value="healthSettings.degraded_latency_ms" :min="500" :max="60000" class="w-full" />
+          </NFormItemGi>
+          <NFormItemGi :label="$t('business.failure-threshold')">
+            <NInputNumber v-model:value="healthSettings.failure_threshold" :min="1" :max="10" class="w-full" />
+          </NFormItemGi>
+        </NGrid>
       </NForm>
       <template #footer>
         <NSpace justify="end">

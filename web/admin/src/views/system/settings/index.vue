@@ -189,7 +189,7 @@ const fxRateColumns = computed<DataTableColumns<Api.Management.FXRateEntry>>(() 
   {
     title: $t('business.fx-effective-date'),
     key: 'effective_date',
-    width: 130,
+    width: 140,
     render: row => row.effective_date || '-'
   },
   {
@@ -352,8 +352,9 @@ onMounted(loadSettings);
           :model="settings"
           :rules="rules"
           label-placement="left"
-          label-width="180"
-          class="max-w-640px"
+          label-width="auto"
+          label-align="left"
+          class="max-w-720px"
         >
           <NFormItem :label="$t('business.enable-public-registration')" path="registration_organization_id">
             <div class="w-full">
@@ -392,7 +393,7 @@ onMounted(loadSettings);
         <NAlert type="info" :show-icon="true" class="mb-24px">
           {{ $t('business.email-service-description') }}
         </NAlert>
-        <NForm :model="emailSettings" label-placement="left" label-width="180" class="max-w-720px">
+        <NForm :model="emailSettings" label-placement="left" label-width="auto" label-align="left" class="max-w-760px">
           <NFormItem :label="$t('business.enable-email-service')">
             <NSwitch v-model:value="emailSettings.enabled" />
           </NFormItem>
@@ -425,8 +426,8 @@ onMounted(loadSettings);
           <NFormItem :label="$t('business.public-base-url')">
             <NInput v-model:value="emailSettings.public_base_url" placeholder="https://example.com" />
           </NFormItem>
-          <div class="flex items-center justify-end gap-8px">
-            <NInput v-model:value="testRecipient" :placeholder="$t('business.test-recipient')" class="w-220px" />
+          <div class="flex flex-wrap items-center justify-end gap-8px">
+            <NInput v-model:value="testRecipient" :placeholder="$t('business.test-recipient')" class="min-w-220px w-240px" />
             <NButton :disabled="!emailSettingsLoaded || !emailSettings.enabled || !testRecipient" :loading="testingEmail" @click="handleTestEmail">
               {{ $t('business.send-test-email') }}
             </NButton>
@@ -483,12 +484,15 @@ onMounted(loadSettings);
     </NCard>
 
     <NModal v-model:show="fxRateModalVisible" preset="card" :title="$t('business.fx-edit-rate-title', { currency: fxEditingRate.currency })" class="max-w-440px">
-      <NForm label-placement="left" label-width="140">
+      <NForm label-placement="top">
         <NFormItem :label="$t('business.fx-rate-per-usd')">
           <NInputNumber v-model:value="fxEditingRate.rate_per_usd" :min="0.0001" :precision="6" class="w-full" />
         </NFormItem>
         <NFormItem :label="$t('business.fx-manual-override')">
-          <NSwitch v-model:value="fxEditingRate.manual_override" />
+          <NSpace align="center" :size="8">
+            <NSwitch v-model:value="fxEditingRate.manual_override" />
+            <NText depth="3" class="text-12px">{{ $t('business.fx-manual-override-hint') }}</NText>
+          </NSpace>
         </NFormItem>
       </NForm>
       <template #footer>

@@ -82,13 +82,13 @@ const groupColumns = computed<DataTableColumns<Api.Management.PermissionGroup>>(
   {
     title: $t('business.permission-count'),
     key: 'permissions',
-    width: 100,
+    width: 120,
     render: row => h(NTag, { size: 'small', bordered: false }, { default: () => String(row.permissions.length) })
   },
   {
     title: $t('business.member-count'),
     key: 'member_count',
-    width: 100,
+    width: 115,
     render: row => String(row.member_count)
   },
   {
@@ -100,7 +100,7 @@ const groupColumns = computed<DataTableColumns<Api.Management.PermissionGroup>>(
   {
     title: $t('business.actions'),
     key: 'actions',
-    width: 220,
+    width: 240,
     fixed: 'right',
     render(row) {
       const actions = [
@@ -174,7 +174,7 @@ const presetColumns = computed<DataTableColumns<Api.Management.SystemPreset>>(()
   {
     title: $t('business.actions'),
     key: 'actions',
-    width: 210,
+    width: 220,
     fixed: 'right',
     render(row) {
       const actions = [
@@ -368,8 +368,7 @@ onMounted(async () => {
           ref="formRef"
           :model="drawerModel"
           :rules="formRules"
-          label-placement="left"
-          label-width="110"
+          label-placement="top"
           class="mb-16px"
         >
           <NFormItem :label="$t('business.permission-group-name')" path="name">

@@ -225,7 +225,7 @@ async function revoke(grantID: string) {
       <NAlert type="info" :bordered="false" class="mb-16px">
         {{ $t('business.grantIntroduction', { asset: assetNoun }) }}
       </NAlert>
-      <NForm v-if="canManage" label-placement="left" label-width="auto">
+      <NForm v-if="canManage" label-placement="top">
         <NGrid cols="1 640:2" :x-gap="16">
           <NFormItemGi :label="$t('business.scope-type')">
             <NSelect

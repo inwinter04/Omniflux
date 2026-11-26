@@ -68,7 +68,7 @@ const attemptColumns = computed<DataTableColumns<Api.Management.PlaygroundAttemp
         { default: () => row.outcome }
       )
   },
-  { title: $t('business.http-status-code'), key: 'status_code', width: 90, render: row => row.status_code || '-' },
+  { title: $t('business.http-status-code'), key: 'status_code', width: 110, render: row => row.status_code || '-' },
   { title: $t('business.latency-ms'), key: 'latency_ms', width: 100, render: row => `${row.latency_ms} ms` },
   { title: $t('business.error-detail'), key: 'error_message', minWidth: 160, render: row => row.error_message || '-' }
 ]);

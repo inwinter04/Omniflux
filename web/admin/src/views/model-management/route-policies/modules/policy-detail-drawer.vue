@@ -282,11 +282,11 @@ function formatMS(val: number | null | undefined) {
 const modelCompareColumns = computed<DataTableColumns<Api.Management.RoutePolicyOverview['by_model'][number]>>(() => [
   { title: $t('business.provider-c4b9p'), key: 'provider', width: 120 },
   { title: $t('business.upstream-model'), key: 'upstream_model', minWidth: 160, ellipsis: { tooltip: true } },
-  { title: $t('business.requests'), key: 'requests', width: 85 },
-  { title: $t('business.hit-share'), key: 'hit_share', width: 90, render: row => formatPct(row.hit_share) },
-  { title: $t('business.success-rate'), key: 'success_rate', width: 90, render: row => formatPct(row.success_rate) },
-  { title: $t('business.avg-ttft'), key: 'avg_ttft_ms', width: 95, render: row => formatMS(row.avg_ttft_ms) },
-  { title: $t('business.avg-latency'), key: 'avg_latency_ms', width: 100, render: row => formatMS(row.avg_latency_ms) },
+  { title: $t('business.requests'), key: 'requests', width: 95 },
+  { title: $t('business.hit-share'), key: 'hit_share', width: 100, render: row => formatPct(row.hit_share) },
+  { title: $t('business.success-rate'), key: 'success_rate', width: 115, render: row => formatPct(row.success_rate) },
+  { title: $t('business.avg-ttft'), key: 'avg_ttft_ms', width: 105, render: row => formatMS(row.avg_ttft_ms) },
+  { title: $t('business.avg-latency'), key: 'avg_latency_ms', width: 115, render: row => formatMS(row.avg_latency_ms) },
   {
     title: 'OTPS',
     key: 'otps',
@@ -323,13 +323,13 @@ const decisionColumns = computed<DataTableColumns<Api.Management.RoutePolicyDeci
   {
     title: $t('business.status'),
     key: 'state',
-    width: 95,
+    width: 105,
     render: row => h(NTag, { size: 'small', type: usageStateTagType(row.state), round: true }, { default: () => usageStateText(row.state) })
   },
   {
     title: $t('business.fallback-count'),
     key: 'attempts',
-    width: 95,
+    width: 105,
     render: row => {
       const cnt = row.attempt_trail?.attempts?.length ?? 0;
       return cnt > 1
@@ -346,7 +346,7 @@ const decisionColumns = computed<DataTableColumns<Api.Management.RoutePolicyDeci
   {
     title: $t('business.actions'),
     key: 'actions',
-    width: 90,
+    width: 95,
     render: row =>
       h(
         NButton,
@@ -385,7 +385,7 @@ const decisionColumns = computed<DataTableColumns<Api.Management.RoutePolicyDeci
           v-model:value="filters.days"
           :options="dayOptions"
           size="small"
-          class="w-130px"
+          class="min-w-140px w-150px"
           @update:value="reloadActiveTab"
         />
         <NSelect
@@ -394,7 +394,7 @@ const decisionColumns = computed<DataTableColumns<Api.Management.RoutePolicyDeci
           :placeholder="$t('business.model-service')"
           size="small"
           clearable
-          class="w-190px"
+          class="min-w-190px w-210px"
           @update:value="reloadActiveTab"
         />
         <NSelect
@@ -403,7 +403,7 @@ const decisionColumns = computed<DataTableColumns<Api.Management.RoutePolicyDeci
           :placeholder="$t('business.source-i6yz')"
           size="small"
           clearable
-          class="w-150px"
+          class="min-w-150px w-170px"
           @update:value="reloadActiveTab"
         />
         <NButton size="small" @click="reloadActiveTab">{{ $t('common.refresh') }}</NButton>
@@ -557,7 +557,7 @@ const decisionColumns = computed<DataTableColumns<Api.Management.RoutePolicyDeci
               :placeholder="$t('business.status')"
               size="small"
               clearable
-              class="w-140px"
+              class="min-w-140px w-160px"
               @update:value="() => { decisionPage = 1; loadDecisions(); }"
             />
             <NSpace align="center" :size="6">

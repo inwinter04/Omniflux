@@ -268,7 +268,7 @@ const recordColumns = computed<DataTableColumns<Api.Management.UsageRecord>>(() 
   {
     title: $t('business.status'),
     key: 'state',
-    width: 90,
+    width: 105,
     render(row) {
       return h(
         NTag,
@@ -304,13 +304,13 @@ const recordColumns = computed<DataTableColumns<Api.Management.UsageRecord>>(() 
   {
     title: $t('business.latency-ms'),
     key: 'total_ms',
-    width: 100,
+    width: 115,
     render: row => (row.total_ms != null ? String(row.total_ms) : '-')
   },
   {
     title: $t('business.actions'),
     key: 'actions',
-    width: 80,
+    width: 95,
     // 操作列固定在右侧:列多于一屏宽度时,行内操作不用横向滚动也能点到。
     fixed: 'right',
     render: row =>

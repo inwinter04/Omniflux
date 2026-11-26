@@ -2,7 +2,7 @@
 import { h, onMounted, ref, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { NButton, NDropdown, NSpace, NTag } from 'naive-ui';
-import type { DataTableColumns } from 'naive-ui';
+import type { DataTableColumns, DropdownOption } from 'naive-ui';
 import { formatTime, statusTagType, statusText } from '@/utils/admin-status';
 import { fetchAssets, fetchUpdateAssetStatus } from '@/service/api';
 import { $t } from '@/locales';
@@ -87,7 +87,7 @@ const columns = computed<DataTableColumns<Api.Management.Asset>>(() => [
   {
     title: $t('business.actions'),
     key: 'actions',
-    width: 370,
+    width: 200,
     // 操作列固定在右侧:列多于一屏宽度时,行内操作不用横向滚动也能点到。
     fixed: 'right',
     render: row => {
@@ -143,44 +143,11 @@ const columns = computed<DataTableColumns<Api.Management.Asset>>(() => [
               { default: () => $t('business.test') }
             ),
             h(
-              NButton,
-              {
-                size: 'small',
-                quaternary: true,
-                type: 'primary',
-                onClick: () => openAction('versions', row)
-              },
-              { default: () => $t('business.version') }
-            ),
-            h(
-              NButton,
-              {
-                size: 'small',
-                quaternary: true,
-                type: 'primary',
-                onClick: () => openAction('grants', row)
-              },
-              { default: () => $t('business.grants') }
-            ),
-            h(
-              NButton,
-              {
-                size: 'small',
-                quaternary: true,
-                type: 'primary',
-                onClick: () =>
-                  router.push({
-                    name: 'asset-registry_evaluations',
-                    query: { asset: row.id }
-                  })
-              },
-              { default: () => $t('business.evaluate') }
-            ),
-            h(
               NDropdown,
               {
-                options: lifecycleOptions(row),
-                onSelect: key => handleLifecycle(key, row)
+                trigger: 'click',
+                options: rowMoreOptions(row),
+                onSelect: key => handleRowMoreAction(key, row)
               },
               {
                 default: () => h(NButton, { size: 'small', quaternary: true }, { default: () => $t('business.more') })
@@ -203,12 +170,43 @@ async function loadData() {
   }
 }
 
-function lifecycleOptions(asset: Api.Management.Asset) {
-  const options: { label: string; key: string }[] = [];
+function lifecycleOptions(asset: Api.Management.Asset): DropdownOption[] {
+  const options: DropdownOption[] = [];
   if (asset.status === 'published') options.push({ label: $t('business.pause'), key: 'disabled' });
   if (asset.status === 'disabled') options.push({ label: $t('business.resume'), key: 'published' });
-  if (asset.status !== 'archived') options.push({ label: $t('business.archive-template'), key: 'archived' });
+  if (asset.status !== 'archived') {
+    options.push({
+      label: $t('business.archive-template'),
+      key: 'archived',
+      props: { style: { color: '#d03050' } }
+    });
+  }
   return options;
+}
+
+function rowMoreOptions(asset: Api.Management.Asset): DropdownOption[] {
+  const options: DropdownOption[] = [
+    { label: $t('business.version'), key: 'versions' },
+    { label: $t('business.grants'), key: 'grants' },
+    { label: $t('business.evaluate'), key: 'evaluate' }
+  ];
+  const lifecycle = lifecycleOptions(asset);
+  if (lifecycle.length > 0) {
+    options.push({ type: 'divider', key: 'divider-lifecycle' }, ...lifecycle);
+  }
+  return options;
+}
+
+function handleRowMoreAction(key: string | number, asset: Api.Management.Asset) {
+  if (key === 'versions' || key === 'grants') {
+    openAction(key, asset);
+    return;
+  }
+  if (key === 'evaluate') {
+    void router.push({ name: 'asset-registry_evaluations', query: { asset: asset.id } });
+    return;
+  }
+  void handleLifecycle(String(key), asset);
 }
 
 async function handleLifecycle(key: string, asset: Api.Management.Asset) {

@@ -90,7 +90,11 @@ function getSiderAndCollapsedWidth(isCollapsed: boolean) {
     mixWidth: themeMixWidth
   } = themeStore.sider;
 
-  const width = isCollapsed ? collapsedWidth : themeWidth;
+  const isEnglish = appStore.locale === 'en-US';
+  const effectiveThemeWidth = isEnglish ? Math.max(themeWidth, 236) : themeWidth;
+  const effectiveMixChildMenuWidth = isEnglish ? Math.max(mixChildMenuWidth, 224) : mixChildMenuWidth;
+
+  const width = isCollapsed ? collapsedWidth : effectiveThemeWidth;
   const mixWidth = isCollapsed ? mixCollapsedWidth : themeMixWidth;
 
   if (isTopHybridHeaderFirst.value) {
@@ -105,11 +109,11 @@ function getSiderAndCollapsedWidth(isCollapsed: boolean) {
   let finalWidth = isMixMode ? mixWidth : width;
 
   if (isVerticalMix.value && appStore.mixSiderFixed && secondLevelMenus.value.length) {
-    finalWidth += mixChildMenuWidth;
+    finalWidth += effectiveMixChildMenuWidth;
   }
 
   if (isVerticalHybridHeaderFirst.value && appStore.mixSiderFixed && childLevelMenus.value.length) {
-    finalWidth += mixChildMenuWidth;
+    finalWidth += effectiveMixChildMenuWidth;
   }
 
   return finalWidth;

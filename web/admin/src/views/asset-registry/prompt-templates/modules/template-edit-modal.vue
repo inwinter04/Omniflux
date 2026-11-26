@@ -226,7 +226,7 @@ function discardAndClose() {
           <TemplateVariablesTable v-model:variables="form.variables" :disabled="detail?.status === 'archived'" />
         </NTabPane>
         <NTabPane name="settings" :tab="$t('business.basic-settings')">
-          <NForm label-placement="left" label-width="100" :disabled="detail?.status === 'archived'">
+          <NForm label-placement="top" :disabled="detail?.status === 'archived'">
             <NFormItem :label="$t('business.template-name')" required>
               <NInput v-model:value="form.name" maxlength="120" />
             </NFormItem>

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { h, onMounted, reactive, ref, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { NButton, NDataTable, NPopconfirm, NSpace, NTag } from 'naive-ui';
-import type { DataTableColumns, FormInst, FormRules } from 'naive-ui';
+import { NButton, NDataTable, NDropdown, NSpace, NTag } from 'naive-ui';
+import type { DataTableColumns, DropdownOption, FormInst, FormRules } from 'naive-ui';
 import {
   formatTime,
   healthStatusText,
@@ -86,6 +86,47 @@ function accountLabel(accountId: string | null) {
   return accountOptions.value.find(item => item.value === accountId)?.label ?? '-';
 }
 
+function rowMoreOptions(row: Api.Management.ModelService): DropdownOption[] {
+  return [
+    {
+      label: row.status === 'active' ? $t('business.disabled') : $t('business.enable'),
+      key: 'toggle-status'
+    },
+    { type: 'divider', key: 'divider-danger' },
+    {
+      label: $t('business.delete'),
+      key: 'delete',
+      props: { style: { color: '#d03050' } }
+    }
+  ];
+}
+
+function handleRowMoreAction(key: string | number, row: Api.Management.ModelService) {
+  if (key === 'toggle-status') {
+    if (row.status === 'active') {
+      window.$dialog?.warning({
+        title: $t('business.disabled'),
+        content: $t('business.model-service-disable-confirm'),
+        positiveText: $t('common.confirm'),
+        negativeText: $t('common.cancel'),
+        onPositiveClick: () => toggleServiceStatus(row)
+      });
+    } else {
+      void toggleServiceStatus(row);
+    }
+    return;
+  }
+  if (key === 'delete') {
+    window.$dialog?.warning({
+      title: $t('business.delete'),
+      content: $t('business.deletion-is-blocked-when-usage'),
+      positiveText: $t('common.confirm'),
+      negativeText: $t('common.cancel'),
+      onPositiveClick: () => handleDelete(row.id)
+    });
+  }
+}
+
 const candidateColumns = computed<DataTableColumns<Api.Management.ModelCandidate>>(() => [
   {
     title: $t('business.upstream-model'),
@@ -99,8 +140,8 @@ const candidateColumns = computed<DataTableColumns<Api.Management.ModelCandidate
     minWidth: 180,
     render: row => accountLabel(row.provider_account_id)
   },
-  { title: $t('business.priority'), key: 'priority', width: 80 },
-  { title: $t('business.weight'), key: 'weight', width: 70 },
+  { title: $t('business.priority'), key: 'priority', width: 90 },
+  { title: $t('business.weight'), key: 'weight', width: 85 },
   {
     title: $t('business.input-price-million'),
     key: 'input_cost_per_million',
@@ -113,7 +154,7 @@ const candidateColumns = computed<DataTableColumns<Api.Management.ModelCandidate
     width: 150,
     render: row => `${row.output_cost_per_million} ${row.cost_currency}`
   },
-  { title: $t('business.quality-score'), key: 'quality_score', width: 80 },
+  { title: $t('business.quality-score'), key: 'quality_score', width: 90 },
   {
     title: $t('business.capabilities-and-tags'),
     key: 'metadata',
@@ -148,7 +189,7 @@ const candidateColumns = computed<DataTableColumns<Api.Management.ModelCandidate
   {
     title: $t('business.actions'),
     key: 'actions',
-    width: 80,
+    width: 95,
     render: row => {
       if (!canManage.value) return '';
       return h(
@@ -227,7 +268,7 @@ const columns = computed<DataTableColumns<Api.Management.ModelService>>(() => [
   {
     title: $t('business.candidates'),
     key: 'candidates',
-    width: 90,
+    width: 110,
     render: row => String(row.candidates.length)
   },
   {
@@ -239,7 +280,7 @@ const columns = computed<DataTableColumns<Api.Management.ModelService>>(() => [
   {
     title: $t('business.actions'),
     key: 'actions',
-    width: 300,
+    width: 210,
     // 操作列固定在右侧:列多于一屏宽度时,行内操作不用横向滚动也能点到。
     fixed: 'right',
     render: row => {
@@ -276,38 +317,15 @@ const columns = computed<DataTableColumns<Api.Management.ModelService>>(() => [
               },
               { default: () => $t('business.grants') }
             ),
-            // 停用会立即影响线上调用,需要确认;启用直接执行。
-            row.status === 'active'
-              ? h(
-                  NPopconfirm,
-                  { onPositiveClick: () => toggleServiceStatus(row) },
-                  {
-                    trigger: () =>
-                      h(NButton, { size: 'small', quaternary: true, type: 'warning' }, { default: () => $t('business.disabled') }),
-                    default: () => $t('business.model-service-disable-confirm')
-                  }
-                )
-              : h(
-                  NButton,
-                  {
-                    size: 'small',
-                    quaternary: true,
-                    type: 'success',
-                    onClick: () => toggleServiceStatus(row)
-                  },
-                  { default: () => $t('business.enable') }
-                ),
             h(
-              NPopconfirm,
-              { onPositiveClick: () => handleDelete(row.id) },
+              NDropdown,
               {
-                trigger: () =>
-                  h(
-                    NButton,
-                    { size: 'small', type: 'error', quaternary: true },
-                    { default: () => $t('business.delete') }
-                  ),
-                default: () => $t('business.deletion-is-blocked-when-usage')
+                trigger: 'click',
+                options: rowMoreOptions(row),
+                onSelect: key => handleRowMoreAction(key, row)
+              },
+              {
+                default: () => h(NButton, { size: 'small', quaternary: true }, { default: () => $t('business.more') })
               }
             )
           ]
@@ -574,7 +592,7 @@ onMounted(async () => {
     </NCard>
 
     <NModal v-model:show="showCreate" preset="card" :title="$t('business.create-model-service')" class="w-1340px">
-      <NForm ref="formRef" :model="formModel" :rules="formRules" label-placement="left" label-width="100">
+      <NForm ref="formRef" :model="formModel" :rules="formRules" label-placement="top">
         <NFormItem :label="$t('business.service-name')" path="name">
           <NInput v-model:value="formModel.name" :placeholder="$t('business.logical-model-name-used-by')" />
         </NFormItem>
@@ -602,7 +620,7 @@ onMounted(async () => {
       <NDrawerContent :title="$t('business.edit-model-service')" closable>
         <NTabs v-model:value="editTab" type="line" animated>
           <NTabPane name="candidates" :tab="$t('business.candidate-models')">
-            <NForm ref="editFormRef" :model="editModel" :rules="formRules" label-placement="left" label-width="100">
+            <NForm ref="editFormRef" :model="editModel" :rules="formRules" label-placement="top">
               <NFormItem :label="$t('business.service-name')" path="name">
                 <NInput v-model:value="editModel.name" />
               </NFormItem>

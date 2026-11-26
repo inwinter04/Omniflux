@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, h, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { NButton, NDropdown, NPopconfirm, NSpace, NTag, useDialog } from 'naive-ui';
+import { NButton, NDropdown, NSpace, NTag, useDialog } from 'naive-ui';
 import type { DataTableColumns, DropdownOption, SelectGroupOption, SelectOption } from 'naive-ui';
 import {
   formatTime,
@@ -53,7 +53,7 @@ const statusFilter = ref<string | null>(null);
 const strategyOptions = useStrategyOptions();
 const statusOptions = computed<SelectOption[]>(() => [
   { label: $t('business.enable'), value: 'active' },
-  { label: $t('business.disabled'), value: 'disabled' }
+  { label: $t('business.disabled-e5ola'), value: 'disabled' }
 ]);
 
 const editorShow = ref(false);
@@ -212,18 +212,49 @@ function confirmDelete(row: Api.Management.RoutePolicy) {
   });
 }
 
-function moreActionOptions(_row: Api.Management.RoutePolicy): DropdownOption[] {
+function moreActionOptions(row: Api.Management.RoutePolicy): DropdownOption[] {
   return [
     { label: $t('business.edit'), key: 'edit' },
+    { label: $t('business.playground'), key: 'playground', disabled: row.status !== 'active' },
     { label: $t('business.clone-policy'), key: 'clone' },
-    { label: $t('business.delete'), key: 'delete' }
+    { type: 'divider', key: 'divider-lifecycle' },
+    { label: row.status === 'active' ? $t('business.disabled') : $t('business.enable'), key: 'toggle-status' },
+    {
+      label: $t('business.delete'),
+      key: 'delete',
+      props: { style: { color: '#d03050' } }
+    }
   ];
 }
 
 function handleMoreAction(row: Api.Management.RoutePolicy, key: string) {
-  if (key === 'edit') openEdit(row);
-  else if (key === 'clone') void handleClone(row);
-  else if (key === 'delete') confirmDelete(row);
+  if (key === 'edit') {
+    openEdit(row);
+    return;
+  }
+  if (key === 'playground') {
+    openPlayground(row);
+    return;
+  }
+  if (key === 'clone') {
+    void handleClone(row);
+    return;
+  }
+  if (key === 'toggle-status') {
+    const nextStatus: 'active' | 'disabled' = row.status === 'active' ? 'disabled' : 'active';
+    dialog.warning({
+      title: $t('common.tip'),
+      content:
+        nextStatus === 'disabled'
+          ? $t('business.route-policy-disable-confirm')
+          : $t('business.route-policy-enable-confirm'),
+      positiveText: $t('common.confirm'),
+      negativeText: $t('common.cancel'),
+      onPositiveClick: () => handleStatusChange(row, nextStatus)
+    });
+    return;
+  }
+  if (key === 'delete') confirmDelete(row);
 }
 
 const columns = computed<DataTableColumns<Api.Management.RoutePolicy>>(() => [
@@ -309,7 +340,7 @@ const columns = computed<DataTableColumns<Api.Management.RoutePolicy>>(() => [
   {
     title: $t('business.status'),
     key: 'status',
-    width: 90,
+    width: 105,
     render: row =>
       h(
         NTag,
@@ -326,10 +357,10 @@ const columns = computed<DataTableColumns<Api.Management.RoutePolicy>>(() => [
   {
     title: $t('business.actions'),
     key: 'actions',
-    width: 310,
+    width: 220,
     fixed: 'right',
     render: row =>
-      h(NSpace, { size: 6 }, () => [
+      h(NSpace, { size: 4 }, () => [
         h(NButton, { size: 'small', quaternary: true, onClick: () => openDetail(row) }, { default: () => $t('business.details') }),
         h(
           NButton,
@@ -339,36 +370,9 @@ const columns = computed<DataTableColumns<Api.Management.RoutePolicy>>(() => [
         ...(canManage.value
           ? [
               h(
-                NButton,
-                {
-                  size: 'small',
-                  quaternary: true,
-                  disabled: row.status !== 'active',
-                  onClick: () => openPlayground(row)
-                },
-                { default: () => $t('business.playground') }
-              ),
-              h(
-                NPopconfirm,
-                {
-                  onPositiveClick: () => handleStatusChange(row, row.status === 'active' ? 'disabled' : 'active')
-                },
-                {
-                  default: () =>
-                    row.status === 'active'
-                      ? $t('business.route-policy-disable-confirm')
-                      : $t('business.route-policy-enable-confirm'),
-                  trigger: () =>
-                    h(
-                      NButton,
-                      { size: 'small', quaternary: true, type: row.status === 'active' ? 'warning' : 'success' },
-                      { default: () => (row.status === 'active' ? $t('business.disabled') : $t('business.enable')) }
-                    )
-                }
-              ),
-              h(
                 NDropdown,
                 {
+                  trigger: 'click',
                   options: moreActionOptions(row),
                   onSelect: (key: string | number) => handleMoreAction(row, String(key))
                 },
@@ -416,13 +420,13 @@ onMounted(() => {
 
     <NCard :title="$t('route.model-management_route-policies')" :bordered="false" class="card-wrapper">
       <template #header-extra>
-        <NSpace>
+        <NSpace wrap>
           <NInput
             v-model:value="searchText"
             :placeholder="$t('business.search-policy-placeholder')"
             size="small"
             clearable
-            class="w-200px"
+            class="min-w-200px w-220px"
           />
           <NSelect
             v-model:value="strategyFilter"
@@ -430,7 +434,7 @@ onMounted(() => {
             :placeholder="$t('business.strategy')"
             size="small"
             clearable
-            class="w-150px"
+            class="min-w-150px w-170px"
           />
           <NSelect
             v-model:value="statusFilter"
@@ -438,7 +442,7 @@ onMounted(() => {
             :placeholder="$t('business.status')"
             size="small"
             clearable
-            class="w-120px"
+            class="min-w-120px w-140px"
           />
           <NButton size="small" secondary @click="openSimulateForPolicy(policies[0]?.id ?? null)">
             {{ $t('business.dry-run-simulator') }}
@@ -454,7 +458,7 @@ onMounted(() => {
         :data="filteredPolicies"
         :loading="loading"
         :bordered="false"
-        :scroll-x="1460"
+        :scroll-x="1380"
         :row-key="(row: Api.Management.RoutePolicy) => row.id"
       />
     </NCard>

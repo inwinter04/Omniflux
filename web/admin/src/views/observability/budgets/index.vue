@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { h, onMounted, reactive, ref, computed } from 'vue';
 import { useRoute } from 'vue-router';
-import { NButton, NDatePicker, NPopconfirm, NProgress, NSpace, NTag } from 'naive-ui';
-import type { DataTableColumns, FormInst, FormRules } from 'naive-ui';
+import { NButton, NDatePicker, NDropdown, NPopconfirm, NProgress, NSpace, NTag } from 'naive-ui';
+import type { DataTableColumns, DropdownOption, FormInst, FormRules } from 'naive-ui';
 import { formatTime } from '@/utils/admin-status';
 import {
   fetchApiKeys,
@@ -178,19 +178,47 @@ function formatAmount(value: string) {
   return value;
 }
 
+function rowMoreOptions(): DropdownOption[] {
+  return [
+    { label: $t('business.copy'), key: 'copy' },
+    { type: 'divider', key: 'divider-danger' },
+    {
+      label: $t('business.delete'),
+      key: 'delete',
+      props: { style: { color: '#d03050' } }
+    }
+  ];
+}
+
+function handleRowMoreAction(key: string | number, row: Api.Management.Budget) {
+  if (key === 'copy') {
+    openCopy(row);
+    return;
+  }
+  if (key === 'delete') {
+    window.$dialog?.warning({
+      title: $t('business.delete'),
+      content: $t('business.windows-with-settlement-records-cannot'),
+      positiveText: $t('common.confirm'),
+      negativeText: $t('common.cancel'),
+      onPositiveClick: () => handleDelete(row.id)
+    });
+  }
+}
+
 // 列顺序把状态、健康等关键信息排在前面:列多于一屏宽度时,这些列在常见窗口下仍然可见,其余列横向滚动查看。
 const columns = computed<DataTableColumns<Api.Management.Budget>>(() => [
   {
     title: $t('business.scope'),
     key: 'scope_type',
-    width: 90,
+    width: 105,
     render: row => scopeTypeText(row.scope_type)
   },
   { title: $t('business.subject'), key: 'scope_name', ellipsis: { tooltip: true }, width: 140 },
   {
     title: $t('business.window-status'),
     key: 'window_state',
-    width: 90,
+    width: 110,
     render: row => windowState(row)
   },
   {
@@ -260,7 +288,7 @@ const columns = computed<DataTableColumns<Api.Management.Budget>>(() => [
   {
     title: $t('business.actions'),
     key: 'actions',
-    width: 280,
+    width: 230,
     // 操作列固定在右侧:列多于一屏宽度时,行内操作不用横向滚动也能点到。
     fixed: 'right',
     render(row) {
@@ -276,9 +304,9 @@ const columns = computed<DataTableColumns<Api.Management.Budget>>(() => [
                 size: 'small',
                 quaternary: true,
                 type: 'primary',
-                onClick: () => openCopy(row)
+                onClick: () => openEdit(row)
               },
-              { default: () => $t('business.copy') }
+              { default: () => $t('business.adjust-limit') }
             ),
             h(
               NPopconfirm,
@@ -299,26 +327,14 @@ const columns = computed<DataTableColumns<Api.Management.Budget>>(() => [
               }
             ),
             h(
-              NButton,
+              NDropdown,
               {
-                size: 'small',
-                quaternary: true,
-                type: 'primary',
-                onClick: () => openEdit(row)
+                trigger: 'click',
+                options: rowMoreOptions(),
+                onSelect: key => handleRowMoreAction(key, row)
               },
-              { default: () => $t('business.adjust-limit') }
-            ),
-            h(
-              NPopconfirm,
-              { onPositiveClick: () => handleDelete(row.id) },
               {
-                trigger: () =>
-                  h(
-                    NButton,
-                    { size: 'small', type: 'error', quaternary: true },
-                    { default: () => $t('business.delete') }
-                  ),
-                default: () => $t('business.windows-with-settlement-records-cannot')
+                default: () => h(NButton, { size: 'small', quaternary: true }, { default: () => $t('business.more') })
               }
             )
           ]
@@ -481,8 +497,8 @@ onMounted(async () => {
       <NAlert v-if="nearLimitBudgets.length" type="warning" :bordered="false" class="mb-12px">
         {{ $t('business.budgetNearLimitSoon', { count: nearLimitBudgets.length }) }}
       </NAlert>
-      <NSpace align="center" class="mb-12px">
-        <NSelect v-model:value="budgetFilter" :options="budgetFilterOptions" class="w-180px" />
+      <NSpace wrap align="center" class="mb-12px">
+        <NSelect v-model:value="budgetFilter" :options="budgetFilterOptions" class="min-w-200px w-220px" />
         <NText depth="3">
           {{ $t('business.budgetFilterCount', { count: filteredBudgets.length, total: list.length }) }}
         </NText>
@@ -491,7 +507,7 @@ onMounted(async () => {
     </NCard>
 
     <NModal v-model:show="showCreate" preset="card" :title="$t('business.create-budget')" class="w-560px">
-      <NForm ref="formRef" :model="formModel" :rules="formRules" label-placement="left" label-width="100">
+      <NForm ref="formRef" :model="formModel" :rules="formRules" label-placement="top">
         <NFormItem :label="$t('business.scope-type')" path="scope_type">
           <NSelect
             v-model:value="formModel.scope_type"
@@ -532,7 +548,7 @@ onMounted(async () => {
     </NModal>
 
     <NModal v-model:show="showEdit" preset="card" :title="$t('business.adjust-budget-limit')" class="w-480px">
-      <NForm ref="editFormRef" :model="editModel" :rules="editRules" label-placement="left" label-width="100">
+      <NForm ref="editFormRef" :model="editModel" :rules="editRules" label-placement="top">
         <NFormItem :label="$t('business.new-limit')" path="limit_amount">
           <NInputNumber v-model:value="editModel.limit_amount" :min="0" class="w-full" />
         </NFormItem>

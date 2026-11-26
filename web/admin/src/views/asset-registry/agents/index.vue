@@ -2,7 +2,7 @@
 import { h, onMounted, ref, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { NButton, NDropdown, NSpace, NTag } from 'naive-ui';
-import type { DataTableColumns } from 'naive-ui';
+import type { DataTableColumns, DropdownOption } from 'naive-ui';
 import { formatTime, statusTagType, statusText } from '@/utils/admin-status';
 import { fetchAssets, fetchUpdateAssetStatus } from '@/service/api';
 import { $t } from '@/locales';
@@ -84,7 +84,7 @@ const columns = computed<DataTableColumns<Api.Management.Asset>>(() => [
   {
     title: $t('business.actions'),
     key: 'actions',
-    width: 330,
+    width: 210,
     // 操作列固定在右侧:列多于一屏宽度时,行内操作不用横向滚动也能点到。
     fixed: 'right',
     render: row => {
@@ -130,30 +130,11 @@ const columns = computed<DataTableColumns<Api.Management.Asset>>(() => [
               { default: () => $t('business.configuration') }
             ),
             h(
-              NButton,
-              {
-                size: 'small',
-                quaternary: true,
-                type: 'primary',
-                onClick: () => openAction('versions', row)
-              },
-              { default: () => $t('business.version') }
-            ),
-            h(
-              NButton,
-              {
-                size: 'small',
-                quaternary: true,
-                type: 'primary',
-                onClick: () => openAction('grants', row)
-              },
-              { default: () => $t('business.grants') }
-            ),
-            h(
               NDropdown,
               {
-                options: lifecycleOptions(row),
-                onSelect: key => handleLifecycle(key, row)
+                trigger: 'click',
+                options: rowMoreOptions(row),
+                onSelect: key => handleRowMoreAction(key, row)
               },
               {
                 default: () => h(NButton, { size: 'small', quaternary: true }, { default: () => $t('business.more') })
@@ -217,12 +198,38 @@ function closeChat() {
   void router.replace({ query });
 }
 
-function lifecycleOptions(asset: Api.Management.Asset) {
-  const options: { label: string; key: string }[] = [];
+function lifecycleOptions(asset: Api.Management.Asset): DropdownOption[] {
+  const options: DropdownOption[] = [];
   if (asset.status === 'published') options.push({ label: $t('business.pause'), key: 'disabled' });
   if (asset.status === 'disabled') options.push({ label: $t('business.resume'), key: 'published' });
-  if (asset.status !== 'archived') options.push({ label: $t('business.archive-agent'), key: 'archived' });
+  if (asset.status !== 'archived') {
+    options.push({
+      label: $t('business.archive-agent'),
+      key: 'archived',
+      props: { style: { color: '#d03050' } }
+    });
+  }
   return options;
+}
+
+function rowMoreOptions(asset: Api.Management.Asset): DropdownOption[] {
+  const options: DropdownOption[] = [
+    { label: $t('business.version'), key: 'versions' },
+    { label: $t('business.grants'), key: 'grants' }
+  ];
+  const lifecycle = lifecycleOptions(asset);
+  if (lifecycle.length > 0) {
+    options.push({ type: 'divider', key: 'divider-lifecycle' }, ...lifecycle);
+  }
+  return options;
+}
+
+function handleRowMoreAction(key: string | number, asset: Api.Management.Asset) {
+  if (key === 'versions' || key === 'grants') {
+    openAction(key, asset);
+    return;
+  }
+  void handleLifecycle(String(key), asset);
 }
 
 async function handleLifecycle(key: string, asset: Api.Management.Asset) {

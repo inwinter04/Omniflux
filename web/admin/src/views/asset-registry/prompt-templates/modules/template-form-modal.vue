@@ -407,8 +407,7 @@ function discardAndClose() {
 
       <NForm
         v-show="currentStep === 1"
-        label-placement="left"
-        label-width="100"
+        label-placement="top"
         :disabled="detail?.status === 'archived'"
       >
         <NFormItem :label="$t('business.template-name')" required>

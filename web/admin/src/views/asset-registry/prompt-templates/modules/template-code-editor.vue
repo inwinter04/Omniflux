@@ -315,7 +315,7 @@ onBeforeUnmount(() => {
       <NSelect
         v-model:value="selectedVariable"
         size="small"
-        class="w-200px"
+        class="min-w-200px w-220px"
         filterable
         :options="variableOptions"
         :disabled="disabled || variables.length === 0"

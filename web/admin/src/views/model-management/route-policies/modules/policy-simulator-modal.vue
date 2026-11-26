@@ -135,7 +135,7 @@ const columns = computed<DataTableColumns<Api.Management.CandidateEvaluation>>((
     minWidth: 180,
     render: row => `${row.upstream_model} (${row.provider})`
   },
-  { title: $t('business.priority'), key: 'priority', width: 70 },
+  { title: $t('business.priority'), key: 'priority', width: 85 },
   {
     title: $t('business.sim-est-cost'),
     key: 'estimated_cost',
@@ -151,7 +151,7 @@ const columns = computed<DataTableColumns<Api.Management.CandidateEvaluation>>((
   {
     title: $t('business.weight-quality'),
     key: 'quality_score',
-    width: 75,
+    width: 85,
     render: row => row.quality_score.toFixed(2)
   },
   {
@@ -172,13 +172,13 @@ const columns = computed<DataTableColumns<Api.Management.CandidateEvaluation>>((
   {
     title: $t('business.sim-total-score'),
     key: 'total_score',
-    width: 90,
+    width: 105,
     render: row => row.total_score.toFixed(3)
   },
   {
     title: $t('business.sim-reason'),
     key: 'excluded_reason',
-    minWidth: 140,
+    minWidth: 160,
     render: row => excludedReasonText(row.excluded_reason)
   }
 ]);

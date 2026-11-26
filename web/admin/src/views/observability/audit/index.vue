@@ -306,7 +306,7 @@ const columns = computed<DataTableColumns<Api.Management.AuditEvent>>(() => [
   {
     title: $t('business.result'),
     key: 'result',
-    width: 90,
+    width: 100,
     render(row) {
       return h(
         NTag,
@@ -318,7 +318,7 @@ const columns = computed<DataTableColumns<Api.Management.AuditEvent>>(() => [
   {
     title: $t('business.actions'),
     key: 'actions',
-    width: 80,
+    width: 95,
     // 窗口较窄时表格横向滚动,“详情”固定在右侧不被挤出可视区域。
     fixed: 'right',
     render(row) {

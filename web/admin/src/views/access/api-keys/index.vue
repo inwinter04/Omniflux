@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, h, onMounted, reactive, ref } from 'vue';
 import { useRoute } from 'vue-router';
-import { NButton, NPopconfirm, NSpace, NTag } from 'naive-ui';
-import type { DataTableColumns, FormInst, FormRules } from 'naive-ui';
+import { NButton, NDropdown, NSpace, NTag } from 'naive-ui';
+import type { DataTableColumns, DropdownOption, FormInst, FormRules } from 'naive-ui';
 import { formatTime, statusTagType, statusText } from '@/utils/admin-status';
 import {
   fetchApiKeys,
@@ -120,6 +120,47 @@ function adjustRateLimitFromDetail() {
   openRateLimit(key);
 }
 
+function rowMoreOptions(row: Api.Management.ApiKey): DropdownOption[] {
+  return [
+    {
+      label: row.status === 'active' ? $t('business.disable') : $t('business.enable'),
+      key: 'toggle-status'
+    },
+    { type: 'divider', key: 'divider-danger' },
+    {
+      label: $t('business.delete'),
+      key: 'delete',
+      props: { style: { color: '#d03050' } }
+    }
+  ];
+}
+
+function handleRowMoreAction(key: string | number, row: Api.Management.ApiKey) {
+  if (key === 'toggle-status') {
+    if (row.status === 'active') {
+      window.$dialog?.warning({
+        title: $t('business.disable'),
+        content: $t('business.authentication-stops-immediately-after-disabling'),
+        positiveText: $t('common.confirm'),
+        negativeText: $t('common.cancel'),
+        onPositiveClick: () => handleToggleStatus(row, 'disabled')
+      });
+    } else {
+      void handleToggleStatus(row, 'active');
+    }
+    return;
+  }
+  if (key === 'delete') {
+    window.$dialog?.warning({
+      title: $t('business.delete'),
+      content: $t('business.after-deletion-this-key-becomes'),
+      positiveText: $t('common.confirm'),
+      negativeText: $t('common.cancel'),
+      onPositiveClick: () => handleDelete(row.id)
+    });
+  }
+}
+
 // 列顺序把状态、健康等关键信息排在前面:列多于一屏宽度时,这些列在常见窗口下仍然可见,其余列横向滚动查看。
 const columns = computed<DataTableColumns<Api.Management.ApiKey>>(() => [
   { title: $t('business.name'), key: 'name', ellipsis: { tooltip: true }, width: 160 },
@@ -140,7 +181,7 @@ const columns = computed<DataTableColumns<Api.Management.ApiKey>>(() => [
   {
     title: $t('business.status'),
     key: 'status',
-    width: 100,
+    width: 110,
     render: row => keyStatusTag(row)
   },
   {
@@ -158,7 +199,7 @@ const columns = computed<DataTableColumns<Api.Management.ApiKey>>(() => [
   {
     title: $t('business.rate-limit-minute'),
     key: 'rate_limit_per_min',
-    width: 130,
+    width: 135,
     render: row => (row.rate_limit_per_min != null ? String(row.rate_limit_per_min) : '-')
   },
   { title: $t('business.prefix'), key: 'key_prefix', ellipsis: { tooltip: true }, width: 120 },
@@ -171,8 +212,7 @@ const columns = computed<DataTableColumns<Api.Management.ApiKey>>(() => [
   {
     title: $t('business.actions'),
     key: 'actions',
-    // 四个按钮在中文下排成一行需要约 230px。
-    width: 240,
+    width: 220,
     // 操作列固定在右侧:列多于一屏宽度时,行内操作不用横向滚动也能点到。
     fixed: 'right',
     render(row) {
@@ -195,46 +235,16 @@ const columns = computed<DataTableColumns<Api.Management.ApiKey>>(() => [
             onClick: () => openRateLimit(row)
           },
           { default: () => $t('business.rate-limit') }
-        )
-      );
-      if (row.status === 'active') {
-        buttons.push(
-          h(
-            NPopconfirm,
-            { onPositiveClick: () => handleToggleStatus(row, 'disabled') },
-            {
-              trigger: () =>
-                h(
-                  NButton,
-                  { size: 'small', type: 'warning', quaternary: true },
-                  { default: () => $t('business.disable') }
-                ),
-              default: () => $t('business.authentication-stops-immediately-after-disabling')
-            }
-          )
-        );
-      } else {
-        buttons.push(
-          h(
-            NButton,
-            {
-              size: 'small',
-              type: 'primary',
-              quaternary: true,
-              onClick: () => handleToggleStatus(row, 'active')
-            },
-            { default: () => $t('business.enable') }
-          )
-        );
-      }
-      buttons.push(
+        ),
         h(
-          NPopconfirm,
-          { onPositiveClick: () => handleDelete(row.id) },
+          NDropdown,
           {
-            trigger: () =>
-              h(NButton, { size: 'small', type: 'error', quaternary: true }, { default: () => $t('business.delete') }),
-            default: () => $t('business.after-deletion-this-key-becomes')
+            trigger: 'click',
+            options: rowMoreOptions(row),
+            onSelect: key => handleRowMoreAction(key, row)
+          },
+          {
+            default: () => h(NButton, { size: 'small', quaternary: true }, { default: () => $t('business.more') })
           }
         )
       );
@@ -381,7 +391,7 @@ onMounted(async () => {
     </NCard>
 
     <NModal v-model:show="showCreate" preset="card" :title="$t('business.create-api-key')" class="w-520px">
-      <NForm ref="formRef" :model="formModel" :rules="formRules" label-placement="left" label-width="100">
+      <NForm ref="formRef" :model="formModel" :rules="formRules" label-placement="top">
         <NFormItem :label="$t('business.name')" path="name">
           <NInput v-model:value="formModel.name" :placeholder="$t('business.for-example-order-service')" />
         </NFormItem>
@@ -445,7 +455,7 @@ onMounted(async () => {
       </template>
     </NModal>
     <NModal v-model:show="showRateLimit" preset="card" :title="$t('business.adjust-rate-limit')" class="w-440px">
-      <NForm ref="rateLimitFormRef" :model="rateLimitModel" label-placement="left" label-width="100">
+      <NForm ref="rateLimitFormRef" :model="rateLimitModel" label-placement="top">
         <NFormItem :label="$t('business.name')">
           <NInput :value="rateLimitModel.name" disabled />
         </NFormItem>

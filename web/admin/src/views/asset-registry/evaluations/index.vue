@@ -85,7 +85,7 @@ const overviewColumns = computed<DataTableColumns<Api.Management.EvaluationSetOv
   {
     title: $t('business.historical-match-rate'),
     key: 'accuracy',
-    width: 120,
+    width: 130,
     render: row =>
       h(
         NTag,
@@ -105,7 +105,7 @@ const overviewColumns = computed<DataTableColumns<Api.Management.EvaluationSetOv
   {
     title: $t('business.actions'),
     key: 'actions',
-    width: 140,
+    width: 165,
     render: row =>
       h(
         NSpace,
@@ -546,7 +546,7 @@ function accuracyText(value: number | null) {
             {{ selected.description || $t('business.noDescription') }}
           </NDescriptionsItem>
         </NDescriptions>
-        <NForm v-else label-placement="left" label-width="90">
+        <NForm v-else label-placement="top">
           <NGrid cols="1 700:2" :x-gap="16">
             <NFormItemGi :label="$t('business.template')">
               <NInput v-if="!creating" :value="selected?.asset_name" readonly />

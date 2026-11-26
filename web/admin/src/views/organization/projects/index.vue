@@ -257,7 +257,7 @@ onMounted(async () => {
     </NCard>
 
     <NModal v-model:show="showCreate" preset="card" :title="$t('business.create-project')" class="w-480px">
-      <NForm ref="formRef" :model="formModel" :rules="formRules" label-placement="left" label-width="80">
+      <NForm ref="formRef" :model="formModel" :rules="formRules" label-placement="top">
         <NFormItem :label="$t('business.project-name')" path="name">
           <NInput v-model:value="formModel.name" :placeholder="$t('business.for-example-order-center')" />
         </NFormItem>
@@ -278,7 +278,7 @@ onMounted(async () => {
     </NModal>
 
     <NModal v-model:show="showEdit" preset="card" :title="$t('business.edit-project')" class="w-480px">
-      <NForm ref="editFormRef" :model="editModel" :rules="editRules" label-placement="left" label-width="80">
+      <NForm ref="editFormRef" :model="editModel" :rules="editRules" label-placement="top">
         <NFormItem :label="$t('business.project-name')" path="name">
           <NInput v-model:value="editModel.name" :placeholder="$t('business.project-name')" />
         </NFormItem>
