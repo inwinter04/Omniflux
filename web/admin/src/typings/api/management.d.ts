@@ -69,15 +69,132 @@ declare namespace Api {
     type ProviderProxyType = 'none' | 'http' | 'socks5';
     type PlatformProxyType = 'http' | 'socks5';
 
+    interface HeartbeatBucket {
+      bucket_start: string;
+      status: 'healthy' | 'degraded' | 'unhealthy' | 'no_data';
+      total: number;
+      ok_count: number;
+      avg_latency_ms: number | null;
+      last_reason?: string;
+    }
+
+    interface ProxyBindingDetail {
+      provider_key: string;
+      provider_label: string;
+      priority: number;
+      enabled: boolean;
+      status: string;
+      last_latency_ms: number | null;
+      last_reason?: string;
+      last_checked_at: string | null;
+    }
+
+    interface PlatformProxyBindingInput {
+      provider_key: string;
+      priority: number;
+      enabled: boolean;
+    }
+
+    interface ProxyGovernanceSettings {
+      enabled: boolean;
+      probe_interval_seconds: number;
+      fast_probe_interval_seconds: number;
+      probe_timeout_seconds: number;
+      fail_threshold: number;
+      recover_threshold: number;
+      switch_cooldown_seconds: number;
+      failback_mode: 'sticky' | 'auto_after_soak';
+      failback_soak_seconds: number;
+      updated_by?: string | null;
+      updated_at?: string | null;
+    }
+
+    interface ProxyPoolMember {
+      proxy_id: string;
+      proxy_name: string;
+      proxy_type: PlatformProxyType;
+      proxy_url?: string;
+      proxy_enabled: boolean;
+      binding_enabled: boolean;
+      priority: number;
+      is_active: boolean;
+      status: string;
+      consecutive_failures: number;
+      consecutive_successes: number;
+      ejection_count: number;
+      cooldown_until: string | null;
+      healthy_since: string | null;
+      last_latency_ms: number | null;
+      last_reason?: string;
+      last_error_detail?: string;
+      last_checked_at: string | null;
+      availability_24h: number | null;
+      heartbeat_24h: HeartbeatBucket[];
+    }
+
+    interface ProviderProxyPool {
+      provider_key: string;
+      provider_label: string;
+      active_proxy_id: string | null;
+      active_proxy_name: string | null;
+      active_proxy_type: PlatformProxyType | null;
+      active_proxy_status: string;
+      active_since: string | null;
+      last_switch_reason?: string | null;
+      healthy_count: number;
+      total_count: number;
+      active_accounts: number;
+      members: ProxyPoolMember[];
+    }
+
+    interface ProxyFailoverEvent {
+      id: string;
+      provider_key: string;
+      from_proxy_id: string | null;
+      from_proxy_name: string | null;
+      to_proxy_id: string | null;
+      to_proxy_name: string | null;
+      trigger: 'auto_failover' | 'auto_failback' | 'manual' | 'config_change';
+      reason: string;
+      detail?: string | null;
+      created_at: string;
+    }
+
+    interface ProxyTargetProbeResult {
+      provider_key: string;
+      target_url: string;
+      ok: boolean;
+      status: string;
+      reason: string;
+      status_code?: number;
+      latency_ms: number;
+      error_detail?: string;
+    }
+
+    interface PoolProbeSummary {
+      provider_key: string;
+      results: ProxyTargetProbeResult[];
+      switched: boolean;
+      active_proxy_id?: string | null;
+      event?: ProxyFailoverEvent | null;
+    }
+
     interface PlatformProxy {
       id: string;
       name: string;
       provider_keys: string[];
       provider_labels: string[];
+      bindings: ProxyBindingDetail[];
       proxy_type: PlatformProxyType;
       proxy_url?: string;
+      enabled: boolean;
+      probe_url?: string;
       updated_at?: string;
       active_accounts: number;
+      health_status: string;
+      availability_24h: number | null;
+      avg_latency_ms_24h: number | null;
+      heartbeat_24h: HeartbeatBucket[];
     }
 
     interface PlatformProxyProviderOption {
@@ -87,14 +204,19 @@ declare namespace Api {
 
     interface PlatformProxyListResult {
       proxies: PlatformProxy[];
+      pools: ProviderProxyPool[];
+      settings: ProxyGovernanceSettings;
       provider_options: PlatformProxyProviderOption[];
     }
 
     interface CreatePlatformProxyParams {
-      provider_keys: string[];
+      provider_keys?: string[];
+      bindings?: PlatformProxyBindingInput[];
       name: string;
       proxy_type: PlatformProxyType;
       proxy_url: string;
+      enabled?: boolean;
+      probe_url?: string;
     }
 
     interface UpdatePlatformProxyParams extends Omit<CreatePlatformProxyParams, 'proxy_url'> {
@@ -107,7 +229,11 @@ declare namespace Api {
       name: string;
       region: string | null;
       base_url: string | null;
+      proxy_id: string | null;
+      proxy_name: string | null;
       proxy_type: ProviderProxyType;
+      proxy_status: string;
+      proxy_pool_size: number;
       billing_currency: string;
       status: string;
       /** 近 24 小时被动健康统计;无流量时为 null */
@@ -117,8 +243,123 @@ declare namespace Api {
       last_used_at: string | null;
       active_candidates: number;
       health_status: 'healthy' | 'degraded' | 'unhealthy' | 'no_data' | 'no_candidates' | 'disabled';
+      active_check_status: 'unknown' | 'healthy' | 'degraded' | 'unhealthy' | 'unsupported';
+      active_check_reason?: string;
+      active_check_status_code?: number | null;
+      active_check_latency_ms?: number | null;
+      active_check_error?: string;
+      last_checked_at: string | null;
+      last_healthy_at: string | null;
+      availability_24h: number | null;
+      heartbeat_24h: HeartbeatBucket[];
       created_at: string;
       updated_at: string;
+    }
+
+    interface ProviderHealthSettings {
+      enabled: boolean;
+      interval_seconds: number;
+      timeout_seconds: number;
+      degraded_latency_ms: number;
+      failure_threshold: number;
+      updated_by?: string | null;
+      updated_at?: string | null;
+    }
+
+    interface ProviderAvailabilityItem {
+      provider: string;
+      label: string;
+      total_accounts: number;
+      active_accounts: number;
+      healthy_accounts: number;
+      degraded_accounts: number;
+      unhealthy_accounts: number;
+      unknown_accounts: number;
+      unsupported_accounts: number;
+      health_status: 'healthy' | 'degraded' | 'unhealthy' | 'no_data' | 'disabled';
+      availability_24h: number | null;
+      avg_latency_ms_24h: number | null;
+      requests_24h: number;
+      success_rate_24h: number | null;
+      proxy_pool_size: number;
+      active_proxy_id: string | null;
+      active_proxy_name: string | null;
+      active_proxy_type: ProviderProxyType;
+      active_proxy_status: string;
+      last_checked_at: string | null;
+      heartbeat_24h: HeartbeatBucket[];
+    }
+
+    interface ProviderAvailabilityOverview {
+      providers: ProviderAvailabilityItem[];
+      settings: ProviderHealthSettings;
+      summary: {
+        total_providers: number;
+        total_accounts: number;
+        healthy_accounts: number;
+        degraded_accounts: number;
+        unhealthy_accounts: number;
+        overall_availability_24h: number | null;
+      };
+    }
+
+    interface AccountProbeResult {
+      account_id: string;
+      provider: string;
+      ok: boolean;
+      status: string;
+      reason: string;
+      status_code?: number;
+      latency_ms: number;
+      proxy_id?: string | null;
+      proxy_name?: string | null;
+      detail?: string;
+      checked_at: string;
+      consecutive_failures: number;
+    }
+
+    interface BatchAccountProbeResult {
+      total: number;
+      checked: number;
+      healthy: number;
+      degraded: number;
+      unhealthy: number;
+      unsupported: number;
+      results: AccountProbeResult[];
+    }
+
+    interface ProviderAccountHealthCheckRecord {
+      id: number;
+      trigger: 'auto' | 'manual';
+      ok: boolean;
+      status: string;
+      reason: string;
+      http_status: number | null;
+      latency_ms: number | null;
+      proxy_name: string | null;
+      error_detail?: string;
+      checked_at: string;
+    }
+
+    interface ProviderAccountHealthHistory {
+      account_id: string;
+      provider: string;
+      name: string;
+      current_status: string;
+      current_reason: string;
+      current_http_status: number | null;
+      current_latency_ms: number | null;
+      current_proxy_name: string | null;
+      current_error_detail?: string;
+      consecutive_failures: number;
+      last_checked_at: string | null;
+      last_healthy_at: string | null;
+      availability_24h: number | null;
+      availability_7d: number | null;
+      avg_latency_ms_24h: number | null;
+      p95_latency_ms_24h: number | null;
+      heartbeat_24h: HeartbeatBucket[];
+      checks: ProviderAccountHealthCheckRecord[];
     }
 
     interface ProviderCatalogEntry {
@@ -819,9 +1060,13 @@ declare namespace Api {
 
     interface ProviderTestResult {
       ok: boolean;
+      status?: string;
       reason: string;
       detail?: string;
       status_code?: number;
+      latency_ms?: number;
+      proxy_name?: string | null;
+      checked_at?: string;
     }
 
     interface AuditEventFilters {

@@ -4,9 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 
 	"github.com/inwinter04/omniflux/internal/auth"
 	"github.com/inwinter04/omniflux/internal/bifrostx"
+	"github.com/inwinter04/omniflux/internal/governance"
 	"github.com/inwinter04/omniflux/internal/vault"
 )
 
@@ -32,23 +34,36 @@ var v1PathProviders = map[string]bool{
 }
 
 type providerAccountResponse struct {
-	// 近 24 小时被动健康统计,来自 usage_records;无流量时为 null。
-	ID               string     `json:"id"`
-	Provider         string     `json:"provider"`
-	Name             string     `json:"name"`
-	Region           *string    `json:"region"`
-	BaseURL          *string    `json:"base_url"`
-	ProxyType        string     `json:"proxy_type"`
-	BillingCurrency  string     `json:"billing_currency"`
-	Status           string     `json:"status"`
-	Requests24h      int64      `json:"requests_24h"`
-	SuccessRate24h   *float64   `json:"success_rate_24h"`
-	AvgLatencyMS24h  *float64   `json:"avg_latency_ms_24h"`
-	LastUsedAt       *time.Time `json:"last_used_at"`
-	ActiveCandidates int        `json:"active_candidates"`
-	HealthStatus     string     `json:"health_status"`
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        time.Time  `json:"updated_at"`
+	// 综合主动可用性探测与近 24 小时被动健康统计。
+	ID                    string                       `json:"id"`
+	Provider              string                       `json:"provider"`
+	Name                  string                       `json:"name"`
+	Region                *string                      `json:"region"`
+	BaseURL               *string                      `json:"base_url"`
+	ProxyID               *string                      `json:"proxy_id"`
+	ProxyName             *string                      `json:"proxy_name"`
+	ProxyType             string                       `json:"proxy_type"`
+	ProxyStatus           string                       `json:"proxy_status"`
+	ProxyPoolSize         int                          `json:"proxy_pool_size"`
+	BillingCurrency       string                       `json:"billing_currency"`
+	Status                string                       `json:"status"`
+	Requests24h           int64                        `json:"requests_24h"`
+	SuccessRate24h        *float64                     `json:"success_rate_24h"`
+	AvgLatencyMS24h       *float64                     `json:"avg_latency_ms_24h"`
+	LastUsedAt            *time.Time                   `json:"last_used_at"`
+	ActiveCandidates      int                          `json:"active_candidates"`
+	HealthStatus          string                       `json:"health_status"`
+	ActiveCheckStatus     string                       `json:"active_check_status"`
+	ActiveCheckReason     string                       `json:"active_check_reason,omitempty"`
+	ActiveCheckStatusCode *int                         `json:"active_check_status_code,omitempty"`
+	ActiveCheckLatencyMS  *int                         `json:"active_check_latency_ms,omitempty"`
+	ActiveCheckError      string                       `json:"active_check_error,omitempty"`
+	LastCheckedAt         *time.Time                   `json:"last_checked_at"`
+	LastHealthyAt         *time.Time                   `json:"last_healthy_at"`
+	Availability24h       *float64                     `json:"availability_24h"`
+	Heartbeat24h          []governance.HeartbeatBucket `json:"heartbeat_24h"`
+	CreatedAt             time.Time                    `json:"created_at"`
+	UpdatedAt             time.Time                    `json:"updated_at"`
 }
 
 type createProviderAccountRequest struct {
@@ -66,14 +81,19 @@ func (d ServerDeps) ProviderAccounts(w http.ResponseWriter, r *http.Request) {
 	if !ok || d.requirePermission(w, principal, auth.PermProviderRead) != nil {
 		return
 	}
-	proxyTypes, err := loadPlatformProxyTypes(r.Context(), d.Pool)
+	proxySummaries, err := loadPlatformActiveProxySummaries(r.Context(), d.Pool)
 	if err != nil {
 		adminError(w, http.StatusInternalServerError, "PROVIDER_LIST_FAILED", "failed-to-query-provider-accounts", nil)
 		return
 	}
 	rows, err := d.Pool.Query(r.Context(), `
-		SELECT id, provider, name, region, base_url, billing_currency, status, created_at, updated_at
-		FROM provider_accounts WHERE organization_id = $1 ORDER BY created_at DESC
+		SELECT a.id, a.provider, a.name, a.region, a.base_url, a.billing_currency, a.status, a.created_at, a.updated_at,
+		       COALESCE(hs.status, 'unknown'), COALESCE(hs.reason, ''), hs.http_status, hs.latency_ms,
+		       COALESCE(hs.error_detail, ''), hs.last_checked_at, hs.last_healthy_at
+		FROM provider_accounts a
+		LEFT JOIN provider_account_health_states hs ON hs.provider_account_id = a.id
+		WHERE a.organization_id = $1
+		ORDER BY a.created_at DESC
 	`, principal.OrganizationID)
 	if err != nil {
 		adminError(w, http.StatusInternalServerError, "PROVIDER_LIST_FAILED", "failed-to-query-provider-accounts", nil)
@@ -84,7 +104,11 @@ func (d ServerDeps) ProviderAccounts(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var item providerAccountResponse
 		var id uuid.UUID
-		if err := rows.Scan(&id, &item.Provider, &item.Name, &item.Region, &item.BaseURL, &item.BillingCurrency, &item.Status, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(
+			&id, &item.Provider, &item.Name, &item.Region, &item.BaseURL, &item.BillingCurrency, &item.Status, &item.CreatedAt, &item.UpdatedAt,
+			&item.ActiveCheckStatus, &item.ActiveCheckReason, &item.ActiveCheckStatusCode, &item.ActiveCheckLatencyMS,
+			&item.ActiveCheckError, &item.LastCheckedAt, &item.LastHealthyAt,
+		); err != nil {
 			adminError(w, http.StatusInternalServerError, "PROVIDER_LIST_FAILED", "failed-to-query-provider-accounts", nil)
 			return
 		}
@@ -94,10 +118,17 @@ func (d ServerDeps) ProviderAccounts(w http.ResponseWriter, r *http.Request) {
 			adminError(w, http.StatusInternalServerError, "PROVIDER_LIST_FAILED", "failed-to-query-provider-accounts", nil)
 			return
 		}
-		if proxyType, exists := proxyTypes[string(providerKey)]; exists {
-			item.ProxyType = proxyType
+		if sum, exists := proxySummaries[string(providerKey)]; exists && sum.ProxyType != "" {
+			pid := sum.ProxyID
+			pname := sum.ProxyName
+			item.ProxyID = &pid
+			item.ProxyName = &pname
+			item.ProxyType = sum.ProxyType
+			item.ProxyStatus = sum.ProxyStatus
+			item.ProxyPoolSize = sum.PoolSize
 		} else {
 			item.ProxyType = bifrostx.ProxyTypeNone
+			item.ProxyStatus = "none"
 		}
 		list = append(list, item)
 	}
@@ -148,6 +179,31 @@ func (d ServerDeps) ProviderAccounts(w http.ResponseWriter, r *http.Request) {
 		}
 		health[id] = h
 	}
+
+	// 读取近 24h 主动探测明细构建心跳条与可用率。
+	checkRows, err := d.Pool.Query(r.Context(), `
+		SELECT provider_account_id, checked_at, ok, status, latency_ms, reason
+		FROM provider_account_health_checks
+		WHERE organization_id = $1 AND checked_at >= now() - interval '24 hours'
+		ORDER BY checked_at ASC
+	`, principal.OrganizationID)
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "PROVIDER_LIST_FAILED", "failed-to-query-provider-health-statistics", nil)
+		return
+	}
+	defer checkRows.Close()
+	checksByAccount := make(map[string][]probeCheckSample)
+	for checkRows.Next() {
+		var accID uuid.UUID
+		var sample probeCheckSample
+		if err := checkRows.Scan(&accID, &sample.CheckedAt, &sample.OK, &sample.Status, &sample.LatencyMS, &sample.Reason); err != nil {
+			adminError(w, http.StatusInternalServerError, "PROVIDER_LIST_FAILED", "failed-to-query-provider-health-statistics", nil)
+			return
+		}
+		checksByAccount[accID.String()] = append(checksByAccount[accID.String()], sample)
+	}
+
+	now := time.Now()
 	for j := range list {
 		var id uuid.UUID
 		if err := id.UnmarshalText([]byte(list[j].ID)); err != nil {
@@ -159,10 +215,473 @@ func (d ServerDeps) ProviderAccounts(w http.ResponseWriter, r *http.Request) {
 			list[j].AvgLatencyMS24h = h.AverageLatencyMS
 			list[j].LastUsedAt = h.LastUsedAt
 			list[j].ActiveCandidates = h.ActiveCandidates
-			list[j].HealthStatus = deriveHealthStatus(list[j].Status, h.Requests, h.SuccessRate, h.AverageLatencyMS, h.ActiveCandidates)
+			list[j].HealthStatus = deriveAccountHealthStatus(
+				list[j].Status, list[j].ActiveCheckStatus,
+				h.Requests, h.SuccessRate, h.AverageLatencyMS, h.ActiveCandidates,
+			)
 		}
+		hb, avail := governance.BuildHeartbeat24h(toGovernanceSamples(checksByAccount[list[j].ID]), now)
+		list[j].Heartbeat24h = hb
+		list[j].Availability24h = avail
 	}
 	adminOK(w, list)
+}
+
+type providerAvailabilityItem struct {
+	Provider            string                       `json:"provider"`
+	Label               string                       `json:"label"`
+	TotalAccounts       int                          `json:"total_accounts"`
+	ActiveAccounts      int                          `json:"active_accounts"`
+	HealthyAccounts     int                          `json:"healthy_accounts"`
+	DegradedAccounts    int                          `json:"degraded_accounts"`
+	UnhealthyAccounts   int                          `json:"unhealthy_accounts"`
+	UnknownAccounts     int                          `json:"unknown_accounts"`
+	UnsupportedAccounts int                          `json:"unsupported_accounts"`
+	HealthStatus        string                       `json:"health_status"`
+	Availability24h     *float64                     `json:"availability_24h"`
+	AvgLatencyMS24h     *float64                     `json:"avg_latency_ms_24h"`
+	Requests24h         int64                        `json:"requests_24h"`
+	SuccessRate24h      *float64                     `json:"success_rate_24h"`
+	ProxyPoolSize       int                          `json:"proxy_pool_size"`
+	ActiveProxyID       *string                      `json:"active_proxy_id"`
+	ActiveProxyName     *string                      `json:"active_proxy_name"`
+	ActiveProxyType     string                       `json:"active_proxy_type"`
+	ActiveProxyStatus   string                       `json:"active_proxy_status"`
+	LastCheckedAt       *time.Time                   `json:"last_checked_at"`
+	Heartbeat24h        []governance.HeartbeatBucket `json:"heartbeat_24h"`
+}
+
+type providerAvailabilitySummary struct {
+	TotalProviders         int      `json:"total_providers"`
+	TotalAccounts          int      `json:"total_accounts"`
+	HealthyAccounts        int      `json:"healthy_accounts"`
+	DegradedAccounts       int      `json:"degraded_accounts"`
+	UnhealthyAccounts      int      `json:"unhealthy_accounts"`
+	OverallAvailability24h *float64 `json:"overall_availability_24h"`
+}
+
+func (d ServerDeps) ProviderAccountsAvailability(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok || d.requirePermission(w, principal, auth.PermProviderRead) != nil {
+		return
+	}
+
+	proxySummaries, err := loadPlatformActiveProxySummaries(r.Context(), d.Pool)
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "PROVIDER_LIST_FAILED", "failed-to-query-provider-health-statistics", nil)
+		return
+	}
+	settings, err := d.loadProviderHealthSettings(r.Context())
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "PROVIDER_LIST_FAILED", "failed-to-query-provider-health-statistics", nil)
+		return
+	}
+
+	rows, err := d.Pool.Query(r.Context(), `
+		SELECT a.id, a.provider, a.status,
+		       COALESCE(hs.status, 'unknown'), hs.last_checked_at,
+		       count(u.id),
+		       count(u.id) FILTER (WHERE u.state = 'success'),
+		       avg(u.total_ms) FILTER (WHERE u.state = 'success'),
+		       count(DISTINCT mc.id) FILTER (WHERE mc.status = 'active' AND mc.retired_at IS NULL)
+		FROM provider_accounts a
+		LEFT JOIN provider_account_health_states hs ON hs.provider_account_id = a.id
+		LEFT JOIN model_candidates mc ON mc.provider_account_id = a.id
+		LEFT JOIN usage_records u ON u.model_candidate_id = mc.id
+		     AND u.created_at >= now() - interval '24 hours'
+		     AND u.state <> 'pending'
+		WHERE a.organization_id = $1
+		GROUP BY a.id, a.provider, a.status, hs.status, hs.last_checked_at
+	`, principal.OrganizationID)
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "PROVIDER_LIST_FAILED", "failed-to-query-provider-health-statistics", nil)
+		return
+	}
+	defer rows.Close()
+
+	type accStat struct {
+		provider      string
+		status        string
+		activeCheck   string
+		lastChecked   *time.Time
+		reqs          int64
+		succ          int64
+		avgLatencyMS  *float64
+		activeCands   int
+	}
+	type providerAgg struct {
+		item        providerAvailabilityItem
+		totalReqs   int64
+		totalSucc   int64
+		passiveSums float64
+		passiveCnt  int64
+	}
+	byProvider := make(map[string]*providerAgg)
+	summary := providerAvailabilitySummary{}
+
+	for rows.Next() {
+		var id uuid.UUID
+		var st accStat
+		if err := rows.Scan(
+			&id, &st.provider, &st.status, &st.activeCheck, &st.lastChecked,
+			&st.reqs, &st.succ, &st.avgLatencyMS, &st.activeCands,
+		); err != nil {
+			adminError(w, http.StatusInternalServerError, "PROVIDER_LIST_FAILED", "failed-to-query-provider-health-statistics", nil)
+			return
+		}
+		agg, exists := byProvider[st.provider]
+		if !exists {
+			agg = &providerAgg{
+				item: providerAvailabilityItem{
+					Provider:          st.provider,
+					Label:             providerKeyLabel(st.provider),
+					ActiveProxyType:   bifrostx.ProxyTypeNone,
+					ActiveProxyStatus: "none",
+				},
+			}
+			byProvider[st.provider] = agg
+		}
+		agg.item.TotalAccounts++
+		summary.TotalAccounts++
+		if st.status == "active" {
+			agg.item.ActiveAccounts++
+		}
+		var passiveRate *float64
+		if st.reqs > 0 {
+			r := float64(st.succ) / float64(st.reqs)
+			passiveRate = &r
+			agg.totalReqs += st.reqs
+			agg.totalSucc += st.succ
+			if st.avgLatencyMS != nil {
+				agg.passiveSums += *st.avgLatencyMS
+				agg.passiveCnt++
+			}
+		}
+		derived := deriveAccountHealthStatus(st.status, st.activeCheck, st.reqs, passiveRate, st.avgLatencyMS, st.activeCands)
+		switch derived {
+		case "healthy":
+			agg.item.HealthyAccounts++
+			summary.HealthyAccounts++
+		case "degraded":
+			agg.item.DegradedAccounts++
+			summary.DegradedAccounts++
+		case "unhealthy":
+			agg.item.UnhealthyAccounts++
+			summary.UnhealthyAccounts++
+		default:
+			if st.activeCheck == "unsupported" {
+				agg.item.UnsupportedAccounts++
+			} else {
+				agg.item.UnknownAccounts++
+			}
+		}
+		if st.lastChecked != nil && (agg.item.LastCheckedAt == nil || st.lastChecked.After(*agg.item.LastCheckedAt)) {
+			t := *st.lastChecked
+			agg.item.LastCheckedAt = &t
+		}
+	}
+
+	checkRows, err := d.Pool.Query(r.Context(), `
+		SELECT provider, checked_at, ok, status, latency_ms, reason
+		FROM provider_account_health_checks
+		WHERE organization_id = $1 AND checked_at >= now() - interval '24 hours'
+		ORDER BY checked_at ASC
+	`, principal.OrganizationID)
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "PROVIDER_LIST_FAILED", "failed-to-query-provider-health-statistics", nil)
+		return
+	}
+	defer checkRows.Close()
+	checksByProvider := make(map[string][]probeCheckSample)
+	var allChecksOK, allChecksTotal int
+	for checkRows.Next() {
+		var provider string
+		var sample probeCheckSample
+		if err := checkRows.Scan(&provider, &sample.CheckedAt, &sample.OK, &sample.Status, &sample.LatencyMS, &sample.Reason); err != nil {
+			adminError(w, http.StatusInternalServerError, "PROVIDER_LIST_FAILED", "failed-to-query-provider-health-statistics", nil)
+			return
+		}
+		allChecksTotal++
+		if sample.OK {
+			allChecksOK++
+		}
+		checksByProvider[provider] = append(checksByProvider[provider], sample)
+	}
+
+	now := time.Now()
+	keys := make([]string, 0, len(byProvider))
+	for k := range byProvider {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return providerKeyLabel(keys[i]) < providerKeyLabel(keys[j]) })
+
+	items := make([]providerAvailabilityItem, 0, len(keys))
+	for _, k := range keys {
+		agg := byProvider[k]
+		if pKey, err := bifrostx.MapProvider(k); err == nil {
+			if sum, ok := proxySummaries[string(pKey)]; ok && sum.ProxyType != "" {
+				pid := sum.ProxyID
+				pname := sum.ProxyName
+				agg.item.ActiveProxyID = &pid
+				agg.item.ActiveProxyName = &pname
+				agg.item.ActiveProxyType = sum.ProxyType
+				agg.item.ActiveProxyStatus = sum.ProxyStatus
+				agg.item.ProxyPoolSize = sum.PoolSize
+			}
+		}
+		agg.item.Requests24h = agg.totalReqs
+		if agg.totalReqs > 0 {
+			rate := float64(agg.totalSucc) / float64(agg.totalReqs)
+			agg.item.SuccessRate24h = &rate
+		}
+		samples := checksByProvider[k]
+		hb, avail := governance.BuildHeartbeat24h(toGovernanceSamples(samples), now)
+		agg.item.Heartbeat24h = hb
+		agg.item.Availability24h = avail
+		if lat := avgSampleLatency(samples); lat != nil {
+			agg.item.AvgLatencyMS24h = lat
+		} else if agg.passiveCnt > 0 {
+			lat := agg.passiveSums / float64(agg.passiveCnt)
+			agg.item.AvgLatencyMS24h = &lat
+		}
+
+		switch {
+		case agg.item.ActiveAccounts == 0:
+			agg.item.HealthStatus = "disabled"
+		case agg.item.HealthyAccounts == 0 && agg.item.UnhealthyAccounts > 0:
+			agg.item.HealthStatus = "unhealthy"
+		case agg.item.UnhealthyAccounts > 0 || agg.item.DegradedAccounts > 0:
+			agg.item.HealthStatus = "degraded"
+		case agg.item.HealthyAccounts > 0:
+			agg.item.HealthStatus = "healthy"
+		default:
+			agg.item.HealthStatus = "no_data"
+		}
+		items = append(items, agg.item)
+	}
+
+	summary.TotalProviders = len(items)
+	if allChecksTotal > 0 {
+		overall := float64(allChecksOK) * 100 / float64(allChecksTotal)
+		summary.OverallAvailability24h = &overall
+	}
+	adminOK(w, map[string]any{
+		"providers": items,
+		"settings":  settings,
+		"summary":   summary,
+	})
+}
+
+func (d ServerDeps) TestAllProviderAccounts(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok || d.requirePermission(w, principal, auth.PermProviderManage) != nil {
+		return
+	}
+	if d.Governance == nil {
+		adminError(w, http.StatusInternalServerError, "PROVIDER_TEST_FAILED", "connectivity-test-failed", nil)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+	batch, err := d.Governance.ProbeOrganizationAccounts(ctx, principal.OrganizationID, "manual")
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "PROVIDER_TEST_FAILED", "connectivity-test-failed", nil)
+		return
+	}
+	adminOK(w, batch)
+}
+
+func (d ServerDeps) ProviderAccountHealthHistory(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok || d.requirePermission(w, principal, auth.PermProviderRead) != nil {
+		return
+	}
+	accountID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		adminError(w, http.StatusBadRequest, "PROVIDER_ID_INVALID", "invalid-provider-account-id", nil)
+		return
+	}
+	limit := 50
+	if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
+		if parsed, parseErr := strconv.Atoi(rawLimit); parseErr == nil && parsed > 0 && parsed <= 200 {
+			limit = parsed
+		}
+	}
+
+	var provider, name string
+	var currentStatus, currentReason, currentError string
+	var currentHTTPStatus, currentLatencyMS *int
+	var currentProxyName *string
+	var consecutiveFailures int
+	var lastCheckedAt, lastHealthyAt *time.Time
+	err = d.Pool.QueryRow(r.Context(), `
+		SELECT a.provider, a.name,
+		       COALESCE(hs.status, 'unknown'), COALESCE(hs.reason, ''), hs.http_status, hs.latency_ms,
+		       hs.proxy_name, COALESCE(hs.error_detail, ''), COALESCE(hs.consecutive_failures, 0),
+		       hs.last_checked_at, hs.last_healthy_at
+		FROM provider_accounts a
+		LEFT JOIN provider_account_health_states hs ON hs.provider_account_id = a.id
+		WHERE a.id = $1 AND a.organization_id = $2
+	`, accountID, principal.OrganizationID).Scan(
+		&provider, &name, &currentStatus, &currentReason, &currentHTTPStatus, &currentLatencyMS,
+		&currentProxyName, &currentError, &consecutiveFailures, &lastCheckedAt, &lastHealthyAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		adminError(w, http.StatusNotFound, "PROVIDER_NOT_FOUND", "provider-account-does-not-exist-or", nil)
+		return
+	}
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "PROVIDER_HEALTH_FAILED", "failed-to-query-provider-health-statistics", nil)
+		return
+	}
+
+	var avail7d, avgLatency24h, p95Latency24h *float64
+	if err := d.Pool.QueryRow(r.Context(), `
+		SELECT
+			avg(CASE WHEN ok THEN 100.0 ELSE 0.0 END),
+			avg(latency_ms) FILTER (WHERE checked_at >= now() - interval '24 hours' AND latency_ms IS NOT NULL),
+			percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms) FILTER (WHERE checked_at >= now() - interval '24 hours' AND latency_ms IS NOT NULL)
+		FROM provider_account_health_checks
+		WHERE provider_account_id = $1 AND checked_at >= now() - interval '7 days'
+	`, accountID).Scan(&avail7d, &avgLatency24h, &p95Latency24h); err != nil {
+		adminError(w, http.StatusInternalServerError, "PROVIDER_HEALTH_FAILED", "failed-to-query-provider-health-statistics", nil)
+		return
+	}
+
+	hbRows, err := d.Pool.Query(r.Context(), `
+		SELECT checked_at, ok, status, latency_ms, reason
+		FROM provider_account_health_checks
+		WHERE provider_account_id = $1 AND checked_at >= now() - interval '24 hours'
+		ORDER BY checked_at ASC
+	`, accountID)
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "PROVIDER_HEALTH_FAILED", "failed-to-query-provider-health-statistics", nil)
+		return
+	}
+	defer hbRows.Close()
+	hbSamples := []probeCheckSample{}
+	for hbRows.Next() {
+		var s probeCheckSample
+		if err := hbRows.Scan(&s.CheckedAt, &s.OK, &s.Status, &s.LatencyMS, &s.Reason); err != nil {
+			adminError(w, http.StatusInternalServerError, "PROVIDER_HEALTH_FAILED", "failed-to-query-provider-health-statistics", nil)
+			return
+		}
+		hbSamples = append(hbSamples, s)
+	}
+	heartbeat, avail24h := governance.BuildHeartbeat24h(toGovernanceSamples(hbSamples), time.Now())
+
+	type healthCheckRecord struct {
+		ID          int64     `json:"id"`
+		Trigger     string    `json:"trigger"`
+		OK          bool      `json:"ok"`
+		Status      string    `json:"status"`
+		Reason      string    `json:"reason"`
+		HTTPStatus  *int      `json:"http_status"`
+		LatencyMS   *int      `json:"latency_ms"`
+		ProxyName   *string   `json:"proxy_name"`
+		ErrorDetail string    `json:"error_detail,omitempty"`
+		CheckedAt   time.Time `json:"checked_at"`
+	}
+	rows, err := d.Pool.Query(r.Context(), `
+		SELECT id, trigger, ok, status, reason, http_status, latency_ms, proxy_name, COALESCE(error_detail, ''), checked_at
+		FROM provider_account_health_checks
+		WHERE provider_account_id = $1
+		ORDER BY checked_at DESC
+		LIMIT $2
+	`, accountID, limit)
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "PROVIDER_HEALTH_FAILED", "failed-to-query-provider-health-statistics", nil)
+		return
+	}
+	defer rows.Close()
+	checks := []healthCheckRecord{}
+	for rows.Next() {
+		var rec healthCheckRecord
+		if err := rows.Scan(&rec.ID, &rec.Trigger, &rec.OK, &rec.Status, &rec.Reason, &rec.HTTPStatus, &rec.LatencyMS, &rec.ProxyName, &rec.ErrorDetail, &rec.CheckedAt); err != nil {
+			adminError(w, http.StatusInternalServerError, "PROVIDER_HEALTH_FAILED", "failed-to-query-provider-health-statistics", nil)
+			return
+		}
+		checks = append(checks, rec)
+	}
+
+	adminOK(w, map[string]any{
+		"account_id":           accountID.String(),
+		"provider":             provider,
+		"name":                 name,
+		"current_status":       currentStatus,
+		"current_reason":       currentReason,
+		"current_http_status":  currentHTTPStatus,
+		"current_latency_ms":   currentLatencyMS,
+		"current_proxy_name":   currentProxyName,
+		"current_error_detail": currentError,
+		"consecutive_failures": consecutiveFailures,
+		"last_checked_at":      lastCheckedAt,
+		"last_healthy_at":      lastHealthyAt,
+		"availability_24h":     avail24h,
+		"availability_7d":      avail7d,
+		"avg_latency_ms_24h":   avgLatency24h,
+		"p95_latency_ms_24h":   p95Latency24h,
+		"heartbeat_24h":        heartbeat,
+		"checks":               checks,
+	})
+}
+
+func (d ServerDeps) ProviderHealthSettings(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok || d.requirePermission(w, principal, auth.PermProviderRead) != nil {
+		return
+	}
+	settings, err := d.loadProviderHealthSettings(r.Context())
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "PROVIDER_HEALTH_SETTINGS_FAILED", "failed-to-query-provider-health-settings", nil)
+		return
+	}
+	adminOK(w, settings)
+}
+
+func (d ServerDeps) UpdateProviderHealthSettings(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok {
+		return
+	}
+	if !isPlatformAdmin(principal) {
+		adminError(w, http.StatusForbidden, "PERMISSION_DENIED", "platform-admin-permission-is-required", nil)
+		return
+	}
+	var body governance.ProviderHealthSettings
+	if !d.decodeJSON(w, r, &body) {
+		return
+	}
+	if body.IntervalSeconds < 60 || body.IntervalSeconds > 86400 ||
+		body.TimeoutSeconds < 3 || body.TimeoutSeconds > 60 ||
+		body.DegradedLatencyMS < 500 || body.DegradedLatencyMS > 60000 ||
+		body.FailureThreshold < 1 || body.FailureThreshold > 10 {
+		adminError(w, http.StatusBadRequest, "PROVIDER_HEALTH_SETTINGS_INVALID", "provider-health-settings-invalid", nil)
+		return
+	}
+	if d.Governance == nil {
+		adminError(w, http.StatusInternalServerError, "PROVIDER_HEALTH_SETTINGS_FAILED", "failed-to-update-provider-health-settings", nil)
+		return
+	}
+	before, _ := d.Governance.LoadProviderHealthSettings(r.Context())
+	saved, err := d.Governance.SaveProviderHealthSettings(r.Context(), body, principal.UserID)
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "PROVIDER_HEALTH_SETTINGS_FAILED", "failed-to-update-provider-health-settings", nil)
+		return
+	}
+	if err := writeAuditEvent(r.Context(), d.Pool, principal.OrganizationID, principal.UserID,
+		"provider_health.settings_updated", "provider_account", "health_settings",
+		before, saved); err != nil {
+		d.Logger.Warn("write provider health settings audit event failed", "error", err)
+	}
+	adminOK(w, saved)
+}
+
+func (d ServerDeps) loadProviderHealthSettings(ctx context.Context) (governance.ProviderHealthSettings, error) {
+	if d.Governance != nil {
+		return d.Governance.LoadProviderHealthSettings(ctx)
+	}
+	return governance.NewManager(d.Pool, d.MasterKey, d.Logger, nil).LoadProviderHealthSettings(ctx)
 }
 
 // CreateProviderAccount 创建 供应商账号并把 API Key 用主密钥加密入库。
@@ -483,9 +1002,14 @@ func (d ServerDeps) UpdateProviderAccount(w http.ResponseWriter, r *http.Request
 }
 
 type providerTestResult struct {
-	OK         bool   `json:"ok"`
-	Reason     string `json:"reason"`
-	StatusCode int    `json:"status_code,omitempty"`
+	OK         bool       `json:"ok"`
+	Status     string     `json:"status,omitempty"`
+	Reason     string     `json:"reason"`
+	StatusCode int        `json:"status_code,omitempty"`
+	LatencyMS  int        `json:"latency_ms,omitempty"`
+	ProxyName  *string    `json:"proxy_name,omitempty"`
+	Detail     string     `json:"detail,omitempty"`
+	CheckedAt  *time.Time `json:"checked_at,omitempty"`
 }
 
 type providerAccess struct {
@@ -530,8 +1054,7 @@ func (d ServerDeps) loadProviderAccess(ctx context.Context, organizationID, acco
 	return access, nil
 }
 
-// TestProviderAccount 用账号凭据向上游发起轻量列表请求,验证连通性与凭据有效性。
-// azure_openai/vertex/bedrock 的认证模型特殊,暂不支持在线测试。
+// TestProviderAccount 用账号凭据向上游发起轻量列表请求,验证连通性与凭据有效性,并将结果落库。
 func (d ServerDeps) TestProviderAccount(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
 	if !ok || d.requirePermission(w, principal, auth.PermProviderManage) != nil {
@@ -542,56 +1065,34 @@ func (d ServerDeps) TestProviderAccount(w http.ResponseWriter, r *http.Request) 
 		adminError(w, http.StatusBadRequest, "PROVIDER_ID_INVALID", "invalid-provider-account-id", nil)
 		return
 	}
-	access, err := d.loadProviderAccess(r.Context(), principal.OrganizationID, accountID)
+	gov := d.Governance
+	if gov == nil {
+		gov = governance.NewManager(d.Pool, d.MasterKey, d.Logger, d.Engine)
+	}
+	res, err := gov.ProbeAccount(r.Context(), principal.OrganizationID, accountID, "manual")
 	if errors.Is(err, pgx.ErrNoRows) {
 		adminError(w, http.StatusNotFound, "PROVIDER_NOT_FOUND", "provider-account-does-not-exist-is", nil)
 		return
 	}
-	if err != nil {
-		adminError(w, http.StatusInternalServerError, "PROVIDER_TEST_FAILED", "failed-to-read-credentials-check-the", nil)
+	if errors.Is(err, governance.ErrProviderTestUnsupported) {
+		adminError(w, http.StatusBadRequest, "PROVIDER_TEST_UNSUPPORTED", "provider-test-unsupported", nil)
 		return
 	}
-
-	client, err := providerHTTPClientFor(access.ProxyType, access.ProxyURL)
-	if err != nil {
-		adminError(w, http.StatusInternalServerError, "PROVIDER_TEST_FAILED", "failed-to-build-provider-proxy", nil)
-		return
-	}
-	testURL, headers, err := providerProbeRequest(access.Provider, access.BaseURL, access.APIKey)
-	if err != nil {
-		adminError(w, http.StatusBadRequest, "PROVIDER_TEST_UNSUPPORTED",
-			"provider-test-unsupported", nil)
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, testURL, nil)
 	if err != nil {
 		adminError(w, http.StatusInternalServerError, "PROVIDER_TEST_FAILED", "connectivity-test-failed", nil)
 		return
 	}
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		adminOK(w, providerTestResult{OK: false, Reason: "network_error"})
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		adminOK(w, providerTestResult{OK: true, Reason: "connected", StatusCode: resp.StatusCode})
-		return
-	}
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		adminOK(w, providerTestResult{OK: false, Reason: "credentials_rejected", StatusCode: resp.StatusCode})
-		return
-	}
-	if resp.StatusCode == http.StatusNotFound {
-		adminOK(w, providerTestResult{OK: false, Reason: "v1_suffix_suspected", StatusCode: resp.StatusCode})
-		return
-	}
-	adminOK(w, providerTestResult{OK: false, Reason: "upstream_http_error", StatusCode: resp.StatusCode})
+	checkedAt := res.CheckedAt
+	adminOK(w, providerTestResult{
+		OK:         res.OK,
+		Status:     res.Status,
+		Reason:     res.Reason,
+		StatusCode: res.StatusCode,
+		LatencyMS:  res.LatencyMS,
+		ProxyName:  res.ProxyName,
+		Detail:     res.Detail,
+		CheckedAt:  &checkedAt,
+	})
 }
 
 // baseURLHasV1Suffix 判断 base_url 的路径是否以 /v1 结尾。
@@ -606,38 +1107,4 @@ func baseURLHasV1Suffix(baseURL *string) bool {
 		return false
 	}
 	return parsed.Path == "/v1" || strings.HasSuffix(parsed.Path, "/v1")
-}
-
-// providerProbeRequest 按 provider 构造轻量探测请求;不支持的 provider 返回错误。
-// 探测路径必须与数据面真实调用同前缀(openai 为 base + /v1/chat/completions,
-// anthropic 为 base + /v1/messages),否则会像旧版探测 /models 一样出现"测试通过但调用 404"。
-func providerProbeRequest(provider string, baseURL *string, apiKey string) (string, map[string]string, error) {
-	switch provider {
-	case "openai", "openai_compatible":
-		base := "https://api.openai.com"
-		if baseURL != nil && *baseURL != "" {
-			base = strings.TrimRight(*baseURL, "/")
-		}
-		return base + "/v1/models", map[string]string{"Authorization": "Bearer " + apiKey}, nil
-	case "anthropic":
-		base := "https://api.anthropic.com"
-		if baseURL != nil && *baseURL != "" {
-			base = strings.TrimRight(*baseURL, "/")
-		}
-		return base + "/v1/models", map[string]string{
-			"x-api-key":         apiKey,
-			"anthropic-version": "2023-06-01",
-		}, nil
-	case "gemini":
-		return "https://generativelanguage.googleapis.com/v1beta/models", map[string]string{"x-goog-api-key": apiKey}, nil
-	default:
-		if vendor := bifrostx.VendorByID(provider); vendor != nil {
-			base := vendor.BaseURL
-			if baseURL != nil && *baseURL != "" {
-				base = strings.TrimRight(*baseURL, "/")
-			}
-			return base + vendor.ModelsPath(), map[string]string{"Authorization": "Bearer " + apiKey}, nil
-		}
-		return "", nil, fmt.Errorf("provider %s does not support online probe", provider)
-	}
 }

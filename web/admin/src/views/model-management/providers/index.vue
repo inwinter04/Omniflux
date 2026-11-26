@@ -1,13 +1,40 @@
 <script setup lang="ts">
 import { computed, h, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { NButton, NDropdown, NPopconfirm, NSpace, NTag } from 'naive-ui';
-import type { DataTableColumns, FormInst, FormRules, SelectGroupOption } from 'naive-ui';
+import {
+  NAlert,
+  NButton,
+  NCard,
+  NDataTable,
+  NDescriptions,
+  NDescriptionsItem,
+  NDrawer,
+  NDrawerContent,
+  NDropdown,
+  NEmpty,
+  NForm,
+  NFormItem,
+  NGrid,
+  NGi,
+  NInput,
+  NInputNumber,
+  NModal,
+  NProgress,
+  NSelect,
+  NSpace,
+  NSpin,
+  NSwitch,
+  NTag,
+  NText
+} from 'naive-ui';
+import type { DataTableColumns, DropdownOption, FormInst, FormRules, SelectGroupOption } from 'naive-ui';
+import AvailabilityBar from '@/components/common/availability-bar.vue';
 import {
   formatTime,
   healthStatusText,
   healthSummary,
   healthTagType,
+  probeReasonText,
   statusTagType,
   statusText
 } from '@/utils/admin-status';
@@ -16,13 +43,17 @@ import { providerFamilyLabel, providerGroupLabel, providerVersionLabel } from '@
 import {
   fetchCreateProviderAccount,
   fetchDeleteProviderAccount,
+  fetchProviderAccountHealthHistory,
   fetchProviderAccounts,
+  fetchProviderAvailability,
   fetchProviderBalance,
   fetchProviderCatalog,
   fetchProviderModels,
+  fetchTestAllProviderAccounts,
   fetchTestProviderAccount,
   fetchUpdateProviderAccount,
-  fetchUpdateProviderAccountStatus
+  fetchUpdateProviderAccountStatus,
+  fetchUpdateProviderHealthSettings
 } from '@/service/api';
 import { $t } from '@/locales';
 import { usePermission } from '@/hooks/common/permission';
@@ -33,10 +64,10 @@ const { has, isPlatformAdmin } = usePermission();
 const canManage = computed(() => has('provider:manage'));
 
 function providerTestMessage(result: Api.Management.ProviderTestResult) {
-  if (result.reason === 'network_error') {
-    return $t('business.providerTestNetworkError', { detail: result.detail ?? '' });
+  if (result.reason === 'network_error' || result.reason === 'proxy_error') {
+    return $t('business.providerTestNetworkError', { detail: result.detail ?? probeReasonText(result.reason) });
   }
-  if (result.reason === 'connected') {
+  if (result.reason === 'connected' || result.reason === 'slow_response') {
     return $t('business.providerTestConnected', { status: result.status_code ?? 0 });
   }
   if (result.reason === 'credentials_rejected') {
@@ -46,7 +77,7 @@ function providerTestMessage(result: Api.Management.ProviderTestResult) {
   if (result.reason === 'upstream_http_error') {
     return $t('business.providerTestUpstreamHTTPError', { status: result.status_code ?? 0 });
   }
-  return $t('business.providerTestUnknown');
+  return result.reason ? probeReasonText(result.reason) : $t('business.providerTestUnknown');
 }
 
 const route = useRoute();
@@ -68,7 +99,11 @@ const vendorOptions = computed<SelectGroupOption[]>(() =>
 );
 
 const loading = ref(true);
+const testingAll = ref(false);
 const list = ref<Api.Management.ProviderAccount[]>([]);
+const availabilityOverview = ref<Api.Management.ProviderAvailabilityOverview | null>(null);
+const selectedProviderFilter = ref<string | null>(null);
+
 const showCreate = ref(false);
 const showEdit = ref(false);
 const submitting = ref(false);
@@ -92,6 +127,22 @@ const editModel = reactive({
   billing_currency: 'USD',
   api_key: ''
 });
+
+const showHealthSettings = ref(false);
+const savingHealthSettings = ref(false);
+const healthSettings = reactive<Api.Management.ProviderHealthSettings>({
+  enabled: true,
+  interval_seconds: 300,
+  timeout_seconds: 15,
+  degraded_latency_ms: 5000,
+  failure_threshold: 2
+});
+
+const showHealthDrawer = ref(false);
+const healthHistoryLoading = ref(false);
+const healthHistory = ref<Api.Management.ProviderAccountHealthHistory | null>(null);
+const healthDrawerAccountID = ref('');
+
 const formRules = computed<FormRules>(() => ({
   provider: {
     required: true,
@@ -117,11 +168,20 @@ const editRules = computed<FormRules>(() => ({
   }
 }));
 
+const filteredAccounts = computed(() => {
+  if (!selectedProviderFilter.value) return list.value;
+  return list.value.filter(item => item.provider === selectedProviderFilter.value);
+});
 
 function proxyTypeText(value: Api.Management.ProviderProxyType) {
   if (value === 'http') return $t('business.proxy-http');
   if (value === 'socks5') return $t('business.proxy-socks5');
   return $t('business.proxy-none');
+}
+
+function formatAvail(val: number | null) {
+  if (val === null || val === undefined) return '-';
+  return `${Math.round(val * 10) / 10}%`;
 }
 
 const selectedVendor = computed(() => findVendor(formModel.provider));
@@ -166,12 +226,82 @@ function openApiKeyUrl() {
   if (selectedVendor.value?.api_key_url) window.open(selectedVendor.value.api_key_url, '_blank', 'noopener,noreferrer');
 }
 
-// 列顺序把状态、健康等关键信息排在前面:列多于一屏宽度时,这些列在常见窗口下仍然可见,其余列横向滚动查看。
+function toggleProviderFilter(provider: string) {
+  selectedProviderFilter.value = selectedProviderFilter.value === provider ? null : provider;
+}
+
+const overviewMoreOptions = computed<DropdownOption[]>(() => {
+  if (!isPlatformAdmin.value) return [];
+  return [
+    { label: $t('business.health-check-settings'), key: 'health-settings' },
+    { label: $t('business.proxy-governance'), key: 'proxy-governance' }
+  ];
+});
+
+function handleOverviewMoreAction(key: string | number) {
+  if (key === 'health-settings') showHealthSettings.value = true;
+  else if (key === 'proxy-governance') void router.push('/system/proxies');
+}
+
+function rowMoreOptions(row: Api.Management.ProviderAccount): DropdownOption[] {
+  const options: DropdownOption[] = [
+    { label: $t('business.test'), key: 'test' },
+    { label: $t('business.availability-details'), key: 'availability' }
+  ];
+  if (findVendor(row.provider)?.balance_kind) {
+    options.push({ label: $t('business.query-balance'), key: 'balance' });
+  }
+  options.push(
+    { type: 'divider', key: 'divider-lifecycle' },
+    { label: row.status === 'active' ? $t('business.disabled') : $t('business.enable'), key: 'toggle-status' },
+    { label: $t('business.delete-account'), key: 'delete', props: { style: { color: '#d03050' } } }
+  );
+  return options;
+}
+
+function handleRowMoreAction(key: string | number, row: Api.Management.ProviderAccount) {
+  if (key === 'test') {
+    void handleTest(row);
+    return;
+  }
+  if (key === 'availability') {
+    void openHealthHistory(row.id);
+    return;
+  }
+  if (key === 'balance') {
+    void handleBalance(row);
+    return;
+  }
+  if (key === 'toggle-status') {
+    if (row.status === 'active') {
+      window.$dialog?.warning({
+        title: $t('business.disabled'),
+        content: $t('business.provider-account-disable-confirm'),
+        positiveText: $t('common.confirm'),
+        negativeText: $t('common.cancel'),
+        onPositiveClick: () => toggleStatus(row)
+      });
+    } else {
+      void toggleStatus(row);
+    }
+    return;
+  }
+  if (key === 'delete') {
+    window.$dialog?.warning({
+      title: $t('business.delete-account'),
+      content: $t('common.confirmDelete'),
+      positiveText: $t('common.confirm'),
+      negativeText: $t('common.cancel'),
+      onPositiveClick: () => handleDelete(row.id)
+    });
+  }
+}
+
 const columns = computed<DataTableColumns<Api.Management.ProviderAccount>>(() => [
   {
     title: $t('business.provider-account-overview'),
     key: 'name',
-    minWidth: 220,
+    minWidth: 200,
     render: row =>
       h('div', { class: 'flex flex-col gap-2px' }, [
         h('span', { class: 'font-medium' }, row.name),
@@ -181,7 +311,7 @@ const columns = computed<DataTableColumns<Api.Management.ProviderAccount>>(() =>
   {
     title: $t('business.status-health'),
     key: 'status',
-    width: 150,
+    width: 170,
     render: row =>
       h('div', { class: 'flex flex-col items-start gap-4px' }, [
         h(
@@ -202,9 +332,36 @@ const columns = computed<DataTableColumns<Api.Management.ProviderAccount>>(() =>
       ])
   },
   {
+    title: $t('business.availability-24h'),
+    key: 'availability_24h',
+    width: 240,
+    render: row =>
+      h(
+        'div',
+        { class: 'flex cursor-pointer flex-col gap-4px', onClick: () => openHealthHistory(row.id) },
+        [
+          h('div', { class: 'flex items-center gap-6px text-12px' }, [
+            h('span', { class: 'font-medium' }, formatAvail(row.availability_24h)),
+            row.active_check_latency_ms !== null && row.active_check_latency_ms !== undefined
+              ? h('span', { class: 'text-#6b7280' }, $t('business.latencyMs', { value: row.active_check_latency_ms }))
+              : null,
+            row.active_check_reason && row.active_check_reason !== 'connected'
+              ? h('span', { class: 'text-#d03050 truncate max-w-120px' }, probeReasonText(row.active_check_reason))
+              : null
+          ]),
+          h(AvailabilityBar, { buckets: row.heartbeat_24h, compact: true }),
+          h(
+            'span',
+            { class: 'text-11px text-#9ca3af' },
+            row.last_checked_at ? `${$t('business.last-checked-at')}: ${formatTime(row.last_checked_at)}` : $t('business.not-verified')
+          )
+        ]
+      )
+  },
+  {
     title: $t('business.version-region'),
     key: 'version',
-    width: 170,
+    width: 150,
     render: row =>
       h('div', { class: 'flex flex-col gap-2px' }, [
         h('span', {}, providerVersionLabel(findVendor(row.provider))),
@@ -214,35 +371,55 @@ const columns = computed<DataTableColumns<Api.Management.ProviderAccount>>(() =>
   {
     title: $t('business.settlement-currency'),
     key: 'billing_currency',
-    width: 110,
+    width: 95,
     render: row => h('span', {}, row.billing_currency)
   },
   {
     title: $t('business.proxy'),
     key: 'proxy_type',
-    width: 100,
-    render: row => h('span', {}, proxyTypeText(row.proxy_type))
+    width: 180,
+    render: row =>
+      row.proxy_type === 'none'
+        ? h('span', { class: 'text-#6b7280' }, proxyTypeText(row.proxy_type))
+        : h('div', { class: 'flex flex-col gap-2px' }, [
+            h('div', { class: 'flex items-center gap-4px' }, [
+              h(
+                NTag,
+                { size: 'tiny', round: true, type: healthTagType(row.proxy_status) },
+                { default: () => row.proxy_name || proxyTypeText(row.proxy_type) }
+              )
+            ]),
+            h(
+              'span',
+              { class: 'text-11px text-#6b7280' },
+              `${proxyTypeText(row.proxy_type)} · ${$t('business.pool-size-count', { count: row.proxy_pool_size })}`
+            )
+          ])
   },
   {
     title: $t('business.api-endpoint'),
     key: 'base_url',
-    minWidth: 260,
+    minWidth: 230,
     render: row => h('span', { class: 'break-all' }, row.base_url ?? findVendor(row.provider)?.api_base_url ?? '-')
   },
   {
     title: $t('business.actions'),
     key: 'actions',
-    width: 300,
-    // 操作列固定在右侧:列多于一屏宽度时,行内操作不用横向滚动也能点到。
+    width: 200,
     fixed: 'right',
     render(row) {
-      if (!canManage.value) return '';
-      const moreOptions = [{ label: $t('business.delete-account'), key: 'delete' }];
-      if (findVendor(row.provider)?.balance_kind)
-        moreOptions.unshift({
-          label: $t('business.query-balance'),
-          key: 'balance'
-        });
+      if (!canManage.value) {
+        return h(
+          NButton,
+          {
+            size: 'small',
+            quaternary: true,
+            onClick: () => openHealthHistory(row.id)
+          },
+          { default: () => $t('business.availability-details') }
+        );
+      }
+
       return h(
         NSpace,
         { size: 4 },
@@ -250,60 +427,20 @@ const columns = computed<DataTableColumns<Api.Management.ProviderAccount>>(() =>
           default: () => [
             h(
               NButton,
-              {
-                size: 'small',
-                quaternary: true,
-                type: 'primary',
-                onClick: () => openEdit(row)
-              },
-              { default: () => $t('business.edit') }
-            ),
-            h(
-              NButton,
-              {
-                size: 'small',
-                quaternary: true,
-                type: 'primary',
-                onClick: () => openModels(row)
-              },
+              { size: 'small', quaternary: true, type: 'primary', onClick: () => openModels(row) },
               { default: () => $t('business.model') }
             ),
             h(
               NButton,
-              {
-                size: 'small',
-                quaternary: true,
-                type: 'info',
-                onClick: () => handleTest(row)
-              },
-              { default: () => $t('business.test') }
+              { size: 'small', quaternary: true, type: 'primary', onClick: () => openEdit(row) },
+              { default: () => $t('business.edit') }
             ),
-            // 停用会立即影响线上调用,需要确认;启用直接执行。
-            row.status === 'active'
-              ? h(
-                  NPopconfirm,
-                  { onPositiveClick: () => toggleStatus(row) },
-                  {
-                    trigger: () =>
-                      h(NButton, { size: 'small', quaternary: true, type: 'warning' }, { default: () => $t('business.disabled') }),
-                    default: () => $t('business.provider-account-disable-confirm')
-                  }
-                )
-              : h(
-                  NButton,
-                  {
-                    size: 'small',
-                    quaternary: true,
-                    type: 'success',
-                    onClick: () => toggleStatus(row)
-                  },
-                  { default: () => $t('business.enable') }
-                ),
             h(
               NDropdown,
               {
-                options: moreOptions,
-                onSelect: key => (key === 'delete' ? handleDelete(row.id) : handleBalance(row))
+                trigger: 'click',
+                options: rowMoreOptions(row),
+                onSelect: key => handleRowMoreAction(key, row)
               },
               {
                 default: () => h(NButton, { size: 'small', quaternary: true }, { default: () => $t('business.more') })
@@ -315,6 +452,65 @@ const columns = computed<DataTableColumns<Api.Management.ProviderAccount>>(() =>
     }
   }
 ]);
+
+const checkHistoryColumns = computed<DataTableColumns<Api.Management.ProviderAccountHealthCheckRecord>>(() => [
+  {
+    title: $t('business.time'),
+    key: 'checked_at',
+    width: 170,
+    render: row => formatTime(row.checked_at)
+  },
+  {
+    title: $t('business.check-trigger'),
+    key: 'trigger',
+    width: 100,
+    render: row =>
+      h(
+        NTag,
+        { size: 'tiny', round: true, type: row.trigger === 'manual' ? 'info' : 'default' },
+        { default: () => (row.trigger === 'manual' ? $t('business.trigger-manual') : $t('business.trigger-auto')) }
+      )
+  },
+  {
+    title: $t('business.probe-status'),
+    key: 'status',
+    width: 90,
+    render: row =>
+      h(NTag, { size: 'small', round: true, type: healthTagType(row.status) }, { default: () => healthStatusText(row.status) })
+  },
+  {
+    title: $t('business.http-status-code'),
+    key: 'http_status',
+    width: 95,
+    render: row => (row.http_status !== null ? String(row.http_status) : '-')
+  },
+  {
+    title: $t('business.latency'),
+    key: 'latency_ms',
+    width: 95,
+    render: row => (row.latency_ms !== null ? $t('business.latencyMs', { value: row.latency_ms }) : '-')
+  },
+  {
+    title: $t('business.proxy-used'),
+    key: 'proxy_name',
+    width: 130,
+    render: row => row.proxy_name || $t('business.direct-connection')
+  },
+  {
+    title: $t('business.probe-reason'),
+    key: 'reason',
+    minWidth: 160,
+    render: row => probeReasonText(row.reason)
+  },
+  {
+    title: $t('business.error-detail'),
+    key: 'error_detail',
+    minWidth: 180,
+    ellipsis: { tooltip: true },
+    render: row => row.error_detail || '-'
+  }
+]);
+
 async function loadCatalog() {
   catalogLoading.value = true;
   try {
@@ -328,8 +524,12 @@ async function loadCatalog() {
 async function loadData() {
   loading.value = true;
   try {
-    const { data, error } = await fetchProviderAccounts();
-    if (!error && data) list.value = data;
+    const [accountsRes, availRes] = await Promise.all([fetchProviderAccounts(), fetchProviderAvailability()]);
+    if (!accountsRes.error && accountsRes.data) list.value = accountsRes.data;
+    if (!availRes.error && availRes.data) {
+      availabilityOverview.value = availRes.data;
+      if (availRes.data.settings) Object.assign(healthSettings, availRes.data.settings);
+    }
   } finally {
     loading.value = false;
   }
@@ -419,6 +619,57 @@ async function handleTest(row: Api.Management.ProviderAccount) {
   if (!error && data) {
     if (data.ok) window.$message?.success(providerTestMessage(data));
     else window.$message?.error(providerTestMessage(data));
+    await loadData();
+    if (showHealthDrawer.value && healthDrawerAccountID.value === row.id) {
+      await openHealthHistory(row.id);
+    }
+  }
+}
+
+async function handleTestAll() {
+  testingAll.value = true;
+  try {
+    const { data, error } = await fetchTestAllProviderAccounts();
+    if (!error && data) {
+      window.$message?.success(
+        $t('business.batch-test-finished', {
+          checked: data.checked,
+          healthy: data.healthy,
+          degraded: data.degraded,
+          unhealthy: data.unhealthy
+        })
+      );
+      await loadData();
+    }
+  } finally {
+    testingAll.value = false;
+  }
+}
+
+async function openHealthHistory(accountID: string) {
+  healthDrawerAccountID.value = accountID;
+  showHealthDrawer.value = true;
+  healthHistoryLoading.value = true;
+  try {
+    const { data, error } = await fetchProviderAccountHealthHistory(accountID, 50);
+    if (!error && data) healthHistory.value = data;
+  } finally {
+    healthHistoryLoading.value = false;
+  }
+}
+
+async function handleSaveHealthSettings() {
+  savingHealthSettings.value = true;
+  try {
+    const { data, error } = await fetchUpdateProviderHealthSettings({ ...healthSettings });
+    if (!error && data) {
+      Object.assign(healthSettings, data);
+      window.$message?.success($t('business.provider-health-settings-saved'));
+      showHealthSettings.value = false;
+      await loadData();
+    }
+  } finally {
+    savingHealthSettings.value = false;
   }
 }
 
@@ -562,23 +813,127 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="min-h-full bg-#f6f7f9 p-4px dark:bg-#101014">
+  <div class="flex flex-col gap-16px bg-#f6f7f9 p-4px dark:bg-#101014">
+    <NCard :title="$t('business.provider-availability-overview')" :bordered="false" class="card-wrapper">
+      <template #header-extra>
+        <NSpace align="center">
+          <NTag size="small" :type="healthSettings.enabled ? 'success' : 'default'" round>
+            {{
+              healthSettings.enabled
+                ? $t('business.auto-check-active', { seconds: healthSettings.interval_seconds })
+                : $t('business.auto-check-paused')
+            }}
+          </NTag>
+          <NButton v-if="canManage" secondary type="info" size="small" :loading="testingAll" @click="handleTestAll">
+            {{ $t('business.test-all-accounts') }}
+          </NButton>
+          <NDropdown
+            v-if="overviewMoreOptions.length"
+            trigger="click"
+            :options="overviewMoreOptions"
+            @select="handleOverviewMoreAction"
+          >
+            <NButton quaternary size="small">{{ $t('business.more') }}</NButton>
+          </NDropdown>
+        </NSpace>
+      </template>
+
+      <div v-if="availabilityOverview" class="mb-12px flex flex-wrap items-center justify-between gap-8px">
+        <NSpace align="center" size="small">
+          <NTag type="info" round size="small">
+            {{ $t('business.overall-availability-24h') }}:
+            {{ formatAvail(availabilityOverview.summary.overall_availability_24h) }}
+          </NTag>
+          <NTag type="success" round size="small">
+            {{ $t('business.healthy') }}: {{ availabilityOverview.summary.healthy_accounts }}
+          </NTag>
+          <NTag v-if="availabilityOverview.summary.degraded_accounts > 0" type="warning" round size="small">
+            {{ $t('business.degraded') }}: {{ availabilityOverview.summary.degraded_accounts }}
+          </NTag>
+          <NTag v-if="availabilityOverview.summary.unhealthy_accounts > 0" type="error" round size="small">
+            {{ $t('business.unhealthy') }}: {{ availabilityOverview.summary.unhealthy_accounts }}
+          </NTag>
+          <NText depth="3" class="text-12px">{{ $t('business.filter-by-provider-hint') }}</NText>
+        </NSpace>
+        <NButton
+          v-if="selectedProviderFilter"
+          size="tiny"
+          type="primary"
+          secondary
+          @click="selectedProviderFilter = null"
+        >
+          {{ $t('business.clear-provider-filter', { provider: providerLabel(selectedProviderFilter) }) }}
+        </NButton>
+      </div>
+
+      <NEmpty v-if="!loading && !(availabilityOverview?.providers?.length)" :description="$t('business.no-data')" />
+
+      <NGrid v-else cols="1 s:2 m:3 l:4" responsive="screen" :x-gap="12" :y-gap="12">
+        <NGi v-for="item in availabilityOverview?.providers ?? []" :key="item.provider">
+          <NCard
+            size="small"
+            embedded
+            class="cursor-pointer transition-all"
+            :class="selectedProviderFilter === item.provider ? 'ring-2 ring-#18a058' : ''"
+            @click="toggleProviderFilter(item.provider)"
+          >
+            <div class="flex items-center justify-between gap-8px">
+              <span class="truncate font-semibold">{{ providerLabel(item.provider) }}</span>
+              <NTag size="tiny" round :type="healthTagType(item.health_status)">
+                {{ healthStatusText(item.health_status) }}
+              </NTag>
+            </div>
+
+            <div class="mt-8px flex items-baseline justify-between gap-8px">
+              <span class="text-20px font-semibold">{{ formatAvail(item.availability_24h) }}</span>
+              <span class="text-12px text-#6b7280">
+                {{
+                  $t('business.accounts-healthy-ratio', {
+                    healthy: item.healthy_accounts,
+                    total: item.total_accounts
+                  })
+                }}
+              </span>
+            </div>
+
+            <div class="mt-6px">
+              <AvailabilityBar :buckets="item.heartbeat_24h" compact />
+            </div>
+
+            <div class="mt-8px flex flex-wrap items-center justify-between gap-4px text-12px text-#6b7280">
+              <span>
+                {{
+                  item.avg_latency_ms_24h !== null
+                    ? $t('business.latencyMs', { value: Math.round(item.avg_latency_ms_24h) })
+                    : '-'
+                }}
+              </span>
+              <span>
+                {{
+                  item.active_proxy_name
+                    ? `${item.active_proxy_name} (${item.proxy_pool_size})`
+                    : $t('business.direct-connection')
+                }}
+              </span>
+            </div>
+          </NCard>
+        </NGi>
+      </NGrid>
+    </NCard>
+
     <NCard :title="$t('business.provider-account')" :bordered="false" class="card-wrapper">
       <template #header-extra>
         <NSpace>
-          <NButton v-if="isPlatformAdmin" type="primary" quaternary @click="router.push('/system/proxies')">
-            {{ $t('business.proxy-governance') }}
-          </NButton>
           <NButton quaternary type="primary" :loading="loading" @click="loadData">{{ $t('business.refresh') }}</NButton>
           <NButton v-if="canManage" type="primary" @click="openCreate">{{ $t('business.create-account') }}</NButton>
         </NSpace>
       </template>
       <NDataTable
         :columns="columns"
-        :data="list"
+        :data="filteredAccounts"
         :loading="loading"
         :bordered="false"
-        :scroll-x="1310"
+        :scroll-x="1400"
         :row-key="row => row.id"
       />
     </NCard>
@@ -742,5 +1097,109 @@ onMounted(async () => {
         <NEmpty v-if="!balanceLoading && !balanceRows.length" :description="$t('business.no-balance-or-limit-data')" />
       </NSpin>
     </NModal>
+
+    <NModal v-model:show="showHealthSettings" preset="card" :title="$t('business.health-check-settings')" class="w-600px">
+      <NAlert type="info" :bordered="false" class="mb-16px">
+        {{ $t('business.provider-health-settings-hint') }}
+      </NAlert>
+      <NForm :model="healthSettings" label-placement="left" label-width="220">
+        <NFormItem :label="$t('business.enable-auto-health-check')">
+          <NSwitch v-model:value="healthSettings.enabled" />
+        </NFormItem>
+        <NFormItem :label="$t('business.check-interval-seconds')">
+          <NInputNumber v-model:value="healthSettings.interval_seconds" :min="60" :max="86400" class="w-full" />
+        </NFormItem>
+        <NFormItem :label="$t('business.check-timeout-seconds')">
+          <NInputNumber v-model:value="healthSettings.timeout_seconds" :min="3" :max="60" class="w-full" />
+        </NFormItem>
+        <NFormItem :label="$t('business.degraded-latency-ms')">
+          <NInputNumber v-model:value="healthSettings.degraded_latency_ms" :min="500" :max="60000" class="w-full" />
+        </NFormItem>
+        <NFormItem :label="$t('business.failure-threshold')">
+          <NInputNumber v-model:value="healthSettings.failure_threshold" :min="1" :max="10" class="w-full" />
+        </NFormItem>
+      </NForm>
+      <template #footer>
+        <NSpace justify="end">
+          <NButton @click="showHealthSettings = false">{{ $t('business.cancel') }}</NButton>
+          <NButton type="primary" :loading="savingHealthSettings" @click="handleSaveHealthSettings">
+            {{ $t('business.save') }}
+          </NButton>
+        </NSpace>
+      </template>
+    </NModal>
+
+    <NDrawer v-model:show="showHealthDrawer" :width="880">
+      <NDrawerContent
+        :title="healthHistory ? $t('business.availability-diagnostics-title', { name: healthHistory.name }) : $t('business.availability-details')"
+        closable
+      >
+        <NSpin :show="healthHistoryLoading">
+          <template v-if="healthHistory">
+            <div class="mb-12px flex flex-wrap items-center justify-between gap-8px">
+              <AvailabilityBar :buckets="healthHistory.heartbeat_24h" />
+              <NSpace>
+                <NButton
+                  v-if="canManage"
+                  size="small"
+                  type="info"
+                  @click="handleTest({ id: healthHistory.account_id } as Api.Management.ProviderAccount)"
+                >
+                  {{ $t('business.test-now') }}
+                </NButton>
+                <NButton size="small" quaternary type="primary" @click="openHealthHistory(healthHistory.account_id)">
+                  {{ $t('business.refresh') }}
+                </NButton>
+              </NSpace>
+            </div>
+
+            <NAlert v-if="healthHistory.current_error_detail" type="warning" :bordered="false" class="mb-12px">
+              {{ probeReasonText(healthHistory.current_reason) }}: {{ healthHistory.current_error_detail }}
+            </NAlert>
+
+            <NDescriptions :column="3" size="small" bordered class="mb-16px">
+              <NDescriptionsItem :label="$t('business.probe-status')">
+                <NTag size="small" round :type="healthTagType(healthHistory.current_status)">
+                  {{ healthStatusText(healthHistory.current_status) }}
+                </NTag>
+              </NDescriptionsItem>
+              <NDescriptionsItem :label="$t('business.availability-24h')">
+                {{ formatAvail(healthHistory.availability_24h) }}
+              </NDescriptionsItem>
+              <NDescriptionsItem :label="$t('business.availability-7d')">
+                {{ formatAvail(healthHistory.availability_7d) }}
+              </NDescriptionsItem>
+              <NDescriptionsItem :label="$t('business.avgLatency24h')">
+                {{
+                  healthHistory.avg_latency_ms_24h !== null
+                    ? $t('business.latencyMs', { value: Math.round(healthHistory.avg_latency_ms_24h) })
+                    : '-'
+                }}
+              </NDescriptionsItem>
+              <NDescriptionsItem :label="$t('business.p95-latency-24h')">
+                {{
+                  healthHistory.p95_latency_ms_24h !== null
+                    ? $t('business.latencyMs', { value: Math.round(healthHistory.p95_latency_ms_24h) })
+                    : '-'
+                }}
+              </NDescriptionsItem>
+              <NDescriptionsItem :label="$t('business.proxy-used')">
+                {{ healthHistory.current_proxy_name || $t('business.direct-connection') }}
+              </NDescriptionsItem>
+            </NDescriptions>
+
+            <div class="mb-8px font-medium">{{ $t('business.check-history') }}</div>
+            <NDataTable
+              :columns="checkHistoryColumns"
+              :data="healthHistory.checks"
+              :row-key="row => row.id"
+              size="small"
+              :bordered="false"
+              :scroll-x="820"
+            />
+          </template>
+        </NSpin>
+      </NDrawerContent>
+    </NDrawer>
   </div>
 </template>

@@ -251,13 +251,100 @@ func TestIntegrationProviderProxyGovernance(t *testing.T) {
 	}
 
 	code, body = doJSON(t, admin, http.MethodPost, "/api/v1/proxies", map[string]any{
-		"provider_keys": []string{"openai"}, "name": "duplicate-provider", "proxy_type": "http", "proxy_url": "http://127.0.0.1:3129",
+		"bindings": []any{map[string]any{"provider_key": "openai", "priority": 2, "enabled": true}},
+		"name":     "secondary-openai-proxy", "proxy_type": "http", "proxy_url": "http://127.0.0.1:3129",
 	})
-	assertAssetStatus(t, code, body, http.StatusConflict)
-	if body["reason"] != "platform-proxy-provider-conflict" {
-		t.Fatalf("provider conflict = %#v", body)
+	assertAssetStatus(t, code, body, http.StatusOK)
+	secondProxyID := assetDataMap(t, body)["id"].(string)
+
+	code, body = doJSON(t, admin, http.MethodPut, "/api/v1/proxies/providers/openai/order", map[string]any{
+		"items": []any{
+			map[string]any{"proxy_id": secondProxyID, "priority": 1, "enabled": true},
+			map[string]any{"proxy_id": proxyID, "priority": 2, "enabled": true},
+		},
+	})
+	assertAssetStatus(t, code, body, http.StatusOK)
+
+	code, body = doJSON(t, admin, http.MethodPost, "/api/v1/proxies/providers/openai/switch", map[string]any{
+		"proxy_id": secondProxyID,
+	})
+	assertAssetStatus(t, code, body, http.StatusOK)
+	if assetDataMap(t, body)["trigger"] != "manual" {
+		t.Fatalf("switch event = %#v", body)
 	}
 
+	code, body = doJSON(t, admin, http.MethodGet, "/api/v1/proxies/failover-events?provider_key=openai", nil)
+	assertAssetStatus(t, code, body, http.StatusOK)
+	if events := body["data"].([]any); len(events) == 0 {
+		t.Fatalf("expected failover events for openai, got %#v", body)
+	}
+
+	code, body = doJSON(t, admin, http.MethodPatch, "/api/v1/proxies/settings", map[string]any{
+		"enabled":                     true,
+		"probe_interval_seconds":      60,
+		"fast_probe_interval_seconds": 10,
+		"probe_timeout_seconds":       8,
+		"fail_threshold":              3,
+		"recover_threshold":           3,
+		"switch_cooldown_seconds":     300,
+		"failback_mode":               "sticky",
+		"failback_soak_seconds":       1800,
+	})
+	assertAssetStatus(t, code, body, http.StatusOK)
+
 	code, body = doJSON(t, admin, http.MethodDelete, "/api/v1/proxies/"+proxyID, nil)
+	assertAssetStatus(t, code, body, http.StatusOK)
+	code, body = doJSON(t, admin, http.MethodDelete, "/api/v1/proxies/"+secondProxyID, nil)
+	assertAssetStatus(t, code, body, http.StatusOK)
+}
+
+func TestIntegrationProviderAvailabilityAndHealthHistory(t *testing.T) {
+	setupIntegration(t)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": []any{}})
+	}))
+	defer upstream.Close()
+
+	admin := sessionClient(t, "it-admin@test.local", "it-admin-password-123456")
+	code, body := doJSON(t, admin, http.MethodPost, "/api/v1/provider-accounts", map[string]any{
+		"provider": "openai_compatible", "name": "可用性测试账号", "base_url": upstream.URL, "api_key": "sk-avail-test",
+	})
+	assertAssetStatus(t, code, body, http.StatusOK)
+	accountID := assetDataMap(t, body)["id"].(string)
+
+	code, body = doJSON(t, admin, http.MethodPost, "/api/v1/provider-accounts/test-all", nil)
+	assertAssetStatus(t, code, body, http.StatusOK)
+	batch := assetDataMap(t, body)
+	if batch["healthy"].(float64) < 1 {
+		t.Fatalf("expected healthy account in batch test, got %#v", batch)
+	}
+
+	code, body = doJSON(t, admin, http.MethodGet, "/api/v1/provider-accounts/availability", nil)
+	assertAssetStatus(t, code, body, http.StatusOK)
+	avail := assetDataMap(t, body)
+	providers := avail["providers"].([]any)
+	if len(providers) == 0 {
+		t.Fatalf("expected provider availability items, got %#v", avail)
+	}
+
+	code, body = doJSON(t, admin, http.MethodGet, "/api/v1/provider-accounts/"+accountID+"/health-history", nil)
+	assertAssetStatus(t, code, body, http.StatusOK)
+	history := assetDataMap(t, body)
+	if history["current_status"] != "healthy" || len(history["checks"].([]any)) == 0 {
+		t.Fatalf("health history = %#v", history)
+	}
+
+	code, body = doJSON(t, admin, http.MethodPatch, "/api/v1/provider-health/settings", map[string]any{
+		"enabled":             true,
+		"interval_seconds":    300,
+		"timeout_seconds":     15,
+		"degraded_latency_ms": 5000,
+		"failure_threshold":   2,
+	})
 	assertAssetStatus(t, code, body, http.StatusOK)
 }

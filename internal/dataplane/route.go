@@ -67,7 +67,8 @@ func (h candidateHealth) successRate() float64 {
 
 // policyScores 汇总评分调度所需的历史统计;键是候选 ID。
 type policyScores struct {
-	Health map[uuid.UUID]candidateHealth
+	Health        map[uuid.UUID]candidateHealth
+	AccountHealth map[uuid.UUID]string // provider_account_id -> 主动探测状态
 }
 
 // routeChain 是按候选顺序排列的路由链,第一个是主候选,其余依次作为 fallback。
@@ -177,8 +178,37 @@ func selectChain(cands []candidate, policy routePolicy, scores *policyScores) ro
 	return chain
 }
 
-// orderGroup 对同优先级组排序:先按评分降序,再对并列者做加权随机补位。
+func isAccountUnhealthy(c candidate, scores *policyScores) bool {
+	if scores == nil || len(scores.AccountHealth) == 0 {
+		return false
+	}
+	return scores.AccountHealth[parseUUID(c.AccountID)] == "unhealthy"
+}
+
+// orderGroup 对同优先级组排序:主动探测异常的账号软降权到同组末尾，组内先按评分降序，再对并列者做加权随机补位。
 func orderGroup(group []candidate, policy routePolicy, scores *policyScores) []candidate {
+	if len(group) <= 1 {
+		return group
+	}
+	healthy := make([]candidate, 0, len(group))
+	unhealthy := make([]candidate, 0)
+	for _, c := range group {
+		if isAccountUnhealthy(c, scores) {
+			unhealthy = append(unhealthy, c)
+		} else {
+			healthy = append(healthy, c)
+		}
+	}
+	if len(healthy) == 0 || len(unhealthy) == 0 {
+		return scoreAndOrderGroup(group, group, policy, scores)
+	}
+	result := make([]candidate, 0, len(group))
+	result = append(result, scoreAndOrderGroup(healthy, group, policy, scores)...)
+	result = append(result, scoreAndOrderGroup(unhealthy, group, policy, scores)...)
+	return result
+}
+
+func scoreAndOrderGroup(group, all []candidate, policy routePolicy, scores *policyScores) []candidate {
 	if len(group) <= 1 {
 		return group
 	}
@@ -190,7 +220,7 @@ func orderGroup(group []candidate, policy routePolicy, scores *policyScores) []c
 		scored[i] = struct {
 			c     candidate
 			score float64
-		}{c, scoreOf(c, group, scores, policy.Weights)}
+		}{c, scoreOf(c, all, scores, policy.Weights)}
 	}
 	sort.SliceStable(scored, func(i, j int) bool { return scored[i].score > scored[j].score })
 

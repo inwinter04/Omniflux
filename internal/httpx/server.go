@@ -16,6 +16,7 @@ import (
 	"github.com/inwinter04/omniflux/internal/bifrostx"
 	"github.com/inwinter04/omniflux/internal/console"
 	"github.com/inwinter04/omniflux/internal/dataplane"
+	"github.com/inwinter04/omniflux/internal/governance"
 	"github.com/inwinter04/omniflux/internal/infra"
 	"github.com/inwinter04/omniflux/internal/mail"
 )
@@ -30,6 +31,7 @@ type ServerDeps struct {
 	MasterKey       []byte
 	APIKeyPepper    string
 	Mailer          mail.Sender
+	Governance      *governance.Manager
 	ReloadEngine    func(context.Context) error
 	RateLimitPerMin int
 }
@@ -68,11 +70,16 @@ func New(deps ServerDeps) http.Handler {
 	r.Handle("/admin/*", console.Handler())
 
 	// 数据面:OpenAI 兼容接口,由 API Key 认证。
+	var onTransportError func(string)
+	if deps.Governance != nil {
+		onTransportError = deps.Governance.ReportTransportError
+	}
 	plane := dataplane.Deps{
-		Logger:       deps.Logger,
-		Pool:         deps.Pool,
-		Engine:       deps.Engine,
-		APIKeyPepper: deps.APIKeyPepper,
+		Logger:           deps.Logger,
+		Pool:             deps.Pool,
+		Engine:           deps.Engine,
+		APIKeyPepper:     deps.APIKeyPepper,
+		OnTransportError: onTransportError,
 	}
 	plane.SetRateLimit(deps.Redis, deps.RateLimitPerMin)
 	r.Route("/v1", func(r chi.Router) {
@@ -138,16 +145,28 @@ func New(deps ServerDeps) http.Handler {
 			r.Get("/provider-catalog", deps.ProviderCatalog)
 			r.Get("/proxies", deps.PlatformProxies)
 			r.Post("/proxies", deps.CreatePlatformProxy)
+			r.Get("/proxies/settings", deps.ProxyGovernanceSettings)
+			r.Patch("/proxies/settings", deps.UpdateProxyGovernanceSettings)
+			r.Get("/proxies/failover-events", deps.ProxyFailoverEvents)
+			r.Put("/proxies/providers/{providerKey}/order", deps.UpdateProviderProxyOrder)
+			r.Post("/proxies/providers/{providerKey}/switch", deps.SwitchProviderProxy)
+			r.Post("/proxies/providers/{providerKey}/probe", deps.ProbeProviderProxies)
 			r.Patch("/proxies/{id}", deps.UpdatePlatformProxy)
 			r.Delete("/proxies/{id}", deps.DeletePlatformProxy)
+			r.Post("/proxies/{id}/test", deps.TestPlatformProxy)
 			r.Get("/provider-accounts", deps.ProviderAccounts)
+			r.Get("/provider-accounts/availability", deps.ProviderAccountsAvailability)
+			r.Post("/provider-accounts/test-all", deps.TestAllProviderAccounts)
 			r.Post("/provider-accounts", deps.CreateProviderAccount)
 			r.Patch("/provider-accounts/{id}", deps.UpdateProviderAccount)
 			r.Post("/provider-accounts/{id}/test", deps.TestProviderAccount)
+			r.Get("/provider-accounts/{id}/health-history", deps.ProviderAccountHealthHistory)
 			r.Get("/provider-accounts/{id}/models", deps.ProviderModels)
 			r.Patch("/provider-accounts/{id}/status", deps.UpdateProviderAccountStatus)
 			r.Get("/provider-accounts/{id}/balance", deps.ProviderAccountBalance)
 			r.Delete("/provider-accounts/{id}", deps.DeleteProviderAccount)
+			r.Get("/provider-health/settings", deps.ProviderHealthSettings)
+			r.Patch("/provider-health/settings", deps.UpdateProviderHealthSettings)
 			r.Get("/route-policies", deps.RoutePolicies)
 			r.Post("/route-policies", deps.CreateRoutePolicy)
 			r.Patch("/route-policies/{id}", deps.UpdateRoutePolicy)

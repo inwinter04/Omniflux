@@ -49,7 +49,10 @@ export function healthStatusText(status: string) {
   const labels: Record<string, string> = {
     healthy: $t('business.healthy'),
     degraded: $t('business.degraded'),
+    suspect: $t('business.proxy-suspect'),
     unhealthy: $t('business.unhealthy'),
+    unknown: $t('business.not-verified'),
+    unsupported: $t('business.unsupported'),
     no_data: $t('business.not-verified'),
     no_candidates: $t('business.no-candidates-configured'),
     disabled: $t('business.disabled-e5ola')
@@ -59,9 +62,57 @@ export function healthStatusText(status: string) {
 
 export function healthTagType(status: string): 'success' | 'warning' | 'error' | 'info' | 'default' {
   if (status === 'healthy') return 'success';
-  if (status === 'degraded' || status === 'no_data') return 'warning';
+  if (status === 'degraded' || status === 'suspect' || status === 'no_data' || status === 'unknown') return 'warning';
   if (status === 'unhealthy') return 'error';
   return 'default';
+}
+
+export function probeReasonText(reason?: string) {
+  const map: Record<string, App.I18n.I18nKey> = {
+    ok: 'business.probe-reason-ok',
+    connected: 'business.probe-reason-connected',
+    slow_response: 'business.probe-reason-slow-response',
+    credentials_rejected: 'business.probe-reason-credentials-rejected',
+    rate_limited: 'business.probe-reason-rate-limited',
+    v1_suffix_suspected: 'business.probe-reason-v1-suffix',
+    proxy_error: 'business.probe-reason-proxy-error',
+    proxy_timeout: 'business.probe-reason-proxy-timeout',
+    proxy_auth_failed: 'business.probe-reason-proxy-auth-failed',
+    proxy_bad_gateway: 'business.probe-reason-proxy-bad-gateway',
+    probe_http_error: 'business.probe-reason-probe-http-error',
+    upstream_http_error: 'business.probe-reason-upstream-http-error',
+    network_error: 'business.probe-reason-network-error',
+    unsupported: 'business.probe-reason-unsupported',
+    probe_internal_error: 'business.probe-reason-internal-error'
+  };
+  if (!reason) return '-';
+  const key = map[reason];
+  return key ? $t(key) : reason;
+}
+
+export function failoverTriggerText(trigger?: string) {
+  const map: Record<string, App.I18n.I18nKey> = {
+    auto_failover: 'business.failover-trigger-auto',
+    auto_failback: 'business.failover-trigger-failback',
+    manual: 'business.failover-trigger-manual',
+    config_change: 'business.failover-trigger-config'
+  };
+  if (!trigger) return '-';
+  const key = map[trigger];
+  return key ? $t(key) : trigger;
+}
+
+export function failoverReasonText(reason?: string | null) {
+  const map: Record<string, App.I18n.I18nKey> = {
+    active_proxy_unhealthy: 'business.failover-reason-unhealthy',
+    primary_soak_complete: 'business.failover-reason-soak',
+    manual_switch: 'business.failover-reason-manual',
+    active_proxy_unavailable: 'business.failover-reason-unavailable',
+    no_enabled_proxies: 'business.failover-reason-none'
+  };
+  if (!reason) return '-';
+  const key = map[reason];
+  return key ? $t(key) : reason;
 }
 
 export function healthSummary(row: {
@@ -141,6 +192,10 @@ const actionTextKeyMap: Record<string, App.I18n.I18nKey> = {
   'platform_proxy.created': 'business.create-proxy',
   'platform_proxy.updated': 'business.update-platform-proxy',
   'platform_proxy.deleted': 'business.delete-platform-proxy',
+  'platform_proxy.switched': 'business.switch-platform-proxy',
+  'platform_proxy.order_updated': 'business.update-platform-proxy-order',
+  'platform_proxy.settings_updated': 'business.update-proxy-governance-settings',
+  'provider_health.settings_updated': 'business.update-provider-health-settings',
   'route_policy.created': 'business.create-route-policy-167s75c',
   'route_policy.updated': 'business.update-route-policy',
   'route_policy.deleted': 'business.delete-route-policy',
@@ -260,8 +315,26 @@ const snapshotFieldKeyMap: Record<string, App.I18n.I18nKey> = {
   provider: 'business.provider',
   provider_timeout_ms: 'business.upstream-timeout-ms',
   provider_keys: 'business.proxy-provider',
+  provider_key: 'business.provider',
   proxy_url_changed: 'business.proxy-url-changed',
   proxy_type: 'business.proxy-type',
+  enabled: 'business.enabled',
+  from_proxy: 'business.from-proxy',
+  to_proxy: 'business.to-proxy',
+  trigger: 'business.failover-trigger',
+  items_count: 'business.proxy-pool-items-count',
+  probe_interval_seconds: 'business.probe-interval-seconds',
+  fast_probe_interval_seconds: 'business.fast-probe-interval-seconds',
+  probe_timeout_seconds: 'business.probe-timeout-seconds',
+  fail_threshold: 'business.fail-threshold',
+  recover_threshold: 'business.recover-threshold',
+  switch_cooldown_seconds: 'business.switch-cooldown-seconds',
+  failback_mode: 'business.failback-mode',
+  failback_soak_seconds: 'business.failback-soak-seconds',
+  interval_seconds: 'business.check-interval-seconds',
+  timeout_seconds: 'business.check-timeout-seconds',
+  degraded_latency_ms: 'business.degraded-latency-ms',
+  failure_threshold: 'business.failure-threshold',
   rate_limit_per_min: 'business.rate-limit-minute',
   region: 'business.region',
   run_id: 'business.run-id',

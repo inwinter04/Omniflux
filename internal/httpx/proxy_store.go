@@ -2,26 +2,42 @@ package httpx
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	providerUtils "github.com/maximhq/bifrost/core/providers/utils"
 
 	"github.com/inwinter04/omniflux/internal/bifrostx"
+	"github.com/inwinter04/omniflux/internal/governance"
 	"github.com/inwinter04/omniflux/internal/vault"
 )
+
+type platformProxyBinding struct {
+	ProviderKey string `json:"provider_key"`
+	Priority    int    `json:"priority"`
+	Enabled     bool   `json:"enabled"`
+}
 
 type platformProxy struct {
 	ID           uuid.UUID
 	Name         string
 	Type         string
 	URL          string
+	Enabled      bool
+	ProbeURL     string
 	ProviderKeys []string
+	Bindings     []platformProxyBinding
 	UpdatedAt    time.Time
+}
+
+type activeProxySummary struct {
+	ProxyID     string
+	ProxyName   string
+	ProxyType   string
+	ProxyStatus string
+	PoolSize    int
 }
 
 func scanPlatformProxy(scanner interface {
@@ -29,7 +45,7 @@ func scanPlatformProxy(scanner interface {
 }, masterKey []byte) (platformProxy, error) {
 	var proxy platformProxy
 	var ciphertext []byte
-	if err := scanner.Scan(&proxy.ID, &proxy.Name, &proxy.Type, &ciphertext, &proxy.UpdatedAt); err != nil {
+	if err := scanner.Scan(&proxy.ID, &proxy.Name, &proxy.Type, &ciphertext, &proxy.Enabled, &proxy.ProbeURL, &proxy.UpdatedAt); err != nil {
 		return platformProxy{}, err
 	}
 	plaintext, err := vault.Decrypt(masterKey, ciphertext)
@@ -42,10 +58,10 @@ func scanPlatformProxy(scanner interface {
 
 func loadPlatformProxies(ctx context.Context, pool *pgxpool.Pool, masterKey []byte) ([]platformProxy, error) {
 	rows, err := pool.Query(ctx, `
-  SELECT id, name, proxy_type, proxy_ciphertext, updated_at
-  FROM platform_proxies
-  ORDER BY name ASC
- `)
+		SELECT id, name, proxy_type, proxy_ciphertext, enabled, COALESCE(probe_url, ''), updated_at
+		FROM platform_proxies
+		ORDER BY name ASC
+	`)
 	if err != nil {
 		return nil, err
 	}
@@ -69,10 +85,10 @@ func loadPlatformProxies(ctx context.Context, pool *pgxpool.Pool, masterKey []by
 
 func loadPlatformProxyByID(ctx context.Context, pool *pgxpool.Pool, masterKey []byte, id uuid.UUID) (platformProxy, error) {
 	row := pool.QueryRow(ctx, `
-  SELECT id, name, proxy_type, proxy_ciphertext, updated_at
-  FROM platform_proxies
-  WHERE id = $1
- `, id)
+		SELECT id, name, proxy_type, proxy_ciphertext, enabled, COALESCE(probe_url, ''), updated_at
+		FROM platform_proxies
+		WHERE id = $1
+	`, id)
 	proxy, err := scanPlatformProxy(row, masterKey)
 	if err != nil {
 		return platformProxy{}, err
@@ -85,11 +101,15 @@ func loadPlatformProxyByID(ctx context.Context, pool *pgxpool.Pool, masterKey []
 
 func loadPlatformProxyForProvider(ctx context.Context, pool *pgxpool.Pool, masterKey []byte, providerKey string) (platformProxy, error) {
 	row := pool.QueryRow(ctx, `
-  SELECT p.id, p.name, p.proxy_type, p.proxy_ciphertext, p.updated_at
-  FROM platform_proxies p
-  JOIN platform_proxy_providers pp ON pp.proxy_id = p.id
-  WHERE pp.provider_key = $1
- `, providerKey)
+		SELECT p.id, p.name, p.proxy_type, p.proxy_ciphertext, p.enabled, COALESCE(p.probe_url, ''), p.updated_at
+		FROM platform_proxy_providers pp
+		JOIN platform_proxies p ON p.id = pp.proxy_id
+		LEFT JOIN provider_proxy_states s ON s.provider_key = pp.provider_key
+		WHERE pp.provider_key = $1 AND p.enabled = true AND pp.enabled = true
+		ORDER BY CASE WHEN s.active_proxy_id = pp.proxy_id THEN 0 ELSE 1 END,
+		         pp.priority ASC, pp.created_at ASC
+		LIMIT 1
+	`, providerKey)
 	proxy, err := scanPlatformProxy(row, masterKey)
 	if err != nil {
 		return platformProxy{}, err
@@ -100,25 +120,60 @@ func loadPlatformProxyForProvider(ctx context.Context, pool *pgxpool.Pool, maste
 	return proxy, nil
 }
 
-func loadPlatformProxyTypes(ctx context.Context, pool *pgxpool.Pool) (map[string]string, error) {
+func loadPlatformActiveProxySummaries(ctx context.Context, pool *pgxpool.Pool) (map[string]activeProxySummary, error) {
 	rows, err := pool.Query(ctx, `
-  SELECT pp.provider_key, p.proxy_type
-  FROM platform_proxy_providers pp
-  JOIN platform_proxies p ON p.id = pp.proxy_id
- `)
+		SELECT DISTINCT ON (pp.provider_key)
+		       pp.provider_key, p.id, p.name, p.proxy_type, COALESCE(hs.status, 'unknown')
+		FROM platform_proxy_providers pp
+		JOIN platform_proxies p ON p.id = pp.proxy_id
+		LEFT JOIN provider_proxy_states s ON s.provider_key = pp.provider_key
+		LEFT JOIN proxy_health_states hs ON hs.provider_key = pp.provider_key AND hs.proxy_id = pp.proxy_id
+		WHERE p.enabled = true AND pp.enabled = true
+		ORDER BY pp.provider_key,
+		         CASE WHEN s.active_proxy_id = pp.proxy_id THEN 0 ELSE 1 END,
+		         pp.priority ASC, pp.created_at ASC
+	`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	types := make(map[string]string)
+	summaries := make(map[string]activeProxySummary)
 	for rows.Next() {
-		var providerKey, proxyType string
-		if err := rows.Scan(&providerKey, &proxyType); err != nil {
+		var providerKey string
+		var id uuid.UUID
+		var sum activeProxySummary
+		if err := rows.Scan(&providerKey, &id, &sum.ProxyName, &sum.ProxyType, &sum.ProxyStatus); err != nil {
 			return nil, err
 		}
-		types[providerKey] = proxyType
+		sum.ProxyID = id.String()
+		summaries[providerKey] = sum
 	}
-	return types, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	countRows, err := pool.Query(ctx, `
+		SELECT pp.provider_key, count(*)
+		FROM platform_proxy_providers pp
+		JOIN platform_proxies p ON p.id = pp.proxy_id
+		WHERE p.enabled = true AND pp.enabled = true
+		GROUP BY pp.provider_key
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer countRows.Close()
+	for countRows.Next() {
+		var providerKey string
+		var cnt int
+		if err := countRows.Scan(&providerKey, &cnt); err != nil {
+			return nil, err
+		}
+		sum := summaries[providerKey]
+		sum.PoolSize = cnt
+		summaries[providerKey] = sum
+	}
+	return summaries, countRows.Err()
 }
 
 func attachPlatformProxyProviders(ctx context.Context, pool *pgxpool.Pool, proxies []platformProxy) error {
@@ -126,10 +181,10 @@ func attachPlatformProxyProviders(ctx context.Context, pool *pgxpool.Pool, proxi
 		return nil
 	}
 	rows, err := pool.Query(ctx, `
-  SELECT proxy_id, provider_key
-  FROM platform_proxy_providers
-  ORDER BY provider_key ASC
- `)
+		SELECT proxy_id, provider_key, priority, enabled
+		FROM platform_proxy_providers
+		ORDER BY priority ASC, provider_key ASC
+	`)
 	if err != nil {
 		return err
 	}
@@ -138,15 +193,17 @@ func attachPlatformProxyProviders(ctx context.Context, pool *pgxpool.Pool, proxi
 	for index, proxy := range proxies {
 		byID[proxy.ID] = index
 		proxies[index].ProviderKeys = []string{}
+		proxies[index].Bindings = []platformProxyBinding{}
 	}
 	for rows.Next() {
 		var proxyID uuid.UUID
-		var providerKey string
-		if err := rows.Scan(&proxyID, &providerKey); err != nil {
+		var binding platformProxyBinding
+		if err := rows.Scan(&proxyID, &binding.ProviderKey, &binding.Priority, &binding.Enabled); err != nil {
 			return err
 		}
 		if index, exists := byID[proxyID]; exists {
-			proxies[index].ProviderKeys = append(proxies[index].ProviderKeys, providerKey)
+			proxies[index].ProviderKeys = append(proxies[index].ProviderKeys, binding.ProviderKey)
+			proxies[index].Bindings = append(proxies[index].Bindings, binding)
 		}
 	}
 	return rows.Err()
@@ -157,21 +214,39 @@ func insertPlatformProxy(ctx context.Context, tx pgx.Tx, proxy platformProxy, ma
 	if err != nil {
 		return time.Time{}, err
 	}
+	var probeURL any
+	if proxy.ProbeURL != "" {
+		probeURL = proxy.ProbeURL
+	}
 	var updatedAt time.Time
 	err = tx.QueryRow(ctx, `
-  INSERT INTO platform_proxies(id, name, proxy_type, proxy_ciphertext, proxy_key_id, created_at, updated_at)
-  VALUES ($1, $2, $3, $4, $5, now(), now())
-  RETURNING updated_at
- `, proxy.ID, proxy.Name, proxy.Type, ciphertext, vault.KeyID).Scan(&updatedAt)
+		INSERT INTO platform_proxies(id, name, proxy_type, proxy_ciphertext, proxy_key_id, enabled, probe_url, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, now(), now())
+		RETURNING updated_at
+	`, proxy.ID, proxy.Name, proxy.Type, ciphertext, vault.KeyID, proxy.Enabled, probeURL).Scan(&updatedAt)
 	return updatedAt, err
 }
 
 func insertPlatformProxyProviders(ctx context.Context, tx pgx.Tx, proxy platformProxy) error {
-	for _, providerKey := range proxy.ProviderKeys {
+	bindings := proxy.Bindings
+	if len(bindings) == 0 {
+		for _, providerKey := range proxy.ProviderKeys {
+			bindings = append(bindings, platformProxyBinding{
+				ProviderKey: providerKey,
+				Priority:    100,
+				Enabled:     true,
+			})
+		}
+	}
+	for _, b := range bindings {
+		prio := b.Priority
+		if prio < 1 {
+			prio = 100
+		}
 		if _, err := tx.Exec(ctx, `
-    INSERT INTO platform_proxy_providers(provider_key, proxy_id)
-    VALUES ($1, $2)
-  `, providerKey, proxy.ID); err != nil {
+			INSERT INTO platform_proxy_providers(provider_key, proxy_id, priority, enabled)
+			VALUES ($1, $2, $3, $4)
+		`, b.ProviderKey, proxy.ID, prio, b.Enabled); err != nil {
 			return err
 		}
 	}
@@ -183,13 +258,18 @@ func updatePlatformProxy(ctx context.Context, tx pgx.Tx, proxy platformProxy, ma
 	if err != nil {
 		return time.Time{}, err
 	}
+	var probeURL any
+	if proxy.ProbeURL != "" {
+		probeURL = proxy.ProbeURL
+	}
 	var updatedAt time.Time
 	err = tx.QueryRow(ctx, `
-  UPDATE platform_proxies
-  SET name = $2, proxy_type = $3, proxy_ciphertext = $4, proxy_key_id = $5, updated_at = now()
-  WHERE id = $1
-  RETURNING updated_at
- `, proxy.ID, proxy.Name, proxy.Type, ciphertext, vault.KeyID).Scan(&updatedAt)
+		UPDATE platform_proxies
+		SET name = $2, proxy_type = $3, proxy_ciphertext = $4, proxy_key_id = $5,
+		    enabled = $6, probe_url = $7, updated_at = now()
+		WHERE id = $1
+		RETURNING updated_at
+	`, proxy.ID, proxy.Name, proxy.Type, ciphertext, vault.KeyID, proxy.Enabled, probeURL).Scan(&updatedAt)
 	return updatedAt, err
 }
 
@@ -205,46 +285,12 @@ func deletePlatformProxy(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
 	return err
 }
 
-func platformProxyTransport(proxyType, proxyURL string) (*http.Transport, error) {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	// 不配置代理时显式直连，避免进程环境代理造成测试和真实调用路径不一致。
-	transport.Proxy = nil
-	config, err := bifrostx.BuildProxyConfig(proxyType, proxyURL)
-	if err != nil {
-		return nil, err
-	}
-	if config == nil {
-		return transport, nil
-	}
-	proxy, tlsConfig, err := providerUtils.NetHTTPProxy(config)
-	if err != nil {
-		return nil, err
-	}
-	if proxy == nil {
-		return nil, errors.New("platform proxy configuration did not produce an HTTP proxy")
-	}
-	transport.Proxy = proxy
-	transport.TLSClientConfig = tlsConfig
-	return transport, nil
-}
-
 func providerHTTPClientFor(proxyType, proxyURL string) (*http.Client, error) {
-	transport, err := platformProxyTransport(proxyType, proxyURL)
-	if err != nil {
-		return nil, err
-	}
-	return &http.Client{
-		Transport: transport,
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}, nil
+	return governance.HTTPClientForProxy(proxyType, proxyURL, 0, false)
 }
 
 func balanceHTTPClientFor(proxyType, proxyURL string) (*http.Client, error) {
-	transport, err := platformProxyTransport(proxyType, proxyURL)
-	if err != nil {
-		return nil, err
-	}
-	return &http.Client{Transport: transport, Timeout: 15 * time.Second}, nil
+	return governance.HTTPClientForProxy(proxyType, proxyURL, 15*time.Second, true)
 }
+
+var _ = bifrostx.ProxyTypeNone

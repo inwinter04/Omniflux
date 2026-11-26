@@ -245,3 +245,26 @@ func TestLoadServiceAppliesConstraints(t *testing.T) {
 		t.Fatalf("constraint filter should keep only cheap candidate, got %d", len(filtered))
 	}
 }
+
+func TestSelectChainSoftDeprioritizesUnhealthyAccounts(t *testing.T) {
+	unhealthyPrimary := testCandidate("bad", 1, 1, 1, 1, 0.9)
+	unhealthyPrimary.AccountID = idFor("acc-bad")
+	healthyBackup := testCandidate("good", 1, 1, 50, 50, 0.3)
+	healthyBackup.AccountID = idFor("acc-good")
+
+	scores := &policyScores{
+		Health: map[uuid.UUID]candidateHealth{},
+		AccountHealth: map[uuid.UUID]string{
+			uuid.MustParse(unhealthyPrimary.AccountID): "unhealthy",
+			uuid.MustParse(healthyBackup.AccountID):    "healthy",
+		},
+	}
+
+	chain := selectChain(routeChain{unhealthyPrimary, healthyBackup}, defaultPolicy, scores)
+	if len(chain) != 2 {
+		t.Fatalf("all candidates must remain in chain, got %d", len(chain))
+	}
+	if chain[0].ID != healthyBackup.ID || chain[1].ID != unhealthyPrimary.ID {
+		t.Fatalf("healthy account should precede unhealthy account, got %v -> %v", chain[0].ID, chain[1].ID)
+	}
+}

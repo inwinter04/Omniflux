@@ -25,6 +25,7 @@ type ProviderSpec struct {
 }
 
 type Account struct {
+	mu    sync.RWMutex
 	specs map[schemas.ModelProvider][]ProviderSpec
 }
 
@@ -116,6 +117,8 @@ func NewAccount(specs []ProviderSpec) (*Account, error) {
 }
 
 func (a *Account) GetConfiguredProviders() ([]schemas.ModelProvider, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
 	providers := make([]schemas.ModelProvider, 0, len(a.specs))
 	for provider := range a.specs {
 		providers = append(providers, provider)
@@ -124,7 +127,9 @@ func (a *Account) GetConfiguredProviders() ([]schemas.ModelProvider, error) {
 }
 
 func (a *Account) GetKeysForProvider(_ context.Context, provider schemas.ModelProvider) ([]schemas.Key, error) {
-	specs := a.specs[provider]
+	a.mu.RLock()
+	specs := append([]ProviderSpec(nil), a.specs[provider]...)
+	a.mu.RUnlock()
 	keys := make([]schemas.Key, 0, len(specs))
 	for _, spec := range specs {
 		models := spec.AllowedModels
@@ -142,7 +147,9 @@ func (a *Account) GetKeysForProvider(_ context.Context, provider schemas.ModelPr
 }
 
 func (a *Account) GetConfigForProvider(provider schemas.ModelProvider) (*schemas.ProviderConfig, error) {
-	specs := a.specs[provider]
+	a.mu.RLock()
+	specs := append([]ProviderSpec(nil), a.specs[provider]...)
+	a.mu.RUnlock()
 	if len(specs) == 0 {
 		return nil, fmt.Errorf("provider %q is not configured", provider)
 	}
@@ -191,11 +198,43 @@ func (a *Account) GetConfigForProvider(provider schemas.ModelProvider) (*schemas
 	return config, nil
 }
 
+// SetProviderProxy atomically updates the proxy configuration for a configured provider key.
+func (a *Account) SetProviderProxy(provider schemas.ModelProvider, proxyType, proxyURL string) (changed bool, exists bool, err error) {
+	normType, normURL, err := NormalizeProxy(proxyType, proxyURL)
+	if err != nil {
+		return false, false, err
+	}
+	nextSig, err := ProxySignature(normType, normURL)
+	if err != nil {
+		return false, false, err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	specs := a.specs[provider]
+	if len(specs) == 0 {
+		return false, false, nil
+	}
+	prevSig, err := ProxySignature(specs[0].ProxyType, specs[0].ProxyURL)
+	if err == nil && prevSig == nextSig {
+		return false, true, nil
+	}
+	updated := make([]ProviderSpec, len(specs))
+	for i, spec := range specs {
+		spec.ProxyType = normType
+		spec.ProxyURL = normURL
+		updated[i] = spec
+	}
+	a.specs[provider] = updated
+	return true, true, nil
+}
+
 type Engine struct {
 	// mu 保护 client/account 的热替换;请求路径用 Client() 读取。
-	mu      sync.RWMutex
-	client  *core.Bifrost
-	account *Account
+	// updateMu 串行化 Reload 与 UpdateProviderProxy,防止并发热替换冲突。
+	mu       sync.RWMutex
+	updateMu sync.Mutex
+	client   *core.Bifrost
+	account  *Account
 }
 
 func NewEngine(ctx context.Context, specs []ProviderSpec) (*Engine, error) {
@@ -224,6 +263,8 @@ func (e *Engine) Account() *Account {
 
 // Reload 用新配置重建上游引擎并原子替换;旧客户端在替换后关闭。
 func (e *Engine) Reload(ctx context.Context, specs []ProviderSpec) error {
+	e.updateMu.Lock()
+	defer e.updateMu.Unlock()
 	next, err := NewEngine(ctx, specs)
 	if err != nil {
 		return err
@@ -237,6 +278,27 @@ func (e *Engine) Reload(ctx context.Context, specs []ProviderSpec) error {
 		previous.Shutdown()
 	}
 	return nil
+}
+
+// UpdateProviderProxy hot-swaps the proxy settings of a single provider without rebuilding other providers.
+func (e *Engine) UpdateProviderProxy(provider schemas.ModelProvider, proxyType, proxyURL string) error {
+	e.updateMu.Lock()
+	defer e.updateMu.Unlock()
+	e.mu.RLock()
+	client := e.client
+	account := e.account
+	e.mu.RUnlock()
+	if client == nil || account == nil {
+		return nil
+	}
+	changed, exists, err := account.SetProviderProxy(provider, proxyType, proxyURL)
+	if err != nil {
+		return err
+	}
+	if !exists || !changed {
+		return nil
+	}
+	return client.UpdateProvider(provider)
 }
 
 func (e *Engine) Close() {

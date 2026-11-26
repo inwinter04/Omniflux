@@ -123,18 +123,39 @@ For organization-level budgets, `scope_id` may be omitted or set to `organizatio
 
 ## Model Access
 
+### Platform Proxies
+
+| Endpoint | Description |
+| --- | --- |
+| `GET /api/v1/proxies` | List proxy nodes, per-provider failover pools, policy settings, and provider options (platform administrators only) |
+| `POST /api/v1/proxies` | Create a platform proxy with provider bindings and priorities (platform administrators only) |
+| `PATCH /api/v1/proxies/{id}` | Update a platform proxy and its provider bindings (platform administrators only) |
+| `DELETE /api/v1/proxies/{id}` | Delete a platform proxy and reconcile affected providers (platform administrators only) |
+| `POST /api/v1/proxies/{id}/test` | Probe connectivity through a proxy node |
+| `PUT /api/v1/proxies/providers/{providerKey}/order` | Update failover priority order and binding enablement for a provider pool |
+| `POST /api/v1/proxies/providers/{providerKey}/switch` | Manually switch the sticky active proxy for a provider |
+| `POST /api/v1/proxies/providers/{providerKey}/probe` | Probe all proxies in a provider pool and evaluate failover |
+| `GET /api/v1/proxies/failover-events` | List proxy failover and switch history events |
+| `GET /api/v1/proxies/settings` | Get proxy governance failover policy settings |
+| `PATCH /api/v1/proxies/settings` | Update proxy failover policy (probe intervals, thresholds, cooldown, sticky/auto-soak failback) |
+
 ### Provider Accounts
 
 | Endpoint | Description |
 | --- | --- |
 | `GET /api/v1/provider-catalog` | Provider catalog, grouped by model vendor / cloud platform / third-party service; the same vendor offers plan and region variants |
-| `GET /api/v1/provider-accounts` | List provider accounts (including passive health statistics for the last 24h) |
+| `GET /api/v1/provider-accounts` | List provider accounts (including active probe state, 24h heartbeat bar, active proxy summary, and 24h passive statistics) |
+| `GET /api/v1/provider-accounts/availability` | Provider-level availability overview, 24h heartbeat bars, and scheduled check policy |
+| `POST /api/v1/provider-accounts/test-all` | Probe all active provider accounts in the current organization and persist results |
 | `POST /api/v1/provider-accounts` | Create a provider account (credentials are stored encrypted; for openai/anthropic types, base_url must not include `/v1`, and the gateway appends paths such as `/v1/chat/completions` automatically) |
 | `PATCH /api/v1/provider-accounts/{id}` | Update a provider account (the API Key can be rotated; leave it blank to keep it unchanged) |
 | `PATCH /api/v1/provider-accounts/{id}/status` | Enable or disable an account and refresh the upstream engine |
 | `GET /api/v1/provider-accounts/{id}/models` | Fetch the upstream model list using the saved credentials, and fill in known input/output prices from models.dev |
 | `GET /api/v1/provider-accounts/{id}/balance` | Query supported account balances and plan quotas, returned in the original currency; quotas include used/remaining percentage and reset time |
-| `POST /api/v1/provider-accounts/{id}/test` | Manual connectivity test |
+| `POST /api/v1/provider-accounts/{id}/test` | Manual connectivity and credential probe (persists check history and updates health state) |
+| `GET /api/v1/provider-accounts/{id}/health-history` | Query 24h/7d availability, avg/P95 latency, and recent check records for an account |
+| `GET /api/v1/provider-health/settings` | Get scheduled provider health check settings |
+| `PATCH /api/v1/provider-health/settings` | Update scheduled provider health check settings (platform administrators only) |
 | `DELETE /api/v1/provider-accounts/{id}` | Delete a provider account |
 
 The console lets you select discovered models and carry them into the new model service form, where price, quality score, priority, and weight can be adjusted before saving. There is no unified automatic upstream source for the quality score, so a neutral default of 0.5 is used.

@@ -127,21 +127,32 @@
 
 | 接口 | 说明 |
 | --- | --- |
-| `GET /api/v1/proxies` | 平台代理列表(仅平台管理员),返回代理名称、适用厂商、代理类型、脱敏地址、启用账号数和可选厂商 |
-| `POST /api/v1/proxies` | 创建平台代理,仅平台管理员可操作 |
-| `PATCH /api/v1/proxies/{id}` | 更新平台代理,仅平台管理员可操作 |
-| `DELETE /api/v1/proxies/{id}` | 删除平台代理,仅平台管理员可操作 |
+| `GET /api/v1/proxies` | 平台代理节点列表、按厂商聚合的故障转移代理池、策略配置与可选厂商（仅平台管理员） |
+| `POST /api/v1/proxies` | 创建平台代理，支持多厂商绑定与优先级，仅平台管理员可操作 |
+| `PATCH /api/v1/proxies/{id}` | 更新平台代理及适用厂商绑定，仅平台管理员可操作 |
+| `DELETE /api/v1/proxies/{id}` | 删除平台代理并自动同步受影响厂商，仅平台管理员可操作 |
+| `POST /api/v1/proxies/{id}/test` | 立即探测代理节点连通性 |
+| `PUT /api/v1/proxies/providers/{providerKey}/order` | 调整厂商代理池的主备优先级与绑定启停 |
+| `POST /api/v1/proxies/providers/{providerKey}/switch` | 手动切换厂商当前生效的粘性代理 |
+| `POST /api/v1/proxies/providers/{providerKey}/probe` | 立即探测厂商代理池并按防抖策略评估切换 |
+| `GET /api/v1/proxies/failover-events` | 查询代理切换与故障转移历史事件 |
+| `GET /api/v1/proxies/settings` | 查询代理故障转移防抖策略配置 |
+| `PATCH /api/v1/proxies/settings` | 更新代理故障转移防抖策略（探测间隔、快速确认间隔、连续失败/恢复阈值、冷却期、粘性/稳定回切模式） |
 
-平台代理是跨组织生效的平台级配置，仅平台管理员可查询和变更。每个代理通过 `provider_keys` 指定一个或多个适用厂商；同一厂商只能绑定一个代理，删除代理后该厂商恢复直连。代理类型支持 `http` 和 `socks5`，创建时必须填写代理地址；更新时保持原类型且地址留空表示沿用当前地址。
+平台代理是跨组织生效的平台级配置，仅平台管理员可查询和变更。同一厂商可绑定多个代理并设置 `priority` 优先级（数值越小越优先），同时通过**粘性主备切换**与**非对称滞回防抖**保证日常出口 IP 稳定：单次抖动只触发快速复测确认，连续失败达阈值且备选代理验活通过后才执行单厂商热切换；所有代理均异常时保持当前节点不动。代理类型支持 `http` 和 `socks5`，创建时必须填写代理地址；更新时保持原类型且地址留空表示沿用当前地址。
 
 请求与响应字段：
 
 | 字段 | 位置 | 说明 |
 | --- | --- | --- |
-| `provider_keys` | 请求/响应 | 适用厂商稳定标识数组；每个值必须是平台支持的厂商 key |
+| `provider_keys` / `bindings` | 请求/响应 | 适用厂商稳定标识或含 `provider_key` / `priority` / `enabled` 的绑定列表 |
 | `name` | 请求/响应 | 代理名称；同一平台内唯一 |
 | `proxy_type` | 请求/响应 | 代理类型，取值 `http` / `socks5` |
 | `proxy_url` | 请求/响应 | 代理地址；响应只返回脱敏后的地址 |
+| `enabled` | 请求/响应 | 代理节点全局启用开关 |
+| `probe_url` | 请求/响应 | 可选自定义 HTTP/HTTPS 探测地址，留空按绑定厂商默认接口域名探测 |
+| `pools` | `GET` 响应 | 按厂商聚合的主备代理池，含当前生效代理、24h 心跳状态条与故障计数 |
+| `settings` | `GET` 响应 | 代理治理防抖与回切策略 |
 | `provider_labels` | 响应 | 厂商展示名数组，由前端按当前语言渲染 |
 | `updated_at` | 响应 | 最近更新时间 |
 | `active_accounts` | 响应 | 该代理覆盖厂商当前启用的供应商账号数量 |
@@ -149,23 +160,28 @@
 
 `proxy_url` 必须与 `proxy_type` 匹配：`http` 接受 `http://` / `https://`，`socks5` 接受 `socks5://` / `socks5h://`。地址必须包含主机和显式端口，不允许携带 path、query 或 fragment；可以包含用户名和密码。代理地址使用 AES-256-GCM 加密存储，原始地址不写入审计事件或日志。
 
-创建、更新或删除代理成功后会重建上游引擎。代理对适用厂商的真实调用、供应商账号连通性测试、模型发现和余额查询统一生效。审计事件为 `platform_proxy.created`、`platform_proxy.updated` 与 `platform_proxy.deleted`；更新事件包含 `proxy_url_changed` 布尔值，但不会记录代理地址原文。
+创建、更新、删除或主备切换后只对该厂商执行热更新（不影响其他厂商及在途请求）。代理对适用厂商的真实调用、供应商账号连通性测试、模型发现和余额查询统一生效。审计事件为 `platform_proxy.created`、`platform_proxy.updated`、`platform_proxy.deleted`、`platform_proxy.switched`、`platform_proxy.order_updated` 与 `platform_proxy.settings_updated`；更新事件包含 `proxy_url_changed` 布尔值，但不会记录代理地址原文。
 
 ### 供应商账号
 
 | 接口 | 说明 |
 | --- | --- |
 | `GET /api/v1/provider-catalog` | 厂商目录,按模型厂商/云平台/第三方服务分类,同厂商提供套餐和地区版本 |
-| `GET /api/v1/provider-accounts` | 供应商账号列表(含近 24h 被动健康统计) |
+| `GET /api/v1/provider-accounts` | 供应商账号列表(含主动探测状态、24h 心跳条、可用率、生效代理及被动健康统计) |
+| `GET /api/v1/provider-accounts/availability` | 按厂商聚合的可用性总览、24h 心跳条与自动巡检配置 |
+| `POST /api/v1/provider-accounts/test-all` | 一键批量检测当前组织下全部启用账号并记录结果 |
 | `POST /api/v1/provider-accounts` | 创建供应商账号(凭据加密入库;openai/anthropic 类 base_url 不含 `/v1`,网关会自动拼接 `/v1/chat/completions` 等路径) |
 | `PATCH /api/v1/provider-accounts/{id}` | 更新供应商账号(可轮换 API Key,留空保持不变) |
 | `PATCH /api/v1/provider-accounts/{id}/status` | 启用或停用账号,并刷新上游引擎 |
 | `GET /api/v1/provider-accounts/{id}/models` | 使用已保存凭据获取上游模型列表,并补全 models.dev 中的已知输入/输出价格 |
 | `GET /api/v1/provider-accounts/{id}/balance` | 查询支持的账户余额与套餐限额,按原币种返回;限额含已用/剩余百分比及重置时间 |
-| `POST /api/v1/provider-accounts/{id}/test` | 手动连通性测试 |
+| `POST /api/v1/provider-accounts/{id}/test` | 手动连通性与凭据检测(结果落库并刷新健康态) |
+| `GET /api/v1/provider-accounts/{id}/health-history` | 查询单账号 24h/7d 可用率、平均/P95 延迟与近期检测明细 |
+| `GET /api/v1/provider-health/settings` | 查询账号定时可用性巡检策略 |
+| `PATCH /api/v1/provider-health/settings` | 更新账号定时可用性巡检策略（仅平台管理员） |
 | `DELETE /api/v1/provider-accounts/{id}` | 删除供应商账号 |
 
-供应商账号列表会返回当前厂商的平台代理类型,但代理地址不在账号接口中回显,也不通过账号接口修改。代理配置统一在平台代理接口中治理。
+供应商账号列表会返回当前厂商生效代理的名称、类型与代理池规模，但代理地址不在账号接口中回显，也不通过账号接口修改。代理配置统一在平台代理接口中治理。后台会按固定周期零 Token 费用探测启用账号并持久化最近 7 天结果；在数据面路由同优先级组中，主动探测为 `unhealthy` 的账号会被自动软降权到末尾（不改变账号启用状态）。
 
 管理台支持勾选发现的模型并带入新建模型服务表单,保存前可调整价格、质量分、优先级和权重。质量分没有统一的上游自动来源,默认使用中性值 0.5。
 

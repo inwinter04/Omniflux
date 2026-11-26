@@ -48,6 +48,23 @@ func StartMaintenance(ctx context.Context, logger *slog.Logger, pool *pgxpool.Po
 func runOnce(ctx context.Context, logger *slog.Logger, pool *pgxpool.Pool, knownAccounts map[string]bool) {
 	reconcilePending(ctx, logger, pool)
 	refreshProviderHealth(ctx, logger, pool, knownAccounts)
+	pruneHealthHistory(ctx, logger, pool)
+}
+
+func pruneHealthHistory(ctx context.Context, logger *slog.Logger, pool *pgxpool.Pool) {
+	queries := []struct {
+		name string
+		sql  string
+	}{
+		{"proxy_probe_checks", `DELETE FROM proxy_probe_checks WHERE checked_at < now() - interval '7 days'`},
+		{"provider_account_health_checks", `DELETE FROM provider_account_health_checks WHERE checked_at < now() - interval '7 days'`},
+		{"proxy_failover_events", `DELETE FROM proxy_failover_events WHERE created_at < now() - interval '90 days'`},
+	}
+	for _, q := range queries {
+		if _, err := pool.Exec(ctx, q.sql); err != nil {
+			logger.Warn("prune health history failed", "table", q.name, "error", err)
+		}
+	}
 }
 
 // reconcilePending 把长时间停留在 pending 的用量定稿为 failed。

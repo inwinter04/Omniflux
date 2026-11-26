@@ -14,10 +14,11 @@ import (
 
 // Deps 是数据面处理器的依赖集合。
 type Deps struct {
-	Logger       *slog.Logger
-	Pool         *pgxpool.Pool
-	Engine       *bifrostx.Engine
-	APIKeyPepper string
+	Logger           *slog.Logger
+	Pool             *pgxpool.Pool
+	Engine           *bifrostx.Engine
+	APIKeyPepper     string
+	OnTransportError func(providerKey string)
 
 	rateLimiter *rateLimiter
 }

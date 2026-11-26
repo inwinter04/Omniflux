@@ -19,6 +19,7 @@ import (
 	"github.com/inwinter04/omniflux/internal/bifrostx"
 	"github.com/inwinter04/omniflux/internal/bootstrap"
 	"github.com/inwinter04/omniflux/internal/config"
+	"github.com/inwinter04/omniflux/internal/governance"
 	"github.com/inwinter04/omniflux/internal/infra"
 	"github.com/inwinter04/omniflux/internal/mail"
 	"github.com/inwinter04/omniflux/internal/vault"
@@ -84,30 +85,10 @@ func setupIntegration(t *testing.T) *integrationEnv {
 	if err != nil {
 		t.Fatalf("engine: %v", err)
 	}
+	gov := governance.NewManager(pool, cfg.MasterKey, logger, engine)
 	reloadEngine := func(ctx context.Context) error {
-		proxyRows, err := pool.Query(ctx, `
-  SELECT pp.provider_key, p.proxy_type, p.proxy_ciphertext
-  FROM platform_proxy_providers pp
-  JOIN platform_proxies p ON p.id = pp.proxy_id
- `)
+		proxies, err := gov.ResolveAllActiveProxies(ctx)
 		if err != nil {
-			return err
-		}
-		defer proxyRows.Close()
-		proxies := make(map[string]bifrostx.ProviderSpec)
-		for proxyRows.Next() {
-			var providerKey, proxyType string
-			var ciphertext []byte
-			if err := proxyRows.Scan(&providerKey, &proxyType, &ciphertext); err != nil {
-				return err
-			}
-			plaintext, err := vault.Decrypt(cfg.MasterKey, ciphertext)
-			if err != nil {
-				return err
-			}
-			proxies[providerKey] = bifrostx.ProviderSpec{ProxyType: proxyType, ProxyURL: string(plaintext)}
-		}
-		if err := proxyRows.Err(); err != nil {
 			return err
 		}
 		rows, err := pool.Query(ctx, `
@@ -143,8 +124,8 @@ func setupIntegration(t *testing.T) *integrationEnv {
 				AccountID: id.String(),
 				Name:      name,
 				APIKey:    string(plaintext),
-				ProxyType: proxy.ProxyType,
-				ProxyURL:  proxy.ProxyURL,
+				ProxyType: proxy.Type,
+				ProxyURL:  proxy.URL,
 			}
 			if baseURL != nil {
 				spec.BaseURL = *baseURL
@@ -160,6 +141,7 @@ func setupIntegration(t *testing.T) *integrationEnv {
 		Logger: logger, Pool: pool, Engine: engine,
 		Auth: auth.NewStore(pool), Mailer: mailer, Env: "development",
 		MasterKey: cfg.MasterKey, APIKeyPepper: cfg.APIKeyPepper,
+		Governance:   gov,
 		ReloadEngine: reloadEngine,
 	})
 	srv := httptest.NewServer(handler)

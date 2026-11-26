@@ -20,6 +20,7 @@ import (
 	"github.com/inwinter04/omniflux/internal/bifrostx"
 	"github.com/inwinter04/omniflux/internal/bootstrap"
 	"github.com/inwinter04/omniflux/internal/config"
+	"github.com/inwinter04/omniflux/internal/governance"
 	"github.com/inwinter04/omniflux/internal/httpx"
 	"github.com/inwinter04/omniflux/internal/infra"
 	"github.com/inwinter04/omniflux/internal/logging"
@@ -92,7 +93,8 @@ func run() error {
 		return err
 	}
 	defer redisClient.Close()
-	specs, err := loadProviderSpecs(ctx, pool, cfg.MasterKey)
+	gov := governance.NewManager(pool, cfg.MasterKey, logger, nil)
+	specs, err := loadProviderSpecs(ctx, pool, cfg.MasterKey, gov)
 	if err != nil {
 		return err
 	}
@@ -101,9 +103,11 @@ func run() error {
 		return engineErr
 	}
 	defer engine.Close()
+	gov.SetEngine(engine)
+	gov.Start(ctx)
 	logger.Info("provider engine loaded", "accounts", len(specs))
 	reloadEngine := func(ctx context.Context) error {
-		next, err := loadProviderSpecs(ctx, pool, cfg.MasterKey)
+		next, err := loadProviderSpecs(ctx, pool, cfg.MasterKey, gov)
 		if err != nil {
 			return err
 		}
@@ -115,6 +119,7 @@ func run() error {
 		Logger: logger, Pool: pool, Redis: redisClient, Engine: engine,
 		Auth: authStore, Mailer: mailer, Env: cfg.Env,
 		MasterKey: cfg.MasterKey, APIKeyPepper: cfg.APIKeyPepper,
+		Governance:      gov,
 		ReloadEngine:    reloadEngine,
 		RateLimitPerMin: cfg.RateLimitPerMin,
 	})
@@ -154,34 +159,9 @@ func run() error {
 }
 
 // loadProviderSpecs 从数据库读取 active Provider 账号并解密凭据,构建上游引擎配置。
-func loadProviderSpecs(ctx context.Context, pool *pgxpool.Pool, masterKey []byte) ([]bifrostx.ProviderSpec, error) {
-	proxyRows, err := pool.Query(ctx, `
-  SELECT pp.provider_key, p.proxy_type, p.proxy_ciphertext
-  FROM platform_proxy_providers pp
-  JOIN platform_proxies p ON p.id = pp.proxy_id
- `)
+func loadProviderSpecs(ctx context.Context, pool *pgxpool.Pool, masterKey []byte, gov *governance.Manager) ([]bifrostx.ProviderSpec, error) {
+	proxies, err := gov.ResolveAllActiveProxies(ctx)
 	if err != nil {
-		return nil, err
-	}
-	defer proxyRows.Close()
-	type platformProxyConfig struct {
-		proxyType string
-		proxyURL  string
-	}
-	proxies := make(map[string]platformProxyConfig)
-	for proxyRows.Next() {
-		var providerKey, proxyType string
-		var proxyCiphertext []byte
-		if err := proxyRows.Scan(&providerKey, &proxyType, &proxyCiphertext); err != nil {
-			return nil, err
-		}
-		plaintext, err := vault.Decrypt(masterKey, proxyCiphertext)
-		if err != nil {
-			return nil, err
-		}
-		proxies[providerKey] = platformProxyConfig{proxyType: proxyType, proxyURL: string(plaintext)}
-	}
-	if err := proxyRows.Err(); err != nil {
 		return nil, err
 	}
 
@@ -218,8 +198,8 @@ func loadProviderSpecs(ctx context.Context, pool *pgxpool.Pool, masterKey []byte
 			AccountID: id.String(),
 			Name:      name,
 			APIKey:    string(plaintext),
-			ProxyType: proxy.proxyType,
-			ProxyURL:  proxy.proxyURL,
+			ProxyType: proxy.Type,
+			ProxyURL:  proxy.URL,
 		}
 		if baseURL != nil {
 			spec.BaseURL = *baseURL

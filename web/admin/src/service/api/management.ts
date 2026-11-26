@@ -101,10 +101,110 @@ export function fetchDeletePlatformProxy(id: string) {
   });
 }
 
+/** Probe connectivity through a platform proxy */
+export function fetchTestPlatformProxy(id: string) {
+  return request<{ results: Api.Management.ProxyTargetProbeResult[] }>({
+    url: `/proxies/${id}/test`,
+    method: 'post'
+  });
+}
+
+/** Update proxy failover priority order and binding enablement for a provider */
+export function fetchUpdateProviderProxyOrder(
+  providerKey: string,
+  items: { proxy_id: string; priority: number; enabled: boolean }[]
+) {
+  return request({
+    url: `/proxies/providers/${encodeURIComponent(providerKey)}/order`,
+    method: 'put',
+    data: { items }
+  });
+}
+
+/** Manually switch the sticky active proxy for a provider */
+export function fetchSwitchProviderProxy(providerKey: string, proxyId: string) {
+  return request<Api.Management.ProxyFailoverEvent>({
+    url: `/proxies/providers/${encodeURIComponent(providerKey)}/switch`,
+    method: 'post',
+    data: { proxy_id: proxyId }
+  });
+}
+
+/** Probe all proxies bound to a provider and evaluate failover */
+export function fetchProbeProviderProxies(providerKey: string) {
+  return request<Api.Management.PoolProbeSummary>({
+    url: `/proxies/providers/${encodeURIComponent(providerKey)}/probe`,
+    method: 'post'
+  });
+}
+
+/** List proxy failover events */
+export function fetchProxyFailoverEvents(providerKey?: string, limit = 50) {
+  return request<Api.Management.ProxyFailoverEvent[]>({
+    url: '/proxies/failover-events',
+    params: { ...(providerKey ? { provider_key: providerKey } : {}), limit }
+  });
+}
+
+/** Get proxy governance failover policy settings */
+export function fetchProxyGovernanceSettings() {
+  return request<Api.Management.ProxyGovernanceSettings>({
+    url: '/proxies/settings'
+  });
+}
+
+/** Update proxy governance failover policy settings */
+export function fetchUpdateProxyGovernanceSettings(params: Api.Management.ProxyGovernanceSettings) {
+  return request<Api.Management.ProxyGovernanceSettings>({
+    url: '/proxies/settings',
+    method: 'patch',
+    data: params
+  });
+}
+
 /** Get provider accounts of the current organization (credentials excluded) */
 export function fetchProviderAccounts() {
   return request<Api.Management.ProviderAccount[]>({
     url: '/provider-accounts'
+  });
+}
+
+/** Get provider-level availability overview */
+export function fetchProviderAvailability() {
+  return request<Api.Management.ProviderAvailabilityOverview>({
+    url: '/provider-accounts/availability'
+  });
+}
+
+/** Probe all active provider accounts in the current organization */
+export function fetchTestAllProviderAccounts() {
+  return request<Api.Management.BatchAccountProbeResult>({
+    url: '/provider-accounts/test-all',
+    method: 'post'
+  });
+}
+
+/** Get active health check history for a provider account */
+export function fetchProviderAccountHealthHistory(id: string, limit = 50) {
+  return request<Api.Management.ProviderAccountHealthHistory>({
+    url: `/provider-accounts/${id}/health-history`,
+    params: { limit }
+  });
+}
+
+/** Get scheduled provider health check settings */
+export function fetchProviderHealthSettings() {
+  return request<Api.Management.ProviderHealthSettings>({
+    url: '/provider-health/settings'
+  });
+}
+
+/** Update scheduled provider health check settings */
+export function fetchUpdateProviderHealthSettings(params: Api.Management.ProviderHealthSettings) {
+  return request<Api.Management.ProviderHealthSettings>({
+    url: '/provider-health/settings',
+    method: 'patch',
+    data: params
   });
 }
 

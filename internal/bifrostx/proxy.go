@@ -108,3 +108,49 @@ func IsSupportedProviderKey(providerKey string) bool {
 	}
 	return VendorByID(providerKey) != nil
 }
+
+// ProviderDefaultProbeURL returns the default HTTP base URL used to probe proxy reachability to a provider.
+func ProviderDefaultProbeURL(providerKey string) string {
+	switch providerKey {
+	case "openai":
+		return "https://api.openai.com"
+	case "anthropic":
+		return "https://api.anthropic.com"
+	case "gemini":
+		return "https://generativelanguage.googleapis.com"
+	case "vertex":
+		return "https://aiplatform.googleapis.com"
+	case "bedrock":
+		return "https://bedrock-runtime.us-east-1.amazonaws.com"
+	case "azure":
+		return ""
+	default:
+		if vendor := VendorByID(providerKey); vendor != nil {
+			return vendor.BaseURL
+		}
+		return ""
+	}
+}
+
+// ValidateProbeURL normalizes an optional HTTP/HTTPS probe URL and rejects embedded credentials.
+func ValidateProbeURL(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", nil
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return "", fmt.Errorf("invalid probe URL: %w", err)
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return "", fmt.Errorf("probe URL scheme must be http or https")
+	}
+	if parsed.Host == "" {
+		return "", fmt.Errorf("probe URL must contain a host")
+	}
+	if parsed.User != nil {
+		return "", fmt.Errorf("probe URL must not contain credentials")
+	}
+	return parsed.String(), nil
+}

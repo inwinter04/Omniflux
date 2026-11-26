@@ -116,46 +116,70 @@ func parsePolicyWeights(raw []byte) policyWeights {
 	return w
 }
 
-// loadCandidateHealth 统计候选近 7 天的调用表现,用于 latency/reliability 评分。
+// loadCandidateHealth 统计候选近 7 天的调用表现以及账号主动探测状态,用于 latency/reliability 评分与软降权。
 // 没有任何历史时返回空表,所有候选评分退化为等值(等价于旧的加权随机)。
 func (d Deps) loadCandidateHealth(ctx context.Context, orgID uuid.UUID, chain []candidate) *policyScores {
+	scores := &policyScores{
+		Health:        map[uuid.UUID]candidateHealth{},
+		AccountHealth: map[uuid.UUID]string{},
+	}
 	ids := make([]uuid.UUID, 0, len(chain))
+	accountIDs := make([]uuid.UUID, 0, len(chain))
+	seenAccounts := make(map[uuid.UUID]bool, len(chain))
 	for _, c := range chain {
 		if parsed := parseUUID(c.ID); parsed != uuid.Nil {
 			ids = append(ids, parsed)
 		}
-	}
-	if len(ids) == 0 {
-		return &policyScores{Health: map[uuid.UUID]candidateHealth{}}
-	}
-	rows, err := d.Pool.Query(ctx, `
-		SELECT model_candidate_id,
-		       avg(total_ms) FILTER (WHERE total_ms IS NOT NULL),
-		       count(*) FILTER (WHERE state = 'success'),
-		       count(*)
-		FROM usage_records
-		WHERE organization_id = $1 AND model_candidate_id = ANY($2)
-		  AND state <> 'pending' AND created_at >= now() - interval '7 days'
-		GROUP BY model_candidate_id
-	`, orgID, ids)
-	if err != nil {
-		return &policyScores{Health: map[uuid.UUID]candidateHealth{}}
-	}
-	defer rows.Close()
-	health := map[uuid.UUID]candidateHealth{}
-	for rows.Next() {
-		var id uuid.UUID
-		var h candidateHealth
-		var avgMS *float64
-		if err := rows.Scan(&id, &avgMS, &h.Successes, &h.Total); err != nil {
-			continue
+		if accID := parseUUID(c.AccountID); accID != uuid.Nil && !seenAccounts[accID] {
+			seenAccounts[accID] = true
+			accountIDs = append(accountIDs, accID)
 		}
-		if avgMS != nil {
-			h.AvgMS = *avgMS
-		}
-		health[id] = h
 	}
-	return &policyScores{Health: health}
+	if len(ids) > 0 {
+		rows, err := d.Pool.Query(ctx, `
+			SELECT model_candidate_id,
+			       avg(total_ms) FILTER (WHERE total_ms IS NOT NULL),
+			       count(*) FILTER (WHERE state = 'success'),
+			       count(*)
+			FROM usage_records
+			WHERE organization_id = $1 AND model_candidate_id = ANY($2)
+			  AND state <> 'pending' AND created_at >= now() - interval '7 days'
+			GROUP BY model_candidate_id
+		`, orgID, ids)
+		if err == nil {
+			for rows.Next() {
+				var id uuid.UUID
+				var h candidateHealth
+				var avgMS *float64
+				if err := rows.Scan(&id, &avgMS, &h.Successes, &h.Total); err != nil {
+					continue
+				}
+				if avgMS != nil {
+					h.AvgMS = *avgMS
+				}
+				scores.Health[id] = h
+			}
+			rows.Close()
+		}
+	}
+	if len(accountIDs) > 0 {
+		stateRows, err := d.Pool.Query(ctx, `
+			SELECT provider_account_id, status
+			FROM provider_account_health_states
+			WHERE provider_account_id = ANY($1)
+		`, accountIDs)
+		if err == nil {
+			for stateRows.Next() {
+				var accID uuid.UUID
+				var status string
+				if err := stateRows.Scan(&accID, &status); err == nil {
+					scores.AccountHealth[accID] = status
+				}
+			}
+			stateRows.Close()
+		}
+	}
+	return scores
 }
 
 // loadService 按 org + name 解析 active 模型服务、active 候选与绑定的路由策略。
@@ -469,6 +493,17 @@ func (d Deps) recordFailure(ctx context.Context, keyCtx apiKeyContext, requestID
 	// 让失败用量与汇总报表能归到具体上游,而不是留空。
 	attemptedProvider := string(bifrostErr.ExtraFields.RoutingInfo.Provider)
 	attempted, lookupErr := chain.findCandidate(attemptedProvider, bifrostErr.ExtraFields.RoutingInfo.Model, bifrostErr.ExtraFields.RoutingInfo.Key)
+	if d.OnTransportError != nil && (bifrostErr.StatusCode == nil || *bifrostErr.StatusCode == 0) {
+		providerKey := attemptedProvider
+		if providerKey == "" && attempted.Provider != "" {
+			if mapped, err := bifrostx.MapProvider(attempted.Provider); err == nil {
+				providerKey = string(mapped)
+			}
+		}
+		if providerKey != "" {
+			d.OnTransportError(providerKey)
+		}
+	}
 	var attemptedModel *string
 	if bifrostErr.ExtraFields.RoutingInfo.Model != "" {
 		attemptedModel = stringPtr(bifrostErr.ExtraFields.RoutingInfo.Model)
