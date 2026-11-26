@@ -39,5 +39,7 @@ declare namespace StorageType {
     };
     /** The last login user id */
     lastLoginUserId: string;
+    /** 首页初始化清单的折叠/关闭偏好，按用户 ID 区分 */
+    homeChecklist: Record<string, { collapsed?: boolean; dismissed?: boolean }>;
   }
 }

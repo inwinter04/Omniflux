@@ -5,6 +5,7 @@ import { fetchDashboard } from '@/service/api';
 import { $t } from '@/locales';
 import { useAuthStore } from '@/store/modules/auth';
 import { useRouterPush } from '@/hooks/common/router';
+import { localStg } from '@/utils/storage';
 
 defineOptions({
   name: 'Home'
@@ -130,6 +131,33 @@ const onboardingSteps = computed(() => [
   }
 ]);
 const onboardingDone = computed(() => onboardingSteps.value.every(step => step.done));
+const onboardingDoneCount = computed(() => onboardingSteps.value.filter(step => step.done).length);
+
+type ChecklistPreference = { collapsed?: boolean; dismissed?: boolean };
+
+// 折叠/关闭偏好存在本地浏览器，按用户区分，避免同一浏览器上的其他账号互相影响
+const checklistPreference = ref<ChecklistPreference>(
+  localStg.get('homeChecklist')?.[authStore.userInfo.userId] ?? {}
+);
+
+// 用户没有手动折叠/展开过时：清单全部完成默认折叠，未完成默认展开
+const checklistCollapsed = computed(() => checklistPreference.value.collapsed ?? onboardingDone.value);
+
+function saveChecklistPreference(patch: ChecklistPreference) {
+  const next = { ...checklistPreference.value, ...patch };
+  const all = localStg.get('homeChecklist') ?? {};
+  all[authStore.userInfo.userId] = next;
+  localStg.set('homeChecklist', all);
+  checklistPreference.value = next;
+}
+
+function toggleChecklist() {
+  saveChecklistPreference({ collapsed: !checklistCollapsed.value });
+}
+
+function dismissChecklist() {
+  saveChecklistPreference({ dismissed: true });
+}
 
 function usageCards() {
   return [
@@ -205,13 +233,39 @@ onMounted(() => {
       </NGrid>
     </NCard>
 
-    <NCard :title="$t('business.initializationChecklist')" :bordered="false" class="card-wrapper">
+    <!-- 等首次加载完 dashboard 再渲染，避免已完成的清单先展开再折叠 -->
+    <NCard
+      v-if="dash && !checklistPreference.dismissed"
+      :title="$t('business.initializationChecklist')"
+      :bordered="false"
+      class="card-wrapper"
+    >
       <template #header-extra>
-        <NTag :type="onboardingDone ? 'success' : 'info'" round>
-          {{ onboardingDone ? $t('business.completed') : $t('business.inProgress') }}
-        </NTag>
+        <NSpace align="center" :size="8">
+          <NTag :type="onboardingDone ? 'success' : 'info'" round>
+            {{ onboardingDone ? $t('business.completed') : $t('business.inProgress') }}
+            {{ onboardingDoneCount }}/{{ onboardingSteps.length }}
+          </NTag>
+          <NButton quaternary size="small" @click="toggleChecklist">
+            <template #icon>
+              <SvgIcon :icon="checklistCollapsed ? 'mdi:chevron-down' : 'mdi:chevron-up'" />
+            </template>
+            {{ checklistCollapsed ? $t('business.expandChecklist') : $t('business.collapseChecklist') }}
+          </NButton>
+          <NPopconfirm @positive-click="dismissChecklist">
+            <template #trigger>
+              <NButton quaternary size="small">
+                <template #icon>
+                  <SvgIcon icon="mdi:close" />
+                </template>
+                {{ $t('business.dismissChecklist') }}
+              </NButton>
+            </template>
+            {{ $t('business.dismissChecklistConfirm') }}
+          </NPopconfirm>
+        </NSpace>
       </template>
-      <NSpace vertical :size="10">
+      <NSpace v-if="!checklistCollapsed" vertical :size="10">
         <div v-for="step in onboardingSteps" :key="step.title" class="flex items-center justify-between gap-12px">
           <NSpace align="center" :size="8">
             <SvgIcon
