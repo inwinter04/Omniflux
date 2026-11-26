@@ -54,7 +54,7 @@ docker compose up -d
 | `OMNIFLUX_BOOTSTRAP_EMAIL` | Yes | Initial administrator email |
 | `OMNIFLUX_BOOTSTRAP_PASSWORD` | Yes | Initial administrator password, 8–128 characters containing both letters and numbers (no leading/trailing spaces) |
 
-The full variable list (HTTP address, rate limiting, OpenTelemetry) is documented in the [docs site · Quick start](https://inwinter04.github.io/Omniflux/guide/quick-start) (Chinese).
+The full variable list (HTTP address, rate limiting, OpenTelemetry) is documented in the [docs site · Quick start](https://inwinter04.github.io/Omniflux/en/deployment/configuration).
 
 ### 3. Start the service
 
@@ -91,9 +91,9 @@ Business systems call OpenAI-compatible endpoints with an API key (`Authorizatio
 | `POST /v1/chat/completions` | Chat completions (streaming supported) |
 | `POST /v1/embeddings` | Embeddings |
 
-Routing applies hard constraints, then priority groups, then cost/quality/latency/reliability scoring with fallback; every call is metered with decision records, budgets and per-key rate limits enforced. See the [docs site · Data plane API](https://inwinter04.github.io/Omniflux/api/dataplane) (Chinese).
+Routing applies hard constraints, then priority groups, then cost/quality/latency/reliability scoring with fallback; every call is metered with decision records, budgets and per-key rate limits enforced. See the [docs site · Data plane API](https://inwinter04.github.io/Omniflux/en/reference/dataplane-api).
 
-The full admin API reference is on the [docs site · Admin API](https://inwinter04.github.io/Omniflux/api/admin) (Chinese).
+The full admin API reference is on the [docs site · Admin API](https://inwinter04.github.io/Omniflux/en/reference/admin-api).
 
 ## Development
 
@@ -105,7 +105,7 @@ make build-admin    # build the admin console and sync it into the server
 make docs-build     # build the docs site
 ```
 
-Project layout and frontend development notes: [docs site · Development](https://inwinter04.github.io/Omniflux/guide/development) (Chinese).
+Project layout and frontend development notes: [docs site · Development](https://inwinter04.github.io/Omniflux/en/contributing/development).
 
 ## Security notes
 

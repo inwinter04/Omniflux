@@ -54,7 +54,7 @@ docker compose up -d
 | `OMNIFLUX_BOOTSTRAP_EMAIL` | 是 | 初始管理员邮箱 |
 | `OMNIFLUX_BOOTSTRAP_PASSWORD` | 是 | 初始管理员密码，8–128 位且同时包含字母和数字（首尾不能有空格） |
 
-完整变量列表(监听地址、限流、OpenTelemetry 等)见[文档站 · 快速开始](https://inwinter04.github.io/Omniflux/guide/quick-start)。
+完整变量列表(监听地址、限流、OpenTelemetry 等)见[文档站 · 快速开始](https://inwinter04.github.io/Omniflux/deployment/configuration)。
 
 ### 3. 启动服务
 
@@ -91,9 +91,9 @@ go run ./cmd/omniflux
 | `POST /v1/chat/completions` | 对话接口(支持流式) |
 | `POST /v1/embeddings` | 向量化接口 |
 
-路由按候选配置执行:硬约束过滤 → 优先级分组 → 成本/质量/延迟/可靠性评分 → fallback;每次调用写入用量与决策留痕,预算与限流按 Key 生效。详见[文档站 · 数据面 API](https://inwinter04.github.io/Omniflux/api/dataplane)。
+路由按候选配置执行:硬约束过滤 → 优先级分组 → 成本/质量/延迟/可靠性评分 → fallback;每次调用写入用量与决策留痕,预算与限流按 Key 生效。详见[文档站 · 数据面 API](https://inwinter04.github.io/Omniflux/reference/dataplane-api)。
 
-完整管理面接口清单见[文档站 · 管理面 API](https://inwinter04.github.io/Omniflux/api/admin)。
+完整管理面接口清单见[文档站 · 管理面 API](https://inwinter04.github.io/Omniflux/reference/admin-api)。
 
 ## 开发
 
@@ -105,7 +105,7 @@ make build-admin    # 构建管理台并同步到服务端
 make docs-build     # 构建文档站
 ```
 
-项目结构与前端开发说明见[文档站 · 开发](https://inwinter04.github.io/Omniflux/guide/development)。
+项目结构与前端开发说明见[文档站 · 开发](https://inwinter04.github.io/Omniflux/contributing/development)。
 
 ## 安全说明
 
