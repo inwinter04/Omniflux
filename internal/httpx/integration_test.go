@@ -21,6 +21,7 @@ import (
 	"github.com/inwinter04/omniflux/internal/config"
 	"github.com/inwinter04/omniflux/internal/infra"
 	"github.com/inwinter04/omniflux/internal/mail"
+	"github.com/inwinter04/omniflux/internal/vault"
 )
 
 // 集成测试需要真实 PostgreSQL;设置 OMNIFLUX_TEST_DATABASE_URL 启用,
@@ -83,10 +84,78 @@ func setupIntegration(t *testing.T) *integrationEnv {
 	if err != nil {
 		t.Fatalf("engine: %v", err)
 	}
+	reloadEngine := func(ctx context.Context) error {
+		proxyRows, err := pool.Query(ctx, `
+  SELECT pp.provider_key, p.proxy_type, p.proxy_ciphertext
+  FROM platform_proxy_providers pp
+  JOIN platform_proxies p ON p.id = pp.proxy_id
+ `)
+		if err != nil {
+			return err
+		}
+		defer proxyRows.Close()
+		proxies := make(map[string]bifrostx.ProviderSpec)
+		for proxyRows.Next() {
+			var providerKey, proxyType string
+			var ciphertext []byte
+			if err := proxyRows.Scan(&providerKey, &proxyType, &ciphertext); err != nil {
+				return err
+			}
+			plaintext, err := vault.Decrypt(cfg.MasterKey, ciphertext)
+			if err != nil {
+				return err
+			}
+			proxies[providerKey] = bifrostx.ProviderSpec{ProxyType: proxyType, ProxyURL: string(plaintext)}
+		}
+		if err := proxyRows.Err(); err != nil {
+			return err
+		}
+		rows, err := pool.Query(ctx, `SELECT id, provider, name, base_url, ciphertext FROM provider_accounts WHERE status = 'active'`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		specs := []bifrostx.ProviderSpec{}
+		for rows.Next() {
+			var id uuid.UUID
+			var provider, name string
+			var baseURL *string
+			var ciphertext []byte
+			if err := rows.Scan(&id, &provider, &name, &baseURL, &ciphertext); err != nil {
+				return err
+			}
+			plaintext, err := vault.Decrypt(cfg.MasterKey, ciphertext)
+			if err != nil {
+				return err
+			}
+			providerKey, err := bifrostx.MapProvider(provider)
+			if err != nil {
+				return err
+			}
+			proxy := proxies[string(providerKey)]
+			spec := bifrostx.ProviderSpec{
+				Provider:  provider,
+				AccountID: id.String(),
+				Name:      name,
+				APIKey:    string(plaintext),
+				ProxyType: proxy.ProxyType,
+				ProxyURL:  proxy.ProxyURL,
+			}
+			if baseURL != nil {
+				spec.BaseURL = *baseURL
+			}
+			specs = append(specs, spec)
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		return engine.Reload(ctx, specs)
+	}
 	handler := New(ServerDeps{
 		Logger: logger, Pool: pool, Engine: engine,
 		Auth: auth.NewStore(pool), Mailer: mailer, Env: "development",
 		MasterKey: cfg.MasterKey, APIKeyPepper: cfg.APIKeyPepper,
+		ReloadEngine: reloadEngine,
 	})
 	srv := httptest.NewServer(handler)
 	mailer.settings.PublicBaseURL = srv.URL

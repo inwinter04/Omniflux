@@ -16,7 +16,6 @@ import (
 
 	"github.com/inwinter04/omniflux/internal/auth"
 	"github.com/inwinter04/omniflux/internal/bifrostx"
-	"github.com/inwinter04/omniflux/internal/vault"
 )
 
 // balanceEntry 是一条余额信息;字段可空,取决于厂商接口返回口径。
@@ -42,35 +41,28 @@ func (d ServerDeps) ProviderAccountBalance(w http.ResponseWriter, r *http.Reques
 		adminError(w, http.StatusBadRequest, "PROVIDER_INVALID_ID", "invalid-account-id", nil)
 		return
 	}
-	var provider string
-	var ciphertext []byte
-	err = d.Pool.QueryRow(r.Context(), `
-		SELECT a.provider, c.ciphertext
-		FROM provider_accounts a
-		JOIN provider_credentials c ON c.provider_account_id = a.id
-		WHERE a.id = $1 AND a.organization_id = $2
-	`, accountID, principal.OrganizationID).Scan(&provider, &ciphertext)
+	access, err := d.loadProviderAccess(r.Context(), principal.OrganizationID, accountID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		adminError(w, http.StatusNotFound, "PROVIDER_NOT_FOUND", "provider-account-does-not-exist-or", nil)
 		return
 	}
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "PROVIDER_BALANCE_FAILED", "balance-query-failed", nil)
+		adminError(w, http.StatusInternalServerError, "PROVIDER_BALANCE_FAILED", "failed-to-read-credentials", nil)
 		return
 	}
-	vendor := bifrostx.VendorByID(provider)
+	vendor := bifrostx.VendorByID(access.Provider)
 	if vendor == nil || vendor.BalanceKind == "" {
 		adminError(w, http.StatusBadRequest, "PROVIDER_BALANCE_UNSUPPORTED", "this-provider-does-not-support-balance", nil)
 		return
 	}
-	apiKey, err := vault.Decrypt(d.MasterKey, ciphertext)
+	client, err := balanceHTTPClientFor(access.ProxyType, access.ProxyURL)
 	if err != nil {
-		adminError(w, http.StatusInternalServerError, "PROVIDER_BALANCE_FAILED", "failed-to-decrypt-credentials", nil)
+		adminError(w, http.StatusInternalServerError, "PROVIDER_BALANCE_FAILED", "failed-to-build-provider-proxy", nil)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	balances, qerr := queryVendorBalance(ctx, vendor.ID, vendor.BaseURL, string(apiKey))
+	balances, qerr := queryVendorBalance(ctx, vendor.ID, vendor.BaseURL, access.APIKey, client)
 	if qerr != nil {
 		adminError(w, http.StatusBadGateway, "PROVIDER_BALANCE_QUERY_FAILED", "provider-balance-query-failed", nil)
 		return
@@ -79,29 +71,29 @@ func (d ServerDeps) ProviderAccountBalance(w http.ResponseWriter, r *http.Reques
 }
 
 // queryVendorBalance 按 BalanceKind 调用厂商余额接口并归一化结果。
-func queryVendorBalance(ctx context.Context, vendorID, baseURL, apiKey string) ([]balanceEntry, error) {
+func queryVendorBalance(ctx context.Context, vendorID, baseURL, apiKey string, client *http.Client) ([]balanceEntry, error) {
 	switch bifrostx.VendorByID(vendorID).BalanceKind {
 	case "deepseek":
-		return queryDeepSeekBalance(ctx, apiKey)
+		return queryDeepSeekBalance(ctx, apiKey, client)
 	case "zhipu":
-		return queryZhipuBalance(ctx, vendorID, baseURL, apiKey)
+		return queryZhipuBalance(ctx, vendorID, baseURL, apiKey, client)
 	case "zhipu_plan":
-		return queryZhipuPlanBalance(ctx, vendorID, baseURL, apiKey)
+		return queryZhipuPlanBalance(ctx, vendorID, baseURL, apiKey, client)
 	case "stepfun":
-		return queryStepFunBalance(ctx, vendorID, baseURL, apiKey)
+		return queryStepFunBalance(ctx, vendorID, baseURL, apiKey, client)
 	case "siliconflow":
-		return querySiliconFlowBalance(ctx, vendorID, baseURL, apiKey)
+		return querySiliconFlowBalance(ctx, vendorID, baseURL, apiKey, client)
 	case "openrouter":
-		return queryOpenRouterBalance(ctx, apiKey)
+		return queryOpenRouterBalance(ctx, apiKey, client)
 	case "novita":
-		return queryNovitaBalance(ctx, apiKey)
+		return queryNovitaBalance(ctx, apiKey, client)
 	default:
 		return nil, errors.New("this-provider-does-not-support-balance")
 	}
 }
 
 // balanceGet 请求厂商余额接口并解析 JSON;401/403 转成明确的鉴权错误。
-func balanceGet(ctx context.Context, url string, headers map[string]string) (map[string]any, error) {
+func balanceGet(ctx context.Context, url string, headers map[string]string, client *http.Client) (map[string]any, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, errors.New("failed to build the balance API request")
@@ -110,7 +102,7 @@ func balanceGet(ctx context.Context, url string, headers map[string]string) (map
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
-	resp, err := balanceHTTPClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, errors.New("balance API network request failed; check server network or provider endpoint")
 	}
@@ -131,8 +123,6 @@ func balanceGet(ctx context.Context, url string, headers map[string]string) (map
 	}
 	return payload, nil
 }
-
-var balanceHTTPClient = &http.Client{Timeout: 15 * time.Second}
 
 // balanceF64 从嵌套 JSON 里取数值字段,兼容数字与字符串两种格式。
 func balanceF64(v map[string]any, keys ...string) *float64 {
@@ -166,10 +156,10 @@ func balanceF64(v map[string]any, keys ...string) *float64 {
 // GET https://api.deepseek.com/user/balance
 // 响应: { balance_infos: [{ currency, total_balance, ... }], is_available }
 // is_available 只表示余额是否够调用,不代表 Key 失效,不参与展示判断。
-func queryDeepSeekBalance(ctx context.Context, apiKey string) ([]balanceEntry, error) {
+func queryDeepSeekBalance(ctx context.Context, apiKey string, client *http.Client) ([]balanceEntry, error) {
 	payload, err := balanceGet(ctx, "https://api.deepseek.com/user/balance", map[string]string{
 		"Authorization": "Bearer " + apiKey,
-	})
+	}, client)
 	if err != nil {
 		return nil, err
 	}
@@ -218,11 +208,11 @@ func queryDeepSeekBalance(ctx context.Context, apiKey string) ([]balanceEntry, e
 // GET {open.bigmodel.cn | api.z.ai}/api/biz/account/query-customer-account-report
 // 无公开文档;鉴权头直接放 API Key,不带 Bearer 前缀。
 // 响应: { code, msg, success, data: { balance, availableBalance, ... } },单位为账户币种。
-func queryZhipuBalance(ctx context.Context, vendorID, baseURL, apiKey string) ([]balanceEntry, error) {
+func queryZhipuBalance(ctx context.Context, vendorID, baseURL, apiKey string, client *http.Client) ([]balanceEntry, error) {
 	payload, err := balanceGet(ctx, baseURL+"/api/biz/account/query-customer-account-report", map[string]string{
 		"Authorization":   apiKey,
 		"Accept-Language": "en-US,en",
-	})
+	}, client)
 	if err != nil {
 		return nil, err
 	}
@@ -260,12 +250,12 @@ func queryZhipuBalance(ctx context.Context, vendorID, baseURL, apiKey string) ([
 // type 为 TOKENS_LIMIT/CREDIT_LIMIT,percentage 为已用百分比,通常含 5 小时与每周两个窗口。
 // 按量账户(无套餐)查询时返回 HTTP 200 + 业务错误 {"code":500,"msg":"当前用户不存在coding plan"},
 // 此时回落查询账户余额。鉴权同样不加 Bearer 前缀。
-func queryZhipuPlanBalance(ctx context.Context, vendorID, baseURL, apiKey string) ([]balanceEntry, error) {
+func queryZhipuPlanBalance(ctx context.Context, vendorID, baseURL, apiKey string, client *http.Client) ([]balanceEntry, error) {
 	payload, err := balanceGet(ctx, baseURL+"/api/monitor/usage/quota/limit", map[string]string{
 		"Authorization":   apiKey,
 		"Content-Type":    "application/json",
 		"Accept-Language": "en-US,en",
-	})
+	}, client)
 	if err != nil {
 		// 按量账户的套餐查询是业务错误而非 HTTP 错误;HTTP 层错误直接透出。
 		return nil, err
@@ -276,7 +266,7 @@ func queryZhipuPlanBalance(ctx context.Context, vendorID, baseURL, apiKey string
 		// (如"当前用户不存在coding plan")。只认明确提示无套餐的消息才回落查
 		// 账户余额;其余业务错误(Key 失效等)直接透出,避免掩盖真实故障。
 		if zhipuMsgSaysNoPlan(msg) {
-			return queryZhipuBalance(ctx, vendorID, baseURL, apiKey)
+			return queryZhipuBalance(ctx, vendorID, baseURL, apiKey, client)
 		}
 		if msg == "" {
 			msg = "unknown error"
@@ -351,10 +341,10 @@ func zhipuMsgSaysNoPlan(msg string) bool {
 // ── StepFun ─────────────────────────────────────────────────
 // GET https://api.stepfun.com/v1/accounts
 // 响应: { object, type, balance, total_cash_balance, total_voucher_balance }
-func queryStepFunBalance(ctx context.Context, vendorID, baseURL, apiKey string) ([]balanceEntry, error) {
+func queryStepFunBalance(ctx context.Context, vendorID, baseURL, apiKey string, client *http.Client) ([]balanceEntry, error) {
 	payload, err := balanceGet(ctx, baseURL+"/v1/accounts", map[string]string{
 		"Authorization": "Bearer " + apiKey,
-	})
+	}, client)
 	if err != nil {
 		return nil, err
 	}
@@ -372,10 +362,10 @@ func queryStepFunBalance(ctx context.Context, vendorID, baseURL, apiKey string) 
 // ── SiliconFlow ─────────────────────────────────────────────
 // GET https://api.siliconflow.cn|com/v1/user/info
 // 响应: { code, data: { balance, chargeBalance, totalBalance, status } }
-func querySiliconFlowBalance(ctx context.Context, vendorID, baseURL, apiKey string) ([]balanceEntry, error) {
+func querySiliconFlowBalance(ctx context.Context, vendorID, baseURL, apiKey string, client *http.Client) ([]balanceEntry, error) {
 	payload, err := balanceGet(ctx, baseURL+"/v1/user/info", map[string]string{
 		"Authorization": "Bearer " + apiKey,
-	})
+	}, client)
 	if err != nil {
 		return nil, err
 	}
@@ -395,10 +385,10 @@ func querySiliconFlowBalance(ctx context.Context, vendorID, baseURL, apiKey stri
 // ── OpenRouter ──────────────────────────────────────────────
 // GET https://openrouter.ai/api/v1/credits
 // 响应: { data: { total_credits, total_usage } };remaining = credits - usage。
-func queryOpenRouterBalance(ctx context.Context, apiKey string) ([]balanceEntry, error) {
+func queryOpenRouterBalance(ctx context.Context, apiKey string, client *http.Client) ([]balanceEntry, error) {
 	payload, err := balanceGet(ctx, "https://openrouter.ai/api/v1/credits", map[string]string{
 		"Authorization": "Bearer " + apiKey,
-	})
+	}, client)
 	if err != nil {
 		return nil, err
 	}
@@ -414,10 +404,10 @@ func queryOpenRouterBalance(ctx context.Context, apiKey string) ([]balanceEntry,
 // ── Novita AI ───────────────────────────────────────────────
 // GET https://api.novita.ai/v3/user/balance
 // 响应: { availableBalance, cashBalance, creditLimit, outstandingInvoices };金额单位 0.0001 USD。
-func queryNovitaBalance(ctx context.Context, apiKey string) ([]balanceEntry, error) {
+func queryNovitaBalance(ctx context.Context, apiKey string, client *http.Client) ([]balanceEntry, error) {
 	payload, err := balanceGet(ctx, "https://api.novita.ai/v3/user/balance", map[string]string{
 		"Authorization": "Bearer " + apiKey,
-	})
+	}, client)
 	if err != nil {
 		return nil, err
 	}

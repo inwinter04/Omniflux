@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 )
 
@@ -135,4 +136,128 @@ func TestIntegrationModelServiceCandidateAssociation(t *testing.T) {
 			t.Fatalf("service %s candidate = %#v, want %s", service["name"], candidates[0], expected)
 		}
 	}
+}
+
+func TestIntegrationProviderProxy(t *testing.T) {
+	setupIntegration(t)
+	var proxyRequests int32
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&proxyRequests, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": []any{
+			map[string]any{"id": "proxy-model", "object": "model"},
+		}})
+	}))
+	defer proxy.Close()
+
+	admin := sessionClient(t, "it-admin@test.local", "it-admin-password-123456")
+	code, body := doJSON(t, admin, http.MethodPost, "/api/v1/provider-accounts", map[string]any{
+		"provider": "llama-cpp", "name": "代理测试", "api_key": "sk-proxy-test",
+	})
+	assertAssetStatus(t, code, body, http.StatusOK)
+	accountID := assetDataMap(t, body)["id"].(string)
+
+	code, body = doJSON(t, admin, http.MethodPost, "/api/v1/proxies", map[string]any{
+		"provider_keys": []string{"llama-cpp", "openai"}, "name": "shared-proxy", "proxy_type": "http", "proxy_url": proxy.URL,
+	})
+	assertAssetStatus(t, code, body, http.StatusOK)
+	proxyID := assetDataMap(t, body)["id"].(string)
+	providerKeys, _ := assetDataMap(t, body)["provider_keys"].([]any)
+	if len(providerKeys) != 2 {
+		t.Fatalf("shared proxy provider keys = %#v", providerKeys)
+	}
+
+	code, body = doJSON(t, admin, http.MethodGet, "/api/v1/provider-accounts/"+accountID+"/models", nil)
+	assertAssetStatus(t, code, body, http.StatusOK)
+	models := assetDataMap(t, body)["models"].([]any)
+	if len(models) != 1 || models[0].(map[string]any)["id"] != "proxy-model" {
+		t.Fatalf("proxied discovered models = %#v", models)
+	}
+
+	code, body = doJSON(t, admin, http.MethodPost, "/api/v1/provider-accounts/"+accountID+"/test", nil)
+	assertAssetStatus(t, code, body, http.StatusOK)
+	testResult := assetDataMap(t, body)
+	if testResult["ok"] != true || testResult["reason"] != "connected" {
+		t.Fatalf("proxied provider test result = %#v", testResult)
+	}
+	if atomic.LoadInt32(&proxyRequests) < 2 {
+		t.Fatalf("proxy requests = %d, want at least 2", proxyRequests)
+	}
+
+	code, body = doJSON(t, admin, http.MethodGet, "/api/v1/provider-accounts", nil)
+	assertAssetStatus(t, code, body, http.StatusOK)
+	var account map[string]any
+	for _, raw := range body["data"].([]any) {
+		item := raw.(map[string]any)
+		if item["id"] == accountID {
+			account = item
+			break
+		}
+	}
+	if account == nil || account["proxy_type"] != "http" {
+		t.Fatalf("provider account proxy type = %#v", account)
+	}
+
+	code, body = doJSON(t, admin, http.MethodDelete, "/api/v1/proxies/"+proxyID, nil)
+	assertAssetStatus(t, code, body, http.StatusOK)
+
+	code, body = doJSON(t, admin, http.MethodGet, "/api/v1/provider-accounts", nil)
+	assertAssetStatus(t, code, body, http.StatusOK)
+	for _, raw := range body["data"].([]any) {
+		item := raw.(map[string]any)
+		if item["id"] == accountID && item["proxy_type"] != "none" {
+			t.Fatalf("provider account after deleting proxy = %#v", item)
+		}
+	}
+}
+
+func TestIntegrationProviderProxyGovernance(t *testing.T) {
+	setupIntegration(t)
+	admin := sessionClient(t, "it-admin@test.local", "it-admin-password-123456")
+
+	code, body := doJSON(t, admin, http.MethodGet, "/api/v1/proxies", nil)
+	assertAssetStatus(t, code, body, http.StatusOK)
+	result := assetDataMap(t, body)
+	proxies := result["proxies"].([]any)
+	options := result["provider_options"].([]any)
+	if len(proxies) != 0 {
+		t.Fatalf("initial platform proxies = %#v", proxies)
+	}
+	if len(options) == 0 {
+		t.Fatal("provider options are empty")
+	}
+
+	code, body = doJSON(t, admin, http.MethodPost, "/api/v1/proxies", map[string]any{
+		"provider_keys": []string{"openai", "anthropic"}, "name": "shared-openai-proxy", "proxy_type": "http", "proxy_url": "http://127.0.0.1:3128",
+	})
+	assertAssetStatus(t, code, body, http.StatusOK)
+	proxyID := assetDataMap(t, body)["id"].(string)
+
+	code, body = doJSON(t, admin, http.MethodPatch, "/api/v1/proxies/"+proxyID, map[string]any{
+		"provider_keys": []string{"openai"}, "name": "shared-openai-proxy", "proxy_type": "socks5", "proxy_url": "socks5://127.0.0.1:1080",
+	})
+	assertAssetStatus(t, code, body, http.StatusOK)
+
+	code, body = doJSON(t, admin, http.MethodGet, "/api/v1/proxies", nil)
+	assertAssetStatus(t, code, body, http.StatusOK)
+	proxies = assetDataMap(t, body)["proxies"].([]any)
+	if len(proxies) != 1 {
+		t.Fatalf("platform proxies = %#v", proxies)
+	}
+	updated := proxies[0].(map[string]any)
+	updatedProviderKeys, _ := updated["provider_keys"].([]any)
+	if updated["proxy_type"] != "socks5" || updated["proxy_url"] != "socks5://127.0.0.1:1080" || len(updatedProviderKeys) != 1 {
+		t.Fatalf("updated platform proxy = %#v", updated)
+	}
+
+	code, body = doJSON(t, admin, http.MethodPost, "/api/v1/proxies", map[string]any{
+		"provider_keys": []string{"openai"}, "name": "duplicate-provider", "proxy_type": "http", "proxy_url": "http://127.0.0.1:3129",
+	})
+	assertAssetStatus(t, code, body, http.StatusConflict)
+	if body["reason"] != "platform-proxy-provider-conflict" {
+		t.Fatalf("provider conflict = %#v", body)
+	}
+
+	code, body = doJSON(t, admin, http.MethodDelete, "/api/v1/proxies/"+proxyID, nil)
+	assertAssetStatus(t, code, body, http.StatusOK)
 }

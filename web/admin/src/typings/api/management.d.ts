@@ -66,12 +66,48 @@ declare namespace Api {
       project_id: string;
     }
 
+    type ProviderProxyType = 'none' | 'http' | 'socks5';
+    type PlatformProxyType = 'http' | 'socks5';
+
+    interface PlatformProxy {
+      id: string;
+      name: string;
+      provider_keys: string[];
+      provider_labels: string[];
+      proxy_type: PlatformProxyType;
+      proxy_url?: string;
+      updated_at?: string;
+      active_accounts: number;
+    }
+
+    interface PlatformProxyProviderOption {
+      value: string;
+      label: string;
+    }
+
+    interface PlatformProxyListResult {
+      proxies: PlatformProxy[];
+      provider_options: PlatformProxyProviderOption[];
+    }
+
+    interface CreatePlatformProxyParams {
+      provider_keys: string[];
+      name: string;
+      proxy_type: PlatformProxyType;
+      proxy_url: string;
+    }
+
+    interface UpdatePlatformProxyParams extends Omit<CreatePlatformProxyParams, 'proxy_url'> {
+      proxy_url?: string;
+    }
+
     interface ProviderAccount {
       id: string;
       provider: string;
       name: string;
       region: string | null;
       base_url: string | null;
+      proxy_type: ProviderProxyType;
       billing_currency: string;
       status: string;
       /** 近 24 小时被动健康统计;无流量时为 null */

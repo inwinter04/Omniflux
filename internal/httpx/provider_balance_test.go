@@ -23,7 +23,7 @@ func TestQueryZhipuPlanBalanceUsesQuotaSemantics(t *testing.T) {
 		})
 	}))
 	defer server.Close()
-	entries, err := queryZhipuPlanBalance(t.Context(), "zhipu-glm-coding", server.URL, "test-key")
+	entries, err := queryZhipuPlanBalance(t.Context(), "zhipu-glm-coding", server.URL, "test-key", http.DefaultClient)
 	if err != nil {
 		t.Fatal(err)
 	}

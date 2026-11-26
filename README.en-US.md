@@ -17,9 +17,19 @@ Omniflux is an enterprise AI service control plane that brings model services fr
 
 Starting from v0.1.0, Omniflux is in a stabilization phase; breaking changes to configuration, data models, and administrative APIs will be noted in the release notes.
 
+## Screenshots
+
+The screenshots below come from a local demo environment with simulated data; click an image to view it at full size.
+
+| Console home | Model services |
+| --- | --- |
+| [![Omniflux console home](docs/assets/screenshots/home.en-US.png)](docs/assets/screenshots/home.en-US.png) | [![Model services with routed candidates](docs/assets/screenshots/model-services.en-US.png)](docs/assets/screenshots/model-services.en-US.png) |
+| **Agent registry** | **Usage report** |
+| [![Agent asset management](docs/assets/screenshots/agents.en-US.png)](docs/assets/screenshots/agents.en-US.png) | [![Usage observability report](docs/assets/screenshots/usage.en-US.png)](docs/assets/screenshots/usage.en-US.png) |
+
 ## Features
 
-- **Unified model services** — separate business-facing logical models from provider deployments, with plan/region presets, automatic model discovery and batch selection, organization/department/project grants, independent status controls, and multidimensional health insights.
+- **Unified model services** — separate business-facing logical models from provider deployments, with plan/region presets, automatic model discovery and batch selection, platform-level proxy governance with shared or provider-specific outbound proxies, organization/department/project grants, independent status controls, and multidimensional health insights.
 - **Balance and cost governance** — declare each model service's settlement currency, aggregate USD, CNY and other currencies separately, preserve original balance units, and keep quota-window usage and reset times distinct from monetary balances.
 - **Governed routing** — select candidates using hard constraints plus cost, quality, latency, and reliability scores.
 - **Multi-tenant & fine-grained RBAC governance** — organize departments, projects, applications, users, custom permission group presets, per-user Allow/Deny overrides, zero-permission `pending` guest isolation, and API keys.
@@ -111,7 +121,7 @@ Project layout and frontend development notes: [docs site · Development](https:
 
 - Administrator passwords are hashed with Argon2id.
 - Admin sessions are stored server-side; cookies use `HttpOnly` and `SameSite=Strict`.
-- Provider credentials are encrypted at rest with AES-256-GCM.
+- Provider credentials and proxy URLs are encrypted at rest with AES-256-GCM.
 
 ## License
 

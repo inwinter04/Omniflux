@@ -382,6 +382,18 @@ export const generatedRoutes: GeneratedRoute[] = [
     },
     children: [
       {
+        name: 'system_proxies',
+        path: '/system/proxies',
+        component: 'view.system_proxies',
+        meta: {
+          title: 'system_proxies',
+          i18nKey: 'route.system_proxies',
+          order: 2,
+          icon: 'mdi:proxy',
+          roles: ['platform_admin']
+        }
+      },
+      {
         name: 'system_settings',
         path: '/system/settings',
         component: 'view.system_settings',

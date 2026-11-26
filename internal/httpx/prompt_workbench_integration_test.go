@@ -5,11 +5,16 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/inwinter04/omniflux/internal/bifrostx"
 )
@@ -54,15 +59,32 @@ func TestIntegrationPromptWorkbench(t *testing.T) {
 	}))
 	defer upstream.Close()
 
+	upstreamURL, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reverseProxy := httputil.NewSingleHostReverseProxy(upstreamURL)
+	var proxyRequests int32
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&proxyRequests, 1)
+		if r.Method == http.MethodConnect {
+			tunnelProxyConnection(w, r)
+			return
+		}
+		reverseProxy.ServeHTTP(w, r)
+	}))
+	defer proxy.Close()
+
 	admin := sessionClient(t, "it-admin@test.local", "it-admin-password-123456")
 	code, body := doJSON(t, admin, http.MethodPost, "/api/v1/provider-accounts", map[string]any{
-		"provider": "openai_compatible", "name": "workbench-upstream", "base_url": upstream.URL, "api_key": "sk-workbench-test-0123456789",
+		"provider": "llama-cpp", "name": "workbench-upstream", "base_url": upstream.URL, "api_key": "sk-workbench-test-0123456789",
 	})
 	assertAssetStatus(t, code, body, http.StatusOK)
 	accountID := assetDataMap(t, body)["id"].(string)
 	if err := env.engine.Reload(t.Context(), []bifrostx.ProviderSpec{{
-		Provider: "openai_compatible", AccountID: accountID, Name: "workbench-upstream",
+		Provider: "llama-cpp", AccountID: accountID, Name: "workbench-upstream",
 		APIKey: "sk-workbench-test-0123456789", BaseURL: upstream.URL,
+		ProxyType: "http", ProxyURL: proxy.URL,
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -171,4 +193,34 @@ func TestIntegrationPromptWorkbench(t *testing.T) {
 	if atomic.LoadInt32(&requests) < 6 {
 		t.Fatalf("upstream requests = %d, want at least 6", requests)
 	}
+	if atomic.LoadInt32(&proxyRequests) < 1 {
+		t.Fatalf("proxy connections = %d, want at least 1", proxyRequests)
+	}
+}
+
+func tunnelProxyConnection(w http.ResponseWriter, r *http.Request) {
+	upstreamConn, err := net.DialTimeout("tcp", r.URL.Host, 5*time.Second)
+	if err != nil {
+		http.Error(w, "proxy connect failed", http.StatusBadGateway)
+		return
+	}
+	defer upstreamConn.Close()
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "proxy hijacking unsupported", http.StatusInternalServerError)
+		return
+	}
+	clientConn, clientBuf, err := hijacker.Hijack()
+	if err != nil {
+		return
+	}
+	defer clientConn.Close()
+	if _, err := clientConn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n")); err != nil {
+		return
+	}
+	go func() {
+		_, _ = io.Copy(upstreamConn, clientBuf)
+		_ = upstreamConn.Close()
+	}()
+	_, _ = io.Copy(clientConn, upstreamConn)
 }

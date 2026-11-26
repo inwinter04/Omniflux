@@ -38,6 +38,7 @@ type providerAccountResponse struct {
 	Name             string     `json:"name"`
 	Region           *string    `json:"region"`
 	BaseURL          *string    `json:"base_url"`
+	ProxyType        string     `json:"proxy_type"`
 	BillingCurrency  string     `json:"billing_currency"`
 	Status           string     `json:"status"`
 	Requests24h      int64      `json:"requests_24h"`
@@ -65,6 +66,11 @@ func (d ServerDeps) ProviderAccounts(w http.ResponseWriter, r *http.Request) {
 	if !ok || d.requirePermission(w, principal, auth.PermProviderRead) != nil {
 		return
 	}
+	proxyTypes, err := loadPlatformProxyTypes(r.Context(), d.Pool)
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "PROVIDER_LIST_FAILED", "failed-to-query-provider-accounts", nil)
+		return
+	}
 	rows, err := d.Pool.Query(r.Context(), `
 		SELECT id, provider, name, region, base_url, billing_currency, status, created_at, updated_at
 		FROM provider_accounts WHERE organization_id = $1 ORDER BY created_at DESC
@@ -83,6 +89,16 @@ func (d ServerDeps) ProviderAccounts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		item.ID = id.String()
+		providerKey, err := bifrostx.MapProvider(item.Provider)
+		if err != nil {
+			adminError(w, http.StatusInternalServerError, "PROVIDER_LIST_FAILED", "failed-to-query-provider-accounts", nil)
+			return
+		}
+		if proxyType, exists := proxyTypes[string(providerKey)]; exists {
+			item.ProxyType = proxyType
+		} else {
+			item.ProxyType = bifrostx.ProxyTypeNone
+		}
 		list = append(list, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -378,7 +394,9 @@ func (d ServerDeps) UpdateProviderAccount(w http.ResponseWriter, r *http.Request
 	var oldName, provider, oldBillingCurrency string
 	var oldRegion, oldBaseURL *string
 	err = d.Pool.QueryRow(r.Context(), `
-		SELECT name, provider, billing_currency, region, base_url FROM provider_accounts WHERE id = $1 AND organization_id = $2
+		SELECT name, provider, billing_currency, region, base_url
+		FROM provider_accounts
+		WHERE id = $1 AND organization_id = $2
 	`, accountID, principal.OrganizationID).Scan(&oldName, &provider, &oldBillingCurrency, &oldRegion, &oldBaseURL)
 	if errors.Is(err, pgx.ErrNoRows) {
 		adminError(w, http.StatusNotFound, "PROVIDER_NOT_FOUND", "provider-account-does-not-exist-or", nil)
@@ -444,7 +462,8 @@ func (d ServerDeps) UpdateProviderAccount(w http.ResponseWriter, r *http.Request
 			auditJSON(map[string]any{"name": oldName, "region": oldRegion, "base_url": oldBaseURL,
 				"billing_currency": oldBillingCurrency, "credentials_rotated": false}),
 			auditJSON(map[string]any{"name": body.Name, "region": body.Region, "base_url": body.BaseURL,
-				"billing_currency": billingCurrency, "credentials_rotated": rotateCredential}))
+				"billing_currency":    billingCurrency,
+				"credentials_rotated": rotateCredential}))
 		return err
 	})
 	if err != nil {
@@ -469,16 +488,12 @@ type providerTestResult struct {
 	StatusCode int    `json:"status_code,omitempty"`
 }
 
-var providerHTTPClient = &http.Client{
-	CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-		return http.ErrUseLastResponse
-	},
-}
-
 type providerAccess struct {
-	Provider string
-	BaseURL  *string
-	APIKey   string
+	Provider  string
+	BaseURL   *string
+	APIKey    string
+	ProxyType string
+	ProxyURL  string
 }
 
 func (d ServerDeps) loadProviderAccess(ctx context.Context, organizationID, accountID uuid.UUID) (providerAccess, error) {
@@ -498,6 +513,20 @@ func (d ServerDeps) loadProviderAccess(ctx context.Context, organizationID, acco
 		return access, err
 	}
 	access.APIKey = string(plaintext)
+	providerKey, err := bifrostx.MapProvider(access.Provider)
+	if err != nil {
+		return access, err
+	}
+	proxy, err := loadPlatformProxyForProvider(ctx, d.Pool, d.MasterKey, string(providerKey))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			proxy = platformProxy{Type: bifrostx.ProxyTypeNone}
+		} else {
+			return access, err
+		}
+	}
+	access.ProxyType = proxy.Type
+	access.ProxyURL = proxy.URL
 	return access, nil
 }
 
@@ -523,6 +552,11 @@ func (d ServerDeps) TestProviderAccount(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	client, err := providerHTTPClientFor(access.ProxyType, access.ProxyURL)
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "PROVIDER_TEST_FAILED", "failed-to-build-provider-proxy", nil)
+		return
+	}
 	testURL, headers, err := providerProbeRequest(access.Provider, access.BaseURL, access.APIKey)
 	if err != nil {
 		adminError(w, http.StatusBadRequest, "PROVIDER_TEST_UNSUPPORTED",
@@ -539,7 +573,7 @@ func (d ServerDeps) TestProviderAccount(w http.ResponseWriter, r *http.Request) 
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
-	resp, err := providerHTTPClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		adminOK(w, providerTestResult{OK: false, Reason: "network_error"})
 		return

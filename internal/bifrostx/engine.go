@@ -16,6 +16,8 @@ type ProviderSpec struct {
 	Name           string
 	APIKey         string
 	BaseURL        string
+	ProxyType      string
+	ProxyURL       string
 	AllowedModels  []string
 	Weight         float64
 	TimeoutSeconds int
@@ -79,6 +81,7 @@ func NewAccount(specs []ProviderSpec) (*Account, error) {
 	byProvider := make(map[schemas.ModelProvider][]ProviderSpec)
 	baseURLs := make(map[schemas.ModelProvider]string)
 	blankBaseURLs := make(map[schemas.ModelProvider]bool)
+	proxySignatures := make(map[schemas.ModelProvider]string)
 	for _, spec := range specs {
 		provider, err := resolveProviderKey(spec.Provider)
 		if err != nil {
@@ -87,6 +90,14 @@ func NewAccount(specs []ProviderSpec) (*Account, error) {
 		if spec.APIKey == "" && provider != schemas.Bedrock {
 			return nil, fmt.Errorf("provider account %q has no credential", spec.Name)
 		}
+		proxySignature, err := ProxySignature(spec.ProxyType, spec.ProxyURL)
+		if err != nil {
+			return nil, fmt.Errorf("provider account %q: %w", spec.Name, err)
+		}
+		if previous, exists := proxySignatures[provider]; exists && previous != proxySignature {
+			return nil, fmt.Errorf("provider %s has conflicting proxy configurations; set the same proxy for every account", provider)
+		}
+		proxySignatures[provider] = proxySignature
 		if spec.BaseURL == "" {
 			blankBaseURLs[provider] = true
 		} else {
@@ -146,6 +157,10 @@ func (a *Account) GetConfigForProvider(provider schemas.ModelProvider) (*schemas
 	if specs[0].MaxRetries >= 0 {
 		retries = specs[0].MaxRetries
 	}
+	proxyConfig, err := BuildProxyConfig(specs[0].ProxyType, specs[0].ProxyURL)
+	if err != nil {
+		return nil, fmt.Errorf("provider %q: %w", provider, err)
+	}
 	config := &schemas.ProviderConfig{
 		NetworkConfig: schemas.NetworkConfig{
 			BaseURL:                        baseURL,
@@ -154,6 +169,7 @@ func (a *Account) GetConfigForProvider(provider schemas.ModelProvider) (*schemas
 			AllowPrivateNetwork:            strings.Contains(baseURL, "localhost") || strings.Contains(baseURL, "127.0.0.1"),
 		},
 		ConcurrencyAndBufferSize: schemas.DefaultConcurrencyAndBufferSize,
+		ProxyConfig:              proxyConfig,
 	}
 	if vendor := VendorByID(string(provider)); vendor != nil {
 		vendorBaseURL := vendor.BaseURL

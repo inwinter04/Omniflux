@@ -155,12 +155,42 @@ func run() error {
 
 // loadProviderSpecs 从数据库读取 active Provider 账号并解密凭据,构建上游引擎配置。
 func loadProviderSpecs(ctx context.Context, pool *pgxpool.Pool, masterKey []byte) ([]bifrostx.ProviderSpec, error) {
+	proxyRows, err := pool.Query(ctx, `
+  SELECT pp.provider_key, p.proxy_type, p.proxy_ciphertext
+  FROM platform_proxy_providers pp
+  JOIN platform_proxies p ON p.id = pp.proxy_id
+ `)
+	if err != nil {
+		return nil, err
+	}
+	defer proxyRows.Close()
+	type platformProxyConfig struct {
+		proxyType string
+		proxyURL  string
+	}
+	proxies := make(map[string]platformProxyConfig)
+	for proxyRows.Next() {
+		var providerKey, proxyType string
+		var proxyCiphertext []byte
+		if err := proxyRows.Scan(&providerKey, &proxyType, &proxyCiphertext); err != nil {
+			return nil, err
+		}
+		plaintext, err := vault.Decrypt(masterKey, proxyCiphertext)
+		if err != nil {
+			return nil, err
+		}
+		proxies[providerKey] = platformProxyConfig{proxyType: proxyType, proxyURL: string(plaintext)}
+	}
+	if err := proxyRows.Err(); err != nil {
+		return nil, err
+	}
+
 	rows, err := pool.Query(ctx, `
-		SELECT a.id, a.provider, a.name, a.base_url, c.ciphertext
-		FROM provider_accounts a
-		JOIN provider_credentials c ON c.provider_account_id = a.id
-		WHERE a.status = 'active'
-	`)
+  SELECT a.id, a.provider, a.name, a.base_url, c.ciphertext
+  FROM provider_accounts a
+  JOIN provider_credentials c ON c.provider_account_id = a.id
+  WHERE a.status = 'active'
+ `)
 	if err != nil {
 		return nil, err
 	}
@@ -178,11 +208,18 @@ func loadProviderSpecs(ctx context.Context, pool *pgxpool.Pool, masterKey []byte
 		if err != nil {
 			return nil, err
 		}
+		providerKey, err := bifrostx.MapProvider(provider)
+		if err != nil {
+			return nil, err
+		}
+		proxy := proxies[string(providerKey)]
 		spec := bifrostx.ProviderSpec{
 			Provider:  provider,
 			AccountID: id.String(),
 			Name:      name,
 			APIKey:    string(plaintext),
+			ProxyType: proxy.proxyType,
+			ProxyURL:  proxy.proxyURL,
 		}
 		if baseURL != nil {
 			spec.BaseURL = *baseURL

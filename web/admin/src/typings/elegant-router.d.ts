@@ -50,6 +50,7 @@ declare module "@elegant-router/types" {
     "register": "/register";
     "reset-password": "/reset-password";
     "system": "/system";
+    "system_proxies": "/system/proxies";
     "system_settings": "/system/settings";
     "verify-email": "/verify-email";
   };
@@ -145,6 +146,7 @@ declare module "@elegant-router/types" {
     | "organization_departments"
     | "organization_organizations"
     | "organization_projects"
+    | "system_proxies"
     | "system_settings"
   >;
 

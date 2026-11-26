@@ -68,6 +68,39 @@ export function fetchDeleteApplication(id: string) {
   return request({ url: `/applications/${id}`, method: 'delete' });
 }
 
+/** Get platform proxies and selectable provider options */
+export function fetchPlatformProxies() {
+  return request<Api.Management.PlatformProxyListResult>({
+    url: '/proxies'
+  });
+}
+
+/** Create a platform proxy */
+export function fetchCreatePlatformProxy(params: Api.Management.CreatePlatformProxyParams) {
+  return request<Api.Management.PlatformProxy>({
+    url: '/proxies',
+    method: 'post',
+    data: params
+  });
+}
+
+/** Update a platform proxy */
+export function fetchUpdatePlatformProxy(id: string, params: Api.Management.UpdatePlatformProxyParams) {
+  return request<Api.Management.PlatformProxy>({
+    url: `/proxies/${id}`,
+    method: 'patch',
+    data: params
+  });
+}
+
+/** Delete a platform proxy */
+export function fetchDeletePlatformProxy(id: string) {
+  return request({
+    url: `/proxies/${id}`,
+    method: 'delete'
+  });
+}
+
 /** Get provider accounts of the current organization (credentials excluded) */
 export function fetchProviderAccounts() {
   return request<Api.Management.ProviderAccount[]>({

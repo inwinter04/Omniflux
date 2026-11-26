@@ -44,6 +44,11 @@ func (d ServerDeps) ProviderModels(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusInternalServerError, "PROVIDER_MODELS_FAILED", "failed-to-read-credentials", nil)
 		return
 	}
+	client, err := providerHTTPClientFor(access.ProxyType, access.ProxyURL)
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "PROVIDER_MODELS_FAILED", "failed-to-build-provider-proxy", nil)
+		return
+	}
 	modelsURL, headers, err := providerProbeRequest(access.Provider, access.BaseURL, access.APIKey)
 	if err != nil {
 		adminError(w, http.StatusBadRequest, "PROVIDER_MODELS_UNSUPPORTED", "models-cannot-be-fetched-automatically-for", nil)
@@ -59,7 +64,7 @@ func (d ServerDeps) ProviderModels(w http.ResponseWriter, r *http.Request) {
 	for key, value := range headers {
 		req.Header.Set(key, value)
 	}
-	resp, err := providerHTTPClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		adminError(w, http.StatusBadGateway, "PROVIDER_MODELS_UNREACHABLE", "unable-to-connect-to-the-upstream", nil)
 		return

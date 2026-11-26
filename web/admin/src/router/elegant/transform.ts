@@ -196,6 +196,7 @@ const routeMap: RouteMap = {
   "register": "/register",
   "reset-password": "/reset-password",
   "system": "/system",
+  "system_proxies": "/system/proxies",
   "system_settings": "/system/settings",
   "verify-email": "/verify-email"
 };

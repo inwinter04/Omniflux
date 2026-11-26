@@ -29,7 +29,7 @@ import { usePermission } from '@/hooks/common/permission';
 
 defineOptions({ name: 'ModelManagementProviders' });
 
-const { has } = usePermission();
+const { has, isPlatformAdmin } = usePermission();
 const canManage = computed(() => has('provider:manage'));
 
 function providerTestMessage(result: Api.Management.ProviderTestResult) {
@@ -117,6 +117,13 @@ const editRules = computed<FormRules>(() => ({
   }
 }));
 
+
+function proxyTypeText(value: Api.Management.ProviderProxyType) {
+  if (value === 'http') return $t('business.proxy-http');
+  if (value === 'socks5') return $t('business.proxy-socks5');
+  return $t('business.proxy-none');
+}
+
 const selectedVendor = computed(() => findVendor(formModel.provider));
 const editVendor = computed(() => findVendor(editModel.provider));
 const versionOptions = computed(() =>
@@ -161,78 +168,71 @@ function openApiKeyUrl() {
 
 // 列顺序把状态、健康等关键信息排在前面:列多于一屏宽度时,这些列在常见窗口下仍然可见,其余列横向滚动查看。
 const columns = computed<DataTableColumns<Api.Management.ProviderAccount>>(() => [
-  { title: $t('business.name'), key: 'name', ellipsis: { tooltip: true }, minWidth: 150 },
   {
-    title: $t('business.provider'),
-    key: 'provider',
-    width: 140,
-    render: row => providerLabel(row.provider)
-  },
-  {
-    title: $t('business.status'),
-    key: 'status',
-    width: 90,
+    title: $t('business.provider-account-overview'),
+    key: 'name',
+    minWidth: 220,
     render: row =>
-      h(
-        NTag,
-        { type: statusTagType(row.status), size: 'small', round: true },
-        { default: () => statusText(row.status, 'account') }
-      )
-  },
-  {
-    title: $t('business.healthy'),
-    key: 'health_status',
-    width: 160,
-    render: row =>
-      h('span', { title: healthSummary(row) }, [
-        h(
-          NTag,
-          {
-            type: healthTagType(row.health_status),
-            size: 'small',
-            round: true
-          },
-          { default: () => healthStatusText(row.health_status) }
-        ),
-        row.requests_24h > 0
-          ? h('span', { class: 'ml-6px text-12px text-#6b7280' }, `${Math.round((row.success_rate_24h ?? 0) * 100)}%`)
-          : null
+      h('div', { class: 'flex flex-col gap-2px' }, [
+        h('span', { class: 'font-medium' }, row.name),
+        h('span', { class: 'text-12px text-#6b7280' }, providerLabel(row.provider))
       ])
   },
   {
-    title: $t('business.service-version'),
+    title: $t('business.status-health'),
+    key: 'status',
+    width: 150,
+    render: row =>
+      h('div', { class: 'flex flex-col items-start gap-4px' }, [
+        h(
+          NTag,
+          { type: statusTagType(row.status), size: 'small', round: true },
+          { default: () => statusText(row.status, 'account') }
+        ),
+        h('div', { class: 'flex items-center gap-4px', title: healthSummary(row) }, [
+          h(
+            NTag,
+            { type: healthTagType(row.health_status), size: 'small', round: true },
+            { default: () => healthStatusText(row.health_status) }
+          ),
+          row.requests_24h > 0
+            ? h('span', { class: 'text-12px text-#6b7280' }, `${Math.round((row.success_rate_24h ?? 0) * 100)}%`)
+            : null
+        ])
+      ])
+  },
+  {
+    title: $t('business.version-region'),
     key: 'version',
-    width: 160,
-    render: row => providerVersionLabel(findVendor(row.provider))
+    width: 170,
+    render: row =>
+      h('div', { class: 'flex flex-col gap-2px' }, [
+        h('span', {}, providerVersionLabel(findVendor(row.provider))),
+        h('span', { class: 'text-12px text-#6b7280' }, row.region ?? '-')
+      ])
   },
   {
     title: $t('business.settlement-currency'),
     key: 'billing_currency',
-    width: 100
+    width: 110,
+    render: row => h('span', {}, row.billing_currency)
   },
   {
-    title: $t('business.region'),
-    key: 'region',
+    title: $t('business.proxy'),
+    key: 'proxy_type',
     width: 100,
-    render: row => row.region ?? '-'
+    render: row => h('span', {}, proxyTypeText(row.proxy_type))
   },
   {
     title: $t('business.api-endpoint'),
     key: 'base_url',
-    minWidth: 240,
-    ellipsis: { tooltip: true },
-    render: row => row.base_url ?? findVendor(row.provider)?.api_base_url ?? '-'
-  },
-  {
-    title: $t('business.created-at'),
-    key: 'created_at',
-    width: 170,
-    render: row => formatTime(row.created_at)
+    minWidth: 260,
+    render: row => h('span', { class: 'break-all' }, row.base_url ?? findVendor(row.provider)?.api_base_url ?? '-')
   },
   {
     title: $t('business.actions'),
     key: 'actions',
-    width: 310,
+    width: 300,
     // 操作列固定在右侧:列多于一屏宽度时,行内操作不用横向滚动也能点到。
     fixed: 'right',
     render(row) {
@@ -315,7 +315,6 @@ const columns = computed<DataTableColumns<Api.Management.ProviderAccount>>(() =>
     }
   }
 ]);
-
 async function loadCatalog() {
   catalogLoading.value = true;
   try {
@@ -567,6 +566,9 @@ onMounted(async () => {
     <NCard :title="$t('business.provider-account')" :bordered="false" class="card-wrapper">
       <template #header-extra>
         <NSpace>
+          <NButton v-if="isPlatformAdmin" type="primary" quaternary @click="router.push('/system/proxies')">
+            {{ $t('business.proxy-governance') }}
+          </NButton>
           <NButton quaternary type="primary" :loading="loading" @click="loadData">{{ $t('business.refresh') }}</NButton>
           <NButton v-if="canManage" type="primary" @click="openCreate">{{ $t('business.create-account') }}</NButton>
         </NSpace>
@@ -576,7 +578,7 @@ onMounted(async () => {
         :data="list"
         :loading="loading"
         :bordered="false"
-        :scroll-x="1450"
+        :scroll-x="1310"
         :row-key="row => row.id"
       />
     </NCard>

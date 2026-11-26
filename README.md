@@ -17,9 +17,19 @@ Omniflux 是一个面向企业的 AI 服务控制平面,用于把分散在多个
 
 项目自 v0.1.0 起进入稳定化迭代,配置项、数据模型与管理 API 的破坏性变更将在 Release 说明中标注。
 
+## 界面截图
+
+以下截图来自本地演示环境,数据为模拟生成;点击图片可查看原图。
+
+| 控制台首页 | 模型服务 |
+| --- | --- |
+| [![Omniflux 控制台首页](docs/assets/screenshots/home.zh-CN.png)](docs/assets/screenshots/home.zh-CN.png) | [![模型服务与候选路由](docs/assets/screenshots/model-services.zh-CN.png)](docs/assets/screenshots/model-services.zh-CN.png) |
+| **智能体管理** | **用量报表** |
+| [![智能体资产管理](docs/assets/screenshots/agents.zh-CN.png)](docs/assets/screenshots/agents.zh-CN.png) | [![用量观测报表](docs/assets/screenshots/usage.zh-CN.png)](docs/assets/screenshots/usage.zh-CN.png) |
+
 ## 特性
 
-- **统一模型服务**:通过逻辑模型服务隔离业务调用与真实上游模型,支持厂商套餐/地区、模型发现与批量选择、组织/部门/项目授权、独立启停和多维健康画像。
+- **统一模型服务**:通过逻辑模型服务隔离业务调用与真实上游模型,支持厂商套餐/地区、模型发现与批量选择、平台级代理治理（可为多个模型厂商共用或独立配置出站代理）、组织/部门/项目授权、独立启停和多维健康画像。
 - **余额与成本治理**:按模型服务声明结算币种,分别汇总 USD、CNY 等多币种成本;账户余额保留原币种与单位,套餐限额展示已用/剩余比例和重置时间,避免货币、积分与额度窗口混淆。
 - **治理化路由**:基于硬约束、成本、质量、延迟与可靠性评分选择候选模型,并记录路由决策。
 - **多租户与细粒度权限治理**:组织、部门、项目、应用、用户、自定义权限组预设与节点级 Allow/Deny 微调、访客(`pending`)零权限隔离及 API Key 分层管理。
@@ -111,7 +121,7 @@ make docs-build     # 构建文档站
 
 - 管理员密码使用 Argon2id 哈希。
 - 管理台会话保存在服务端,Cookie 使用 `HttpOnly` 与 `SameSite=Strict`。
-- Provider 凭据使用 AES-256-GCM 加密存储。
+- Provider 凭据与代理地址使用 AES-256-GCM 加密存储。
 
 ## License
 

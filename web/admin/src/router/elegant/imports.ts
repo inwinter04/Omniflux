@@ -43,5 +43,6 @@ export const views: Record<LastLevelRouteKey, RouteComponent | (() => Promise<Ro
   organization_departments: () => import("@/views/organization/departments/index.vue"),
   organization_organizations: () => import("@/views/organization/organizations/index.vue"),
   organization_projects: () => import("@/views/organization/projects/index.vue"),
+  system_proxies: () => import("@/views/system/proxies/index.vue"),
   system_settings: () => import("@/views/system/settings/index.vue"),
 };
