@@ -155,7 +155,7 @@ For organization-level budgets, `scope_id` may be omitted or set to `organizatio
 | `POST /api/v1/provider-accounts` | Create a provider account (credentials are stored encrypted; specify `api_protocol` such as `openai_responses`, `openai_chat`, `anthropic_messages`, `gemini_native`, `azure_openai`, `bedrock`, or `vertex`; OpenAI/Anthropic/Gemini/compatible accounts isolate `base_url` and protocol per account) |
 | `PATCH /api/v1/provider-accounts/{id}` | Update a provider account (supports updating `api_protocol`, name, endpoint, and rotating the API Key; leave API Key blank to keep it unchanged) |
 | `PATCH /api/v1/provider-accounts/{id}/status` | Enable or disable an account and refresh the upstream engine |
-| `GET /api/v1/provider-accounts/{id}/models` | Fetch the upstream model list using the saved credentials, and fill in known input/output prices from models.dev |
+| `GET /api/v1/provider-accounts/{id}/models` | Fetch the upstream model list using the saved credentials, and fill in known input/output prices from models.dev; plan accounts return a zero in-plan token price |
 | `GET /api/v1/provider-accounts/{id}/balance` | Query supported account balances and plan quotas, returned in the original currency; quotas include used/remaining percentage and reset time |
 | `POST /api/v1/provider-accounts/{id}/test` | Manual connectivity and credential probe (persists check history and updates health state) |
 | `GET /api/v1/provider-accounts/{id}/health-history` | Query 24h/7d availability, avg/P95 latency, and recent check records for an account |

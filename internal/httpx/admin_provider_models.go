@@ -118,6 +118,10 @@ func (d ServerDeps) ProviderModels(w http.ResponseWriter, r *http.Request) {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
+	pricingSource := "models.dev"
+	if bifrostx.IsPlanPriceProvider(access.Provider) {
+		pricingSource = "plan"
+	}
 	prices := bifrostx.LookupModelPrices(ctx, access.Provider, ids)
 	models := make([]providerModelResponse, 0, len(ids))
 	for _, id := range ids {
@@ -128,5 +132,5 @@ func (d ServerDeps) ProviderModels(w http.ResponseWriter, r *http.Request) {
 		}
 		models = append(models, item)
 	}
-	adminOK(w, map[string]any{"models": models, "pricing_source": "models.dev"})
+	adminOK(w, map[string]any{"models": models, "pricing_source": pricingSource})
 }

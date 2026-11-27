@@ -178,7 +178,7 @@
 | `POST /api/v1/provider-accounts` | 创建供应商账号(凭据加密入库;支持指定 `api_protocol`:`openai_responses`/`openai_chat`/`anthropic_messages`/`gemini_native`/`azure_openai`/`bedrock`/`vertex`;OpenAI/Anthropic/Gemini/兼容账号按账号隔离,支持各自独立的 `base_url` 与协议) |
 | `PATCH /api/v1/provider-accounts/{id}` | 更新供应商账号(支持调整 `api_protocol`、名称、端点与 API Key 轮换,API Key 留空保持不变) |
 | `PATCH /api/v1/provider-accounts/{id}/status` | 启用或停用账号,并刷新上游引擎 |
-| `GET /api/v1/provider-accounts/{id}/models` | 使用已保存凭据获取上游模型列表,并补全 models.dev 中的已知输入/输出价格 |
+| `GET /api/v1/provider-accounts/{id}/models` | 使用已保存凭据获取上游模型列表,并补全 models.dev 中的已知输入/输出价格;套餐类账号返回套餐内 0 价格 |
 | `GET /api/v1/provider-accounts/{id}/balance` | 查询支持的账户余额与套餐限额,按原币种返回;限额含已用/剩余百分比及重置时间 |
 | `POST /api/v1/provider-accounts/{id}/test` | 手动连通性与凭据检测(结果落库并刷新健康态) |
 | `GET /api/v1/provider-accounts/{id}/health-history` | 查询单账号 24h/7d 可用率、平均/P95 延迟与近期检测明细 |
