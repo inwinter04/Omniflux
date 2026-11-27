@@ -20,48 +20,24 @@ func (d Deps) GeminiListModels(w http.ResponseWriter, r *http.Request) {
 		writeProtocolError(w, r, http.StatusUnauthorized, "missing_api_key", "Missing API key. Provide x-goog-api-key or ?key=<key>.")
 		return
 	}
-	rows, err := d.Pool.Query(r.Context(), `
-		SELECT s.name FROM model_services s
-		WHERE s.organization_id = $1 AND s.status = 'active'
-		  AND EXISTS (
-		    SELECT 1 FROM model_service_grants g
-		    WHERE g.model_service_id = s.id AND g.organization_id = $1
-		      AND g.actions && ARRAY['read','invoke']::text[]
-		      AND ((g.subject_type = 'organization' AND g.subject_id = $1)
-		        OR (g.subject_type = 'project' AND g.subject_id = $2)
-		        OR (g.subject_type = 'department' AND g.subject_id = (
-		          SELECT p.department_id FROM projects p WHERE p.id = $2 AND p.organization_id = $1
-		        )))
-		  )
-		ORDER BY s.name ASC
-	`, keyCtx.OrganizationID, keyCtx.ProjectID)
+	items, err := d.listAuthorizedModels(r.Context(), keyCtx)
 	if err != nil {
 		writeProtocolError(w, r, http.StatusInternalServerError, "internal_error", "Failed to query model list.")
 		return
 	}
-	defer rows.Close()
 
 	type geminiModelEntry struct {
 		Name                       string   `json:"name"`
 		DisplayName                string   `json:"displayName"`
 		SupportedGenerationMethods []string `json:"supportedGenerationMethods"`
 	}
-	models := []geminiModelEntry{}
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			writeProtocolError(w, r, http.StatusInternalServerError, "internal_error", "Failed to query model list.")
-			return
-		}
+	models := make([]geminiModelEntry, 0, len(items))
+	for _, item := range items {
 		models = append(models, geminiModelEntry{
-			Name:                       "models/" + name,
-			DisplayName:                name,
+			Name:                       "models/" + item.ID,
+			DisplayName:                item.ID,
 			SupportedGenerationMethods: []string{"generateContent", "streamGenerateContent", "countTokens"},
 		})
-	}
-	if err := rows.Err(); err != nil {
-		writeProtocolError(w, r, http.StatusInternalServerError, "internal_error", "Failed to query model list.")
-		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"models": models})
 }
@@ -127,9 +103,9 @@ func (d Deps) GeminiModelAction(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 	reqCtx := ExtractResponsesRouteContext(bifrostReq, wireReq.Stream, ClientProtocolGeminiNative, keyCtx, r.Header, "")
-	svc, found, loadErr := d.loadService(r.Context(), keyCtx.OrganizationID, requestedModel)
+	svc, found, allowed, loadErr := d.resolveAuthorizedTarget(r.Context(), keyCtx, requestedModel, "invoke")
 	strategy := "auto"
-	if loadErr == nil && found {
+	if loadErr == nil && found && allowed {
 		strategy = svc.Policy.SessionAffinity.KeyStrategy
 	}
 	reqCtx.SessionKey = DeriveSessionKey(r, "", "", "", strategy)
@@ -155,7 +131,7 @@ func (d Deps) GeminiModelAction(w http.ResponseWriter, r *http.Request) {
 func (d Deps) handleGeminiCountTokens(r *http.Request, w http.ResponseWriter, keyCtx apiKeyContext,
 	requestedModel string, bifrostReq *schemas.BifrostResponsesRequest) {
 	reqCtx := ExtractResponsesRouteContext(bifrostReq, false, ClientProtocolGeminiNative, keyCtx, r.Header, "")
-	svc, found, err := d.loadService(r.Context(), keyCtx.OrganizationID, requestedModel)
+	svc, found, allowed, err := d.resolveAuthorizedTarget(r.Context(), keyCtx, requestedModel, "invoke")
 	if err != nil {
 		writeProtocolError(w, r, http.StatusInternalServerError, "internal_error", "Failed to resolve model service.")
 		return
@@ -165,13 +141,10 @@ func (d Deps) handleGeminiCountTokens(r *http.Request, w http.ResponseWriter, ke
 			apiErrorOptions{Reason: "model_not_found", Param: "model", Params: map[string]any{"model": requestedModel}})
 		return
 	}
-	allowed, err := d.hasModelServiceAccess(r.Context(), keyCtx.OrganizationID, keyCtx.ProjectID, svc.ID, "invoke")
-	if err != nil {
-		writeProtocolError(w, r, http.StatusInternalServerError, "internal_error", "Failed to check model service access.")
-		return
-	}
 	if !allowed {
-		d.auditDeniedModelAccess(r, keyCtx, svc.ID, "gemini_count_tokens")
+		if svc.ID != uuid.Nil {
+			d.auditDeniedModelAccess(r, keyCtx, svc.ID, "gemini_count_tokens")
+		}
 		writeProtocolError(w, r, http.StatusForbidden, "model_access_denied", "The current project is not allowed to invoke this model service.")
 		return
 	}
@@ -242,6 +215,7 @@ func (d Deps) handleGeminiStream(r *http.Request, w http.ResponseWriter, request
 	}
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 	if !useSSE {
@@ -255,10 +229,14 @@ func (d Deps) handleGeminiStream(r *http.Request, w http.ResponseWriter, request
 	attempts = winner.Attempts
 	state := gemini.NewBifrostToGeminiStreamState()
 	wroteAnyChunk := false
+	sawTerminalEvent := false
 
 	emitEvent := func(ev *schemas.BifrostResponsesStreamResponse) bool {
 		if ev == nil {
 			return true
+		}
+		if isResponsesTerminalEvent(ev) {
+			sawTerminalEvent = true
 		}
 		if ev.Response != nil && ev.Response.Usage != nil {
 			mergeUsageSnapshot(&snapshot, usageFromResponses(ev.Response.Usage))
@@ -303,15 +281,31 @@ func (d Deps) handleGeminiStream(r *http.Request, w http.ResponseWriter, request
 
 	var streamErr *schemas.BifrostError
 	if !interrupted {
+		var keepalive *time.Ticker
+		var keepaliveCh <-chan time.Time
+		if useSSE {
+			keepalive = time.NewTicker(sseKeepaliveInterval)
+			defer keepalive.Stop()
+			keepaliveCh = keepalive.C
+		}
 	streamLoop:
 		for {
 			select {
 			case <-r.Context().Done():
 				interrupted = true
 				break streamLoop
+			case <-keepaliveCh:
+				if _, err := w.Write([]byte(": keepalive\n\n")); err != nil {
+					interrupted = true
+					break streamLoop
+				}
+				flusher.Flush()
 			case chunk, open := <-winner.Stream:
 				if !open {
 					break streamLoop
+				}
+				if keepalive != nil {
+					keepalive.Reset(sseKeepaliveInterval)
 				}
 				if chunk.BifrostError != nil {
 					streamErr = chunk.BifrostError
@@ -334,6 +328,19 @@ func (d Deps) handleGeminiStream(r *http.Request, w http.ResponseWriter, request
 		})
 		d.recordStreamInterruptedWithProtocol(r.Context(), requestID, winner.Candidate, attempts, start, firstTokenMS, snapshot, ClientProtocolGeminiNative)
 		return
+	}
+
+	if streamErr == nil && !sawTerminalEvent {
+		streamErr = &schemas.BifrostError{
+			StatusCode: intPtr(http.StatusBadGateway),
+			Type:       stringPtr("upstream_stream_closed"),
+			Error:      &schemas.ErrorField{Message: "Upstream stream closed before completion."},
+		}
+		d.Logger.Warn("gemini stream closed without terminal event",
+			"request_id", requestID,
+			"provider", winner.Candidate.Provider,
+			"upstream_model", winner.Candidate.UpstreamModel,
+			"duration_ms", time.Since(start).Milliseconds())
 	}
 
 	if streamErr != nil {

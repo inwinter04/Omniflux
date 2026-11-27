@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/inwinter04/omniflux/internal/auth"
 	"github.com/inwinter04/omniflux/internal/bifrostx"
+	"github.com/inwinter04/omniflux/internal/dataplane"
 )
 
 // balanceEntry 是一条余额信息;字段可空,取决于厂商接口返回口径。
@@ -417,4 +419,148 @@ func queryNovitaBalance(ctx context.Context, apiKey string, client *http.Client)
 	}
 	v := *available / 10000
 	return []balanceEntry{{LabelKey: "provider_novita", Remaining: &v, Unit: "USD"}}, nil
+}
+
+const upstreamBalanceCacheTTL = 60 * time.Second
+
+type cachedUpstreamBalance struct {
+	items     []dataplane.UpstreamQuotaItem
+	expiresAt time.Time
+}
+
+var upstreamBalanceCache = struct {
+	mu      sync.RWMutex
+	entries map[string]cachedUpstreamBalance
+}{
+	entries: make(map[string]cachedUpstreamBalance),
+}
+
+// queryAuthorizedUpstreamBalances 查询项目已授权模型关联的上游供应商账户余量(带 60s 缓存)。
+func (d ServerDeps) queryAuthorizedUpstreamBalances(ctx context.Context, orgID, projectID uuid.UUID) ([]dataplane.UpstreamQuotaItem, error) {
+	rows, err := d.Pool.Query(ctx, `
+		SELECT DISTINCT ON (a.id) a.id, a.name, a.provider
+		FROM provider_accounts a
+		JOIN model_candidates c
+		  ON c.provider_account_id = a.id AND c.status = 'active' AND c.retired_at IS NULL
+		JOIN model_services s
+		  ON s.id = c.model_service_id AND s.organization_id = $1 AND s.status = 'active'
+		WHERE a.organization_id = $1 AND a.status = 'active'
+		  AND EXISTS (
+		    SELECT 1 FROM model_service_grants g
+		    WHERE g.model_service_id = s.id AND g.organization_id = $1
+		      AND g.actions && ARRAY['read','invoke']::text[]
+		      AND ((g.subject_type = 'organization' AND g.subject_id = $1)
+		        OR (g.subject_type = 'project' AND g.subject_id = $2)
+		        OR (g.subject_type = 'department' AND g.subject_id = (
+		          SELECT p.department_id FROM projects p WHERE p.id = $2 AND p.organization_id = $1
+		        )))
+		  )
+		ORDER BY a.id ASC, c.priority ASC
+		LIMIT 6
+	`, orgID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	type accountCandidate struct {
+		id       uuid.UUID
+		name     string
+		provider string
+	}
+	accounts := make([]accountCandidate, 0, 3)
+	for rows.Next() {
+		var acc accountCandidate
+		if err := rows.Scan(&acc.id, &acc.name, &acc.provider); err != nil {
+			return nil, err
+		}
+		vendor := bifrostx.VendorByID(acc.provider)
+		if vendor == nil || vendor.BalanceKind == "" {
+			continue
+		}
+		accounts = append(accounts, acc)
+		if len(accounts) >= 3 {
+			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	results := make([]dataplane.UpstreamQuotaItem, 0, len(accounts)*2)
+	now := time.Now()
+	for _, acc := range accounts {
+		cacheKey := acc.id.String()
+		upstreamBalanceCache.mu.RLock()
+		cached, hit := upstreamBalanceCache.entries[cacheKey]
+		upstreamBalanceCache.mu.RUnlock()
+		if hit && now.Before(cached.expiresAt) {
+			results = append(results, cached.items...)
+			continue
+		}
+
+		access, loadErr := d.loadProviderAccess(ctx, orgID, acc.id)
+		if loadErr != nil {
+			continue
+		}
+		vendor := bifrostx.VendorByID(access.Provider)
+		if vendor == nil || vendor.BalanceKind == "" {
+			continue
+		}
+		client, cErr := balanceHTTPClientFor(access.ProxyType, access.ProxyURL)
+		if cErr != nil {
+			continue
+		}
+		qCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		balances, qErr := queryVendorBalance(qCtx, vendor.ID, vendor.BaseURL, access.APIKey, client)
+		cancel()
+		if qErr != nil {
+			if d.Logger != nil {
+				d.Logger.Debug("client quota upstream balance query skipped", "account_id", acc.id, "provider", acc.provider, "error", qErr)
+			}
+			continue
+		}
+
+		mapped := make([]dataplane.UpstreamQuotaItem, 0, len(balances))
+		for _, entry := range balances {
+			total := entry.Total
+			if entry.Unit == "%" && total == nil {
+				hundred := 100.0
+				total = &hundred
+			}
+			planName := entry.LabelKey
+			if planName == "" {
+				planName = acc.provider
+			}
+			mapped = append(mapped, dataplane.UpstreamQuotaItem{
+				AccountID:     acc.id.String(),
+				AccountName:   acc.name,
+				Provider:      acc.provider,
+				LabelKey:      entry.LabelKey,
+				Kind:          entry.Kind,
+				PlanName:      planName,
+				Remaining:     entry.Remaining,
+				Total:         total,
+				Used:          entry.Used,
+				Unit:          entry.Unit,
+				NextResetTime: entry.NextResetTime,
+			})
+		}
+		upstreamBalanceCache.mu.Lock()
+		if len(upstreamBalanceCache.entries) > 256 {
+			cutoff := time.Now()
+			for k, v := range upstreamBalanceCache.entries {
+				if cutoff.After(v.expiresAt) {
+					delete(upstreamBalanceCache.entries, k)
+				}
+			}
+		}
+		upstreamBalanceCache.entries[cacheKey] = cachedUpstreamBalance{
+			items:     mapped,
+			expiresAt: time.Now().Add(upstreamBalanceCacheTTL),
+		}
+		upstreamBalanceCache.mu.Unlock()
+		results = append(results, mapped...)
+	}
+	return results, nil
 }

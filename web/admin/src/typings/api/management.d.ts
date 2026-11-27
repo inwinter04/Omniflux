@@ -32,6 +32,7 @@ declare namespace Api {
       registration_role: 'pending' | 'developer' | 'viewer';
       email_verification_required: boolean;
       gateway_base_url: string;
+      expose_upstream_balance_to_clients: boolean;
       updated_by: string | null;
       updated_at: string;
     }
@@ -42,6 +43,7 @@ declare namespace Api {
       email_verification_required: boolean;
       registration_role: 'pending' | 'developer' | 'viewer';
       gateway_base_url: string;
+      expose_upstream_balance_to_clients: boolean;
     }
 
     interface GatewayInfo {
@@ -496,6 +498,39 @@ declare namespace Api {
       key_strategy: 'auto' | 'user_id' | 'header_only';
     }
 
+    interface OrchestratorTiers {
+      simple?: string[];
+      medium?: string[];
+      complex?: string[];
+      reasoning?: string[];
+    }
+
+    interface OrchestratorThresholds {
+      simple_medium: number;
+      medium_complex: number;
+      complex_reasoning: number;
+    }
+
+    interface RouteOrchestratorConfig {
+      session_mode: 'adaptive' | 'per_turn' | 'sticky_upgrade' | string;
+      sticky_context_tokens: number;
+      long_context_threshold: number;
+      thresholds: OrchestratorThresholds;
+      tiers?: OrchestratorTiers;
+    }
+
+    interface OrchestratorDecision {
+      tier: string;
+      raw_tier: string;
+      score: number;
+      session_mode: string;
+      cache_protected?: boolean;
+      upgraded_from_tier?: string;
+      auto_bucketed?: boolean;
+      signals?: string[];
+      dimensions?: Record<string, number>;
+    }
+
     interface BoundModelServiceSummary {
       id: string;
       name: string;
@@ -515,6 +550,7 @@ declare namespace Api {
       retry_policy: RouteRetryPolicy;
       circuit_breaker: RouteCircuitBreakerPolicy;
       session_affinity?: RouteSessionAffinityPolicy;
+      orchestrator_config?: RouteOrchestratorConfig;
       baseline_candidate_id: string | null;
       fallback_limit: number;
       provider_timeout_ms: number;
@@ -539,6 +575,7 @@ declare namespace Api {
       retry_policy?: RouteRetryPolicy;
       circuit_breaker?: RouteCircuitBreakerPolicy;
       session_affinity?: RouteSessionAffinityPolicy;
+      orchestrator_config?: RouteOrchestratorConfig;
       baseline_candidate_id?: string | null;
       fallback_limit?: number;
       provider_timeout_ms?: number;
@@ -568,6 +605,8 @@ declare namespace Api {
     interface ModelService {
       id: string;
       name: string;
+      expose_router: boolean;
+      router_model_id: string | null;
       route_policy_id: string | null;
       status: string;
       success_rate_24h: number | null;
@@ -609,6 +648,8 @@ declare namespace Api {
 
     interface CreateModelServiceParams {
       name: string;
+      expose_router?: boolean;
+      router_model_id?: string | null;
       route_policy_id?: string | null;
       candidates: CreateCandidateParams[];
     }
@@ -1282,6 +1323,7 @@ declare namespace Api {
       matched_rule_name?: string;
       random_seed?: number;
       warnings?: string[];
+      orchestrator?: OrchestratorDecision;
       evaluations: CandidateEvaluation[];
     }
 
@@ -1315,6 +1357,7 @@ declare namespace Api {
       retry_policy?: RouteRetryPolicy;
       circuit_breaker?: RouteCircuitBreakerPolicy;
       session_affinity?: RouteSessionAffinityPolicy;
+      orchestrator_config?: RouteOrchestratorConfig;
       baseline_candidate_id?: string | null;
       fallback_limit?: number;
       provider_timeout_ms?: number;
@@ -1325,6 +1368,9 @@ declare namespace Api {
       required_capabilities?: string[];
       keyword_text?: string;
       metadata?: Record<string, string>;
+      reasoning_effort?: string;
+      tool_count?: number;
+      tool_turn_count?: number;
       rr_counter?: number;
       simulate_failed_candidate_ids?: string[];
     }

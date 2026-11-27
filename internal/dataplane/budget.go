@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -19,12 +20,13 @@ type budgetScopeRow struct {
 	LimitAmount string
 	SpentAmount string
 	Currency    string
+	WindowEnd   time.Time
 }
 
 // loadActiveBudgets 查当前请求命中的活跃预算窗口(组织/项目/应用/Key 四类)。
 func (d Deps) loadActiveBudgets(ctx context.Context, keyCtx apiKeyContext) ([]budgetScopeRow, error) {
 	rows, err := d.Pool.Query(ctx, `
-		SELECT id, scope_type, scope_id, limit_amount::text, spent_amount::text, currency
+		SELECT id, scope_type, scope_id, limit_amount::text, spent_amount::text, currency, window_end
 		FROM budget_windows
 		WHERE organization_id = $1
 		  AND now() >= window_start AND now() < window_end
@@ -42,7 +44,7 @@ func (d Deps) loadActiveBudgets(ctx context.Context, keyCtx apiKeyContext) ([]bu
 	windows := []budgetScopeRow{}
 	for rows.Next() {
 		var w budgetScopeRow
-		if err := rows.Scan(&w.ID, &w.ScopeType, &w.ScopeID, &w.LimitAmount, &w.SpentAmount, &w.Currency); err != nil {
+		if err := rows.Scan(&w.ID, &w.ScopeType, &w.ScopeID, &w.LimitAmount, &w.SpentAmount, &w.Currency, &w.WindowEnd); err != nil {
 			return nil, err
 		}
 		windows = append(windows, w)

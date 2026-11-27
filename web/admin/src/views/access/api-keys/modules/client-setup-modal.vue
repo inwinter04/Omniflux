@@ -1,6 +1,19 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { NButton, NCode, NForm, NFormItem, NFormItemGi, NGrid, NInput, NModal, NSelect, NSpace, NTag, NText } from 'naive-ui';
+import {
+  NButton,
+  NCode,
+  NForm,
+  NFormItemGi,
+  NGrid,
+  NInput,
+  NModal,
+  NSelect,
+  NSpace,
+  NTag,
+  NText
+} from 'naive-ui';
+import type { SelectGroupOption } from 'naive-ui';
 import SvgIcon from '@/components/custom/svg-icon.vue';
 import { fetchGatewayInfo, fetchModelServices } from '@/service/api';
 import { $t } from '@/locales';
@@ -52,12 +65,57 @@ function clearCopyState() {
 onBeforeUnmount(clearCopyState);
 
 const availableServices = computed(() => (props.modelServices?.length ? props.modelServices : localServices.value));
-const modelOptions = computed(() =>
-  availableServices.value.map(item => ({
-    label: item.name,
-    value: item.name
-  }))
-);
+
+const directModelNames = computed(() => {
+  const names = new Set<string>();
+  for (const svc of availableServices.value) {
+    if (svc.status !== 'active') continue;
+    for (const cand of svc.candidates ?? []) {
+      const m = cand.upstream_model?.trim();
+      if (m && cand.status === 'active') {
+        names.add(m);
+      }
+    }
+  }
+  return Array.from(names).sort((a, b) => a.localeCompare(b));
+});
+
+const smartRouteNames = computed(() => {
+  const directSet = new Set(directModelNames.value);
+  return Array.from(
+    new Set(
+      availableServices.value
+        .filter(item => item.status === 'active' && item.expose_router && item.router_model_id?.trim())
+        .map(item => item.router_model_id!.trim())
+        .filter(id => !directSet.has(id))
+    )
+  ).sort((a, b) => a.localeCompare(b));
+});
+
+const totalAccessibleModels = computed(() => smartRouteNames.value.length + directModelNames.value.length);
+const previewDirectModels = computed(() => directModelNames.value.slice(0, 8));
+const remainingDirectModelsCount = computed(() => Math.max(0, directModelNames.value.length - 8));
+
+const modelOptions = computed<SelectGroupOption[]>(() => {
+  const groups: SelectGroupOption[] = [];
+  if (directModelNames.value.length > 0) {
+    groups.push({
+      type: 'group',
+      label: $t('business.quick-connect-group-direct-models'),
+      key: 'direct-models',
+      children: directModelNames.value.map(name => ({ label: name, value: name }))
+    });
+  }
+  if (smartRouteNames.value.length > 0) {
+    groups.push({
+      type: 'group',
+      label: $t('business.quick-connect-group-smart-routes'),
+      key: 'smart-routes',
+      children: smartRouteNames.value.map(name => ({ label: name, value: name }))
+    });
+  }
+  return groups;
+});
 
 const gatewayOrigin = computed(
   () => configuredGatewayURL.value.trim().replace(/\/+$/, '') || resolveAutoGatewayOrigin()
@@ -92,7 +150,7 @@ const clientMetaMap: Record<ClientTab, { briefKey: App.I18n.I18nKey; endpoint: s
   codex: { briefKey: 'business.quick-connect-codex-brief', endpoint: 'POST /v1/responses' },
   claude: { briefKey: 'business.quick-connect-claude-brief', endpoint: 'POST /v1/messages' },
   gemini: { briefKey: 'business.quick-connect-gemini-brief', endpoint: 'POST /v1beta/models' },
-  openai: { briefKey: 'business.quick-connect-openai-brief', endpoint: '/v1/responses · /v1/chat/completions' }
+  openai: { briefKey: 'business.quick-connect-openai-brief', endpoint: '/v1/chat/completions · /v1/responses' }
 };
 
 const activeClientMeta = computed(() => clientMetaMap[activeTab.value]);
@@ -103,6 +161,55 @@ const ccSwitchProfiles: Record<CCSwitchApp, { endpointPath: string; apiFormat: C
   gemini: { endpointPath: '', apiFormat: 'gemini_native' }
 };
 
+function encodeBase64UTF8(text: string): string {
+  const bytes = new TextEncoder().encode(text);
+  let binary = '';
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary);
+}
+
+function buildCCSwitchUsageScript(app: CCSwitchApp): string {
+  const quotaUrl = app === 'codex' ? '{{baseUrl}}/quota' : '{{baseUrl}}/v1/quota';
+  return `({
+  request: {
+    url: "${quotaUrl}",
+    method: "GET",
+    headers: {
+      "Authorization": "Bearer {{apiKey}}",
+      "Accept": "application/json"
+    }
+  },
+  extractor: function(res) {
+    if (!res || res.valid === false) {
+      return { isValid: false, invalidMessage: (res && res.error && res.error.message) || "Invalid API key" };
+    }
+    if (res.source === "upstream_balance" && Array.isArray(res.items) && res.items.length > 0) {
+      return res.items.map(function(item) {
+        var isPct = item.unit === "%";
+        return {
+          isValid: true,
+          planName: item.plan_name || item.label_key || item.provider || "Upstream Quota",
+          remaining: typeof item.remaining === "number" ? Number(item.remaining.toFixed(isPct ? 1 : 4)) : null,
+          used: typeof item.used === "number" ? Number(item.used.toFixed(isPct ? 1 : 4)) : null,
+          total: typeof item.total === "number" ? Number(item.total.toFixed(isPct ? 1 : 4)) : null,
+          unit: item.unit || "USD"
+        };
+      });
+    }
+    return {
+      isValid: true,
+      planName: res.plan_name || (res.unlimited ? "Pay as you go" : "Budget"),
+      remaining: typeof res.remaining === "number" ? Number(res.remaining.toFixed(4)) : null,
+      used: typeof res.used === "number" ? Number(res.used.toFixed(4)) : 0,
+      total: typeof res.total === "number" ? Number(res.total.toFixed(4)) : null,
+      unit: res.unit || "USD"
+    };
+  }
+})`;
+}
+
 function buildCCSwitchLink(app: CCSwitchApp): string {
   const profile = ccSwitchProfiles[app];
   const params = new URLSearchParams({
@@ -111,7 +218,10 @@ function buildCCSwitchLink(app: CCSwitchApp): string {
     name: providerDisplayName.value,
     endpoint: `${gatewayOrigin.value}${profile.endpointPath}`,
     homepage: gatewayOrigin.value,
-    apiFormat: profile.apiFormat
+    apiFormat: profile.apiFormat,
+    usageScript: encodeBase64UTF8(buildCCSwitchUsageScript(app)),
+    usageEnabled: 'true',
+    usageAutoInterval: '5'
   });
   const model = selectedModel.value.trim();
   if (model) {
@@ -158,15 +268,27 @@ watch(
       return;
     }
     await Promise.all([loadModelServices(), loadGatewayInfo()]);
+    const accessible = new Set([...smartRouteNames.value, ...directModelNames.value]);
     if (props.initialModelService) {
-      selectedModel.value = props.initialModelService;
-      return;
-    }
-    if (!selectedModel.value) {
-      const firstActive = availableServices.value.find(item => item.status === 'active') ?? availableServices.value[0];
-      if (firstActive) {
-        selectedModel.value = firstActive.name;
+      if (accessible.has(props.initialModelService)) {
+        selectedModel.value = props.initialModelService;
+        return;
       }
+      const matched = availableServices.value.find(
+        item => item.name === props.initialModelService || item.id === props.initialModelService
+      );
+      if (matched) {
+        selectedModel.value =
+          (matched.expose_router ? matched.router_model_id?.trim() : undefined) ||
+          matched.candidates.find(c => c.status === 'active')?.upstream_model?.trim() ||
+          directModelNames.value[0] ||
+          smartRouteNames.value[0] ||
+          '';
+        return;
+      }
+    }
+    if (!selectedModel.value || !accessible.has(selectedModel.value)) {
+      selectedModel.value = directModelNames.value[0] ?? smartRouteNames.value[0] ?? '';
     }
   },
   { immediate: true }
@@ -206,12 +328,14 @@ gemini`
 const openaiBaseURL = computed(() => `${gatewayOrigin.value}/v1`);
 
 const openaiCurlSnippet = computed(
-  () => `curl -sS "${openaiBaseURL.value}/responses" \\
+  () => `curl -sS "${openaiBaseURL.value}/chat/completions" \\
   -H "Authorization: Bearer ${effectiveApiKey.value}" \\
   -H "Content-Type: application/json" \\
   -d '{
     "model": "${effectiveModel.value}",
-    "input": "Hello from Omniflux Responses API"
+    "messages": [
+      {"role": "user", "content": "Hello from Omniflux"}
+    ]
   }'`
 );
 
@@ -335,7 +459,57 @@ async function copySnippet(id: string, text: string) {
       </NForm>
 
       <div
-        class="mt-12px flex flex-wrap items-center justify-between gap-8px border-t border-gray-200/80 pt-10px dark:border-gray-700/60"
+        class="mt-12px flex flex-col gap-6px border-t border-gray-200/80 pt-10px dark:border-gray-700/60"
+      >
+        <div class="flex flex-wrap items-center justify-between gap-8px">
+          <div class="flex items-center gap-6px">
+            <SvgIcon icon="mdi:layers-triple-outline" class="shrink-0 text-15px text-primary" />
+            <NText depth="3" class="text-12px">{{ $t('business.quick-connect-accessible-models') }}</NText>
+          </div>
+          <NText depth="3" class="text-12px">
+            {{
+              $t('business.quick-connect-accessible-summary', {
+                direct: directModelNames.length,
+                routers: smartRouteNames.length
+              })
+            }}
+          </NText>
+        </div>
+        <div v-if="totalAccessibleModels > 0" class="flex flex-wrap items-center gap-6px">
+          <NTag
+            v-for="routerId in smartRouteNames"
+            :key="`router-${routerId}`"
+            size="small"
+            type="primary"
+            round
+            class="cursor-pointer font-mono"
+            @click="selectedModel = routerId"
+          >
+            {{ routerId }}
+          </NTag>
+          <NTag
+            v-for="modelId in previewDirectModels"
+            :key="`model-${modelId}`"
+            size="small"
+            :type="selectedModel === modelId ? 'info' : 'default'"
+            :bordered="selectedModel === modelId"
+            round
+            class="cursor-pointer font-mono"
+            @click="selectedModel = modelId"
+          >
+            {{ modelId }}
+          </NTag>
+          <NTag v-if="remainingDirectModelsCount > 0" size="small" :bordered="false" round>
+            {{ $t('business.quick-connect-more-models', { count: totalAccessibleModels }) }}
+          </NTag>
+        </div>
+        <NText v-else depth="3" class="text-12px">
+          {{ $t('business.quick-connect-no-accessible-models') }}
+        </NText>
+      </div>
+
+      <div
+        class="mt-10px flex flex-wrap items-center justify-between gap-8px border-t border-gray-200/80 pt-10px dark:border-gray-700/60"
       >
         <div class="flex min-w-0 flex-wrap items-center gap-8px">
           <SvgIcon icon="mdi:server-network" class="shrink-0 text-15px text-primary" />

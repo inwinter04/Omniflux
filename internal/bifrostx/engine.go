@@ -304,7 +304,7 @@ func (a *Account) GetConfigForProvider(provider schemas.ModelProvider) (*schemas
 		return nil, fmt.Errorf("provider %q: %w", provider, err)
 	}
 	baseURL, overrides := resolveSpecBaseURLAndOverrides(spec, proto, baseType)
-	timeout := 60
+	timeout := 300
 	retries := 1
 	if spec.TimeoutSeconds > 0 {
 		timeout = spec.TimeoutSeconds
@@ -320,6 +320,7 @@ func (a *Account) GetConfigForProvider(provider schemas.ModelProvider) (*schemas
 		NetworkConfig: schemas.NetworkConfig{
 			BaseURL:                        baseURL,
 			DefaultRequestTimeoutInSeconds: timeout,
+			StreamIdleTimeoutInSeconds:     120,
 			MaxRetries:                     retries,
 			AllowPrivateNetwork:            strings.Contains(baseURL, "localhost") || strings.Contains(baseURL, "127.0.0.1") || strings.Contains(baseURL, "[::1]"),
 		},

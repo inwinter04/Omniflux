@@ -59,6 +59,7 @@ type routePolicy struct {
 	RetryPolicy         RetryPolicy
 	CircuitBreaker      CircuitBreakerPolicy
 	SessionAffinity     SessionAffinityPolicy
+	Orchestrator        OrchestratorConfig
 }
 
 var defaultPolicy = routePolicy{
@@ -68,10 +69,11 @@ var defaultPolicy = routePolicy{
 	Weights:             policyWeights{Cost: 0.4, Quality: 0.3, Latency: 0.15, Reliability: 0.15},
 	FallbackLimit:       3,
 	ProviderTimeoutMS:   60000,
-	FirstTokenTimeoutMS: 15000,
+	FirstTokenTimeoutMS: 45000,
 	RetryPolicy:         DefaultRetryPolicy(),
 	CircuitBreaker:      DefaultCircuitBreakerPolicy(),
 	SessionAffinity:     DefaultSessionAffinityPolicy(),
+	Orchestrator:        DefaultOrchestratorConfig(),
 }
 
 // candidateHealth 是候选的表现统计:兼顾流式 TTFT、总延迟与成功率平滑评分。
@@ -145,6 +147,7 @@ type RouteDecision struct {
 	RandomSeed        int64                 `json:"random_seed,omitempty"`
 	AffinityHit       bool                  `json:"affinity_hit,omitempty"`
 	StickyCandidateID string                `json:"sticky_candidate_id,omitempty"`
+	Orchestrator      *OrchestratorDecision `json:"orchestrator,omitempty"`
 	SessionKey        string                `json:"-"`
 	Protocol          string                `json:"-"`
 	Warnings          []string              `json:"warnings,omitempty"`
@@ -190,6 +193,7 @@ type SimPolicy struct {
 	RetryPolicy         RetryPolicy
 	CircuitBreaker      CircuitBreakerPolicy
 	SessionAffinity     SessionAffinityPolicy
+	Orchestrator        OrchestratorConfig
 }
 
 func (p *SimPolicy) ApplyWeightsJSON(raw []byte) {
@@ -265,7 +269,7 @@ func EvaluateSimulation(cands []SimCandidate, policy SimPolicy, reqCtx RouteCont
 			MaxCostPerMillion:    policy.MaxCostPerMillion,
 		},
 		Rules: policy.Rules, RetryPolicy: policy.RetryPolicy, CircuitBreaker: policy.CircuitBreaker,
-		SessionAffinity: policy.SessionAffinity,
+		SessionAffinity: policy.SessionAffinity, Orchestrator: policy.Orchestrator,
 	}
 	return EvaluateRoute(internalCands, rp, reqCtx, scores, fxRates, rrCounter)
 }
@@ -479,6 +483,54 @@ func EvaluateRoute(cands []candidate, policy routePolicy, reqCtx RouteContext, s
 	}
 
 	evalMetrics := make(map[string]float64, len(working))
+	var (
+		orchTierOf       map[string]int
+		orchTargetTier   int
+		orchStickyCand   *candidate
+		isOrchestrator   = decision.EffectiveStrategy == StrategyAutoOrchestrator
+	)
+	if isOrchestrator {
+		var autoBucketed bool
+		orchTierOf, autoBucketed = assignOrchestratorTiers(working, policy.Orchestrator, compareCurrency, fxRates)
+		orchDec := ClassifyOrchestratorTask(reqCtx, policy.Orchestrator)
+		orchDec.AutoBucketed = autoBucketed
+		orchTargetTier = orchestratorTierToInt(orchDec.RawTier)
+
+		stickyThresh := policy.Orchestrator.StickyContextTokens
+		if stickyThresh <= 0 {
+			stickyThresh = 8000
+		}
+		protectCache := false
+		switch orchDec.SessionMode {
+		case OrchestratorSessionStickyUpgrade:
+			protectCache = true
+		case OrchestratorSessionPerTurn:
+			protectCache = false
+		default: // adaptive
+			protectCache = reqCtx.EstimatedInputTokens >= stickyThresh || reqCtx.ToolTurnCount >= 2
+		}
+
+		if policy.SessionAffinity.Enabled && protectCache && strings.TrimSpace(reqCtx.PreferredCandidateID) != "" {
+			for i := range working {
+				if working[i].ID == reqCtx.PreferredCandidateID {
+					orchStickyCand = &working[i]
+					stickyTierIdx := orchTierOf[orchStickyCand.ID]
+					if orchTargetTier <= stickyTierIdx {
+						orchTargetTier = stickyTierIdx
+						orchDec.CacheProtected = true
+						orchDec.Tier = orchestratorIntToTier(stickyTierIdx)
+					} else {
+						orchDec.UpgradedFromTier = orchestratorIntToTier(stickyTierIdx)
+					}
+					break
+				}
+			}
+		}
+
+		decision.Weights = orchestratorTierWeights(orchTargetTier)
+		decision.Orchestrator = &orchDec
+	}
+
 	for _, c := range working {
 		ev := evalByID[c.ID]
 		cc := costs[c.ID]
@@ -516,28 +568,32 @@ func EvaluateRoute(cands []candidate, policy routePolicy, reqCtx RouteContext, s
 	chain := make(routeChain, 0, len(working))
 	prng := mrand.New(mrand.NewPCG(uint64(seed), uint64(seed)^0x9e3779b97f4a7c15))
 
-	for start := 0; start < len(working); {
-		end := start + 1
-		for end < len(working) && working[end].Priority == working[start].Priority {
-			end++
+	if isOrchestrator {
+		chain = evaluateOrchestratorOrder(working, policy, reqCtx, scores, evalByID, evalMetrics, orchTierOf, orchTargetTier, orchStickyCand, &decision, rrCounter, prng)
+	} else {
+		for start := 0; start < len(working); {
+			end := start + 1
+			for end < len(working) && working[end].Priority == working[start].Priority {
+				end++
+			}
+			orderedGroup := orderPriorityGroup(working[start:end], decision.EffectiveStrategy, evalMetrics, evalByID, scores, rrCounter, prng)
+			chain = append(chain, orderedGroup...)
+			start = end
 		}
-		orderedGroup := orderPriorityGroup(working[start:end], decision.EffectiveStrategy, evalMetrics, evalByID, scores, rrCounter, prng)
-		chain = append(chain, orderedGroup...)
-		start = end
-	}
 
-	// 6.5) 粘性会话亲和：仅当优选候选位于同最高优先级组且通过硬约束与熔断检查时置顶。
-	if policy.SessionAffinity.Enabled && strings.TrimSpace(reqCtx.PreferredCandidateID) != "" && len(chain) > 0 {
-		bestPriority := chain[0].Priority
-		for idx, c := range chain {
-			if c.ID == reqCtx.PreferredCandidateID && c.Priority == bestPriority {
-				if idx > 0 {
-					copy(chain[1:idx+1], chain[0:idx])
-					chain[0] = c
+		// 6.5) 粘性会话亲和：仅当优选候选位于同最高优先级组且通过硬约束与熔断检查时置顶。
+		if policy.SessionAffinity.Enabled && strings.TrimSpace(reqCtx.PreferredCandidateID) != "" && len(chain) > 0 {
+			bestPriority := chain[0].Priority
+			for idx, c := range chain {
+				if c.ID == reqCtx.PreferredCandidateID && c.Priority == bestPriority {
+					if idx > 0 {
+						copy(chain[1:idx+1], chain[0:idx])
+						chain[0] = c
+					}
+					decision.AffinityHit = true
+					decision.StickyCandidateID = c.ID
+					break
 				}
-				decision.AffinityHit = true
-				decision.StickyCandidateID = c.ID
-				break
 			}
 		}
 	}

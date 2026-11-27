@@ -78,6 +78,7 @@ const settings = reactive<Api.Management.SystemSettings>({
   registration_role: 'pending',
   email_verification_required: false,
   gateway_base_url: '',
+  expose_upstream_balance_to_clients: false,
   updated_by: null,
   updated_at: ''
 });
@@ -286,7 +287,8 @@ async function handleSave() {
     registration_organization_id: settings.registration_organization_id,
     email_verification_required: settings.email_verification_required,
     registration_role: settings.registration_role,
-    gateway_base_url: settings.gateway_base_url.trim()
+    gateway_base_url: settings.gateway_base_url.trim(),
+    expose_upstream_balance_to_clients: settings.expose_upstream_balance_to_clients
   });
   submitting.value = false;
 
@@ -391,6 +393,14 @@ onMounted(loadSettings);
               />
               <NText depth="3" class="mt-4px block text-12px">
                 {{ $t('business.gateway-base-url-hint') }}
+              </NText>
+            </div>
+          </NFormItem>
+          <NFormItem :label="$t('business.expose-upstream-balance-to-clients')" path="expose_upstream_balance_to_clients">
+            <div class="w-full">
+              <NSwitch v-model:value="settings.expose_upstream_balance_to_clients" />
+              <NText depth="3" class="mt-4px block text-12px">
+                {{ $t('business.expose-upstream-balance-to-clients-hint') }}
               </NText>
             </div>
           </NFormItem>

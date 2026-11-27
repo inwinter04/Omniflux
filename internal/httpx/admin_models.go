@@ -39,6 +39,8 @@ type candidateResponse struct {
 type modelServiceResponse struct {
 	ID               string              `json:"id"`
 	Name             string              `json:"name"`
+	ExposeRouter     bool                `json:"expose_router"`
+	RouterModelID    *string             `json:"router_model_id"`
 	RoutePolicyID    *string             `json:"route_policy_id"`
 	Status           string              `json:"status"`
 	CreatedAt        time.Time           `json:"created_at"`
@@ -71,8 +73,26 @@ type createCandidateRequest struct {
 
 type createModelServiceRequest struct {
 	Name          string                   `json:"name"`
+	ExposeRouter  bool                     `json:"expose_router"`
+	RouterModelID *string                  `json:"router_model_id"`
 	RoutePolicyID *string                  `json:"route_policy_id"`
 	Candidates    []createCandidateRequest `json:"candidates"`
+}
+
+func validateRouterIdentity(w http.ResponseWriter, expose bool, rawID *string) (*string, bool) {
+	if !expose {
+		return nil, true
+	}
+	raw := ""
+	if rawID != nil {
+		raw = *rawID
+	}
+	id, err := dataplane.ValidateRouterModelID(raw)
+	if err != nil {
+		adminError(w, http.StatusBadRequest, "SERVICE_ROUTER_MODEL_ID_INVALID", "invalid-router-model-id", nil, err.Error())
+		return nil, false
+	}
+	return &id, true
 }
 
 // ModelServices 返回当前组织的模型服务列表(含候选)。
@@ -82,7 +102,7 @@ func (d ServerDeps) ModelServices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	svcRows, err := d.Pool.Query(r.Context(), `
-		SELECT id, name, route_policy_id, status, created_at, updated_at
+		SELECT id, name, expose_router, router_model_id, route_policy_id, status, created_at, updated_at
 		FROM model_services WHERE organization_id = $1 ORDER BY created_at DESC
 	`, principal.OrganizationID)
 	if err != nil {
@@ -96,7 +116,7 @@ func (d ServerDeps) ModelServices(w http.ResponseWriter, r *http.Request) {
 		var item modelServiceResponse
 		var id uuid.UUID
 		var policyID *uuid.UUID
-		if err := svcRows.Scan(&id, &item.Name, &policyID, &item.Status, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err := svcRows.Scan(&id, &item.Name, &item.ExposeRouter, &item.RouterModelID, &policyID, &item.Status, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			adminError(w, http.StatusInternalServerError, "SERVICE_LIST_FAILED", "failed-to-query-model-services", nil)
 			return
 		}
@@ -218,6 +238,10 @@ func (d ServerDeps) CreateModelService(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusBadRequest, "SERVICE_NAME_REQUIRED", "enter-a-model-service-name", nil)
 		return
 	}
+	routerModelID, ok := validateRouterIdentity(w, body.ExposeRouter, body.RouterModelID)
+	if !ok {
+		return
+	}
 	if len(body.Candidates) == 0 {
 		adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATES_REQUIRED", "at-least-one-model-candidate-is", nil)
 		return
@@ -277,9 +301,9 @@ func (d ServerDeps) CreateModelService(w http.ResponseWriter, r *http.Request) {
 	serviceID := uuid.New()
 	err := pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(r.Context(), `
-			INSERT INTO model_services(id, organization_id, name, route_policy_id)
-			VALUES ($1,$2,$3,$4)
-		`, serviceID, principal.OrganizationID, body.Name, nullablePolicyID(policyID)); err != nil {
+			INSERT INTO model_services(id, organization_id, name, expose_router, router_model_id, route_policy_id)
+			VALUES ($1,$2,$3,$4,$5,$6)
+		`, serviceID, principal.OrganizationID, body.Name, body.ExposeRouter, routerModelID, nullablePolicyID(policyID)); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(r.Context(), `
@@ -314,14 +338,22 @@ func (d ServerDeps) CreateModelService(w http.ResponseWriter, r *http.Request) {
 		_, err := tx.Exec(r.Context(), `
 			INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, after_state)
 			VALUES ($1,$2,'user','model_service.created','model_service',$3,$4)
-		`, principal.OrganizationID, principal.UserID, serviceID.String(), auditJSON(map[string]any{"name": body.Name, "candidates": len(body.Candidates)}))
+		`, principal.OrganizationID, principal.UserID, serviceID.String(), auditJSON(map[string]any{
+			"name": body.Name, "expose_router": body.ExposeRouter, "router_model_id": routerModelID, "candidates": len(body.Candidates),
+		}))
 		return err
 	})
 	if err != nil {
 		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.ConstraintName == "model_services_organization_id_name_key" {
-			adminError(w, http.StatusConflict, "SERVICE_NAME_EXISTS", "a-model-service-with-the-same", nil)
-			return
+		if errors.As(err, &pgErr) {
+			if pgErr.ConstraintName == "model_services_organization_id_name_key" {
+				adminError(w, http.StatusConflict, "SERVICE_NAME_EXISTS", "a-model-service-with-the-same", nil)
+				return
+			}
+			if pgErr.ConstraintName == "model_services_org_router_model_id_uidx" {
+				adminError(w, http.StatusConflict, "SERVICE_ROUTER_MODEL_ID_EXISTS", "router-model-id-already-exists", nil)
+				return
+			}
 		}
 		adminError(w, http.StatusInternalServerError, "SERVICE_CREATE_FAILED", "failed-to-create-the-model-service", nil)
 		return
@@ -451,6 +483,10 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusBadRequest, "SERVICE_NAME_REQUIRED", "enter-a-model-service-name", nil)
 		return
 	}
+	routerModelID, ok := validateRouterIdentity(w, body.ExposeRouter, body.RouterModelID)
+	if !ok {
+		return
+	}
 	if len(body.Candidates) == 0 {
 		adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATES_REQUIRED", "at-least-one-model-candidate-is", nil)
 		return
@@ -508,6 +544,8 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var oldName string
+	var oldExposeRouter bool
+	var oldRouterModelID *string
 	var oldPolicyID *uuid.UUID
 	var beforeCandidates []candidateAuditState
 	afterCandidates := make([]candidateAuditState, 0, len(body.Candidates))
@@ -531,8 +569,8 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 	}
 	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
 		if err := tx.QueryRow(r.Context(), `
-			SELECT name, route_policy_id FROM model_services WHERE id = $1 AND organization_id = $2 FOR UPDATE
-		`, serviceID, principal.OrganizationID).Scan(&oldName, &oldPolicyID); err != nil {
+			SELECT name, expose_router, router_model_id, route_policy_id FROM model_services WHERE id = $1 AND organization_id = $2 FOR UPDATE
+		`, serviceID, principal.OrganizationID).Scan(&oldName, &oldExposeRouter, &oldRouterModelID, &oldPolicyID); err != nil {
 			return err
 		}
 		var err error
@@ -541,9 +579,9 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		if _, err := tx.Exec(r.Context(), `
-			UPDATE model_services SET name = $3, route_policy_id = $4, updated_at = now()
+			UPDATE model_services SET name = $3, expose_router = $4, router_model_id = $5, route_policy_id = $6, updated_at = now()
 			WHERE id = $1 AND organization_id = $2
-		`, serviceID, principal.OrganizationID, body.Name, nullablePolicyID(policyID)); err != nil {
+		`, serviceID, principal.OrganizationID, body.Name, body.ExposeRouter, routerModelID, nullablePolicyID(policyID)); err != nil {
 			return err
 		}
 		for _, c := range body.Candidates {
@@ -601,8 +639,14 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 			INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, before_state, after_state)
 			VALUES ($1,$2,'user','model_service.updated','model_service',$3,$4,$5)
 		`, principal.OrganizationID, principal.UserID, serviceID.String(),
-			auditJSON(map[string]any{"name": oldName, "route_policy_id": uuidPtrString(oldPolicyID), "candidates": beforeCandidates}),
-			auditJSON(map[string]any{"name": body.Name, "route_policy_id": body.RoutePolicyID, "candidates": afterCandidates}))
+			auditJSON(map[string]any{
+				"name": oldName, "expose_router": oldExposeRouter, "router_model_id": oldRouterModelID,
+				"route_policy_id": uuidPtrString(oldPolicyID), "candidates": beforeCandidates,
+			}),
+			auditJSON(map[string]any{
+				"name": body.Name, "expose_router": body.ExposeRouter, "router_model_id": routerModelID,
+				"route_policy_id": body.RoutePolicyID, "candidates": afterCandidates,
+			}))
 		return err
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -611,9 +655,15 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.ConstraintName == "model_services_organization_id_name_key" {
-			adminError(w, http.StatusConflict, "SERVICE_NAME_EXISTS", "a-model-service-with-the-same", nil)
-			return
+		if errors.As(err, &pgErr) {
+			if pgErr.ConstraintName == "model_services_organization_id_name_key" {
+				adminError(w, http.StatusConflict, "SERVICE_NAME_EXISTS", "a-model-service-with-the-same", nil)
+				return
+			}
+			if pgErr.ConstraintName == "model_services_org_router_model_id_uidx" {
+				adminError(w, http.StatusConflict, "SERVICE_ROUTER_MODEL_ID_EXISTS", "router-model-id-already-exists", nil)
+				return
+			}
 		}
 		adminError(w, http.StatusInternalServerError, "SERVICE_UPDATE_FAILED", "failed-to-update-the-model-service", nil)
 		return

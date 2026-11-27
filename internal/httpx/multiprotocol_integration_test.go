@@ -355,6 +355,8 @@ func TestMultiProtocolGateway(t *testing.T) {
 	createService := func(name string, policyID any, candidates []any) {
 		c, b := doJSON(t, admin, http.MethodPost, "/api/v1/model-services", map[string]any{
 			"name":            name,
+			"expose_router":   true,
+			"router_model_id": name,
 			"route_policy_id": policyID,
 			"candidates":      candidates,
 		})

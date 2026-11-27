@@ -2,6 +2,7 @@ package dataplane
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -43,13 +44,16 @@ func (d Deps) Responses(w http.ResponseWriter, r *http.Request) {
 	requestedModel := strings.TrimSpace(wireReq.Model)
 	isStream := wireReq.IsStreamingRequested()
 
-	var promptCacheKey, prevRespID, metaUserID string
+	var promptCacheKey, prevRespID, metaUserID, reasoningSummaryMode string
 	if bifrostReq.Params != nil {
 		if bifrostReq.Params.PromptCacheKey != nil {
 			promptCacheKey = *bifrostReq.Params.PromptCacheKey
 		}
 		if bifrostReq.Params.PreviousResponseID != nil {
 			prevRespID = *bifrostReq.Params.PreviousResponseID
+		}
+		if bifrostReq.Params.Reasoning != nil && bifrostReq.Params.Reasoning.Summary != nil {
+			reasoningSummaryMode = strings.ToLower(strings.TrimSpace(*bifrostReq.Params.Reasoning.Summary))
 		}
 		if bifrostReq.Params.Metadata != nil {
 			if uid, exists := (*bifrostReq.Params.Metadata)["user_id"]; exists {
@@ -59,9 +63,9 @@ func (d Deps) Responses(w http.ResponseWriter, r *http.Request) {
 	}
 
 	reqCtx := ExtractResponsesRouteContext(bifrostReq, isStream, ClientProtocolOpenAIResponses, keyCtx, r.Header, "")
-	svc, found, loadErr := d.loadService(r.Context(), keyCtx.OrganizationID, requestedModel)
+	svc, found, allowed, loadErr := d.resolveAuthorizedTarget(r.Context(), keyCtx, requestedModel, "invoke")
 	strategy := "auto"
-	if loadErr == nil && found {
+	if loadErr == nil && found && allowed {
 		strategy = svc.Policy.SessionAffinity.KeyStrategy
 	}
 	reqCtx.SessionKey = DeriveSessionKey(r, promptCacheKey, prevRespID, metaUserID, strategy)
@@ -81,7 +85,7 @@ func (d Deps) Responses(w http.ResponseWriter, r *http.Request) {
 		d.handleResponsesNonStream(r, w, requestID, keyCtx, svc, decision, requestedModel, bifrostReq, start)
 		return
 	}
-	d.handleResponsesStream(r, w, requestID, keyCtx, svc, decision, requestedModel, bifrostReq, start)
+	d.handleResponsesStream(r, w, requestID, keyCtx, svc, decision, requestedModel, bifrostReq, reasoningSummaryMode, start)
 }
 
 func (d Deps) handleResponsesNonStream(r *http.Request, w http.ResponseWriter, requestID uuid.UUID,
@@ -94,6 +98,7 @@ func (d Deps) handleResponsesNonStream(r *http.Request, w http.ResponseWriter, r
 		return
 	}
 	resp = resp.WithDefaults()
+	normalizeResponsesOutputItems(resp)
 	if requestedModel != "" {
 		resp.Model = requestedModel
 	}
@@ -112,7 +117,7 @@ func (d Deps) handleResponsesNonStream(r *http.Request, w http.ResponseWriter, r
 
 func (d Deps) handleResponsesStream(r *http.Request, w http.ResponseWriter, requestID uuid.UUID,
 	keyCtx apiKeyContext, svc resolvedService, decision RouteDecision, requestedModel string,
-	bifrostReq *schemas.BifrostResponsesRequest, start time.Time) {
+	bifrostReq *schemas.BifrostResponsesRequest, reasoningSummaryMode string, start time.Time) {
 	winner, attempts, lastErr, lastTTFT, clientAborted := d.openResponsesStreamWinner(r, svc, decision, bifrostReq, nil)
 	if winner == nil {
 		d.handleResponsesStreamPreCommitFailure(r, w, requestID, keyCtx, decision, attempts, lastErr, lastTTFT, clientAborted, start, ClientProtocolOpenAIResponses)
@@ -131,10 +136,71 @@ func (d Deps) handleResponsesStream(r *http.Request, w http.ResponseWriter, requ
 	firstTokenMS := &elapsedFirst
 	snapshot := winner.Snapshot
 	attempts = winner.Attempts
+	sawTerminalEvent := false
+	normalizer := newResponsesStreamNormalizer(reasoningSummaryMode)
+
+	var (
+		eventsSent      int
+		reasoningDeltas int
+		textDeltas      int
+		toolDeltas      int
+		firstDeltaMS    *int
+		maxGapMS        int64
+		lastEventAt     = start
+	)
+
+	emitSingle := func(out *schemas.BifrostResponsesStreamResponse) bool {
+		now := time.Now()
+		if eventsSent > 0 {
+			if gap := now.Sub(lastEventAt).Milliseconds(); gap > maxGapMS {
+				maxGapMS = gap
+			}
+		}
+		lastEventAt = now
+		eventsSent++
+
+		switch out.Type {
+		case schemas.ResponsesStreamResponseTypeReasoningTextDelta,
+			schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta:
+			reasoningDeltas++
+			if firstDeltaMS == nil {
+				v := int(now.Sub(start).Milliseconds())
+				firstDeltaMS = &v
+			}
+		case schemas.ResponsesStreamResponseTypeOutputTextDelta:
+			textDeltas++
+			if firstDeltaMS == nil {
+				v := int(now.Sub(start).Milliseconds())
+				firstDeltaMS = &v
+			}
+		case schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDelta,
+			schemas.ResponsesStreamResponseTypeCustomToolCallInputDelta:
+			toolDeltas++
+			if firstDeltaMS == nil {
+				v := int(now.Sub(start).Milliseconds())
+				firstDeltaMS = &v
+			}
+		}
+
+		payload, err := sanitizeOpenAIResponsesPayload(out)
+		if err != nil {
+			d.Logger.Warn("marshal responses sse event failed", "request_id", requestID, "error", err)
+			return false
+		}
+		frame := fmt.Sprintf("event: %s\ndata: %s\n\n", out.Type, payload)
+		if _, err := w.Write([]byte(frame)); err != nil {
+			return false
+		}
+		flusher.Flush()
+		return true
+	}
 
 	emitEvent := func(ev *schemas.BifrostResponsesStreamResponse) bool {
 		if ev == nil {
 			return true
+		}
+		if isResponsesTerminalEvent(ev) {
+			sawTerminalEvent = true
 		}
 		if ev.Response != nil {
 			if requestedModel != "" {
@@ -144,17 +210,33 @@ func (d Deps) handleResponsesStream(r *http.Request, w http.ResponseWriter, requ
 				mergeUsageSnapshot(&snapshot, usageFromResponses(ev.Response.Usage))
 			}
 		}
-		payload, err := sanitizeOpenAIResponsesPayload(ev)
-		if err != nil {
-			d.Logger.Warn("marshal responses sse event failed", "request_id", requestID, "error", err)
-			return false
+		for _, normalized := range normalizer.Normalize(ev) {
+			if !emitSingle(normalized) {
+				return false
+			}
 		}
-		frame := fmt.Sprintf("event: %s\ndata: %s\n\n", ev.Type, payload)
-		if _, err := w.Write([]byte(frame)); err != nil {
-			return false
-		}
-		flusher.Flush()
 		return true
+	}
+
+	logStreamSummary := func(outcome string) {
+		firstDelta := -1
+		if firstDeltaMS != nil {
+			firstDelta = *firstDeltaMS
+		}
+		d.Logger.Info("responses stream completed",
+			"request_id", requestID,
+			"provider", winner.Candidate.Provider,
+			"upstream_model", winner.Candidate.UpstreamModel,
+			"outcome", outcome,
+			"first_token_ms", elapsedFirst,
+			"first_delta_ms", firstDelta,
+			"total_ms", time.Since(start).Milliseconds(),
+			"events_sent", eventsSent,
+			"reasoning_deltas", reasoningDeltas,
+			"text_deltas", textDeltas,
+			"tool_deltas", toolDeltas,
+			"max_inter_event_gap_ms", maxGapMS,
+		)
 	}
 
 	interrupted := false
@@ -167,16 +249,25 @@ func (d Deps) handleResponsesStream(r *http.Request, w http.ResponseWriter, requ
 
 	var streamErr *schemas.BifrostError
 	if !interrupted {
+		keepalive := time.NewTicker(sseKeepaliveInterval)
+		defer keepalive.Stop()
 	streamLoop:
 		for {
 			select {
 			case <-r.Context().Done():
 				interrupted = true
 				break streamLoop
+			case <-keepalive.C:
+				if _, err := w.Write([]byte(": keepalive\n\n")); err != nil {
+					interrupted = true
+					break streamLoop
+				}
+				flusher.Flush()
 			case chunk, open := <-winner.Stream:
 				if !open {
 					break streamLoop
 				}
+				keepalive.Reset(sseKeepaliveInterval)
 				if chunk.BifrostError != nil {
 					streamErr = chunk.BifrostError
 					break streamLoop
@@ -192,6 +283,7 @@ func (d Deps) handleResponsesStream(r *http.Request, w http.ResponseWriter, requ
 	}
 
 	if interrupted {
+		logStreamSummary("interrupted")
 		attempts = append(attempts, AttemptRecord{
 			CandidateID: winner.Candidate.ID, Provider: winner.Candidate.Provider, UpstreamModel: winner.Candidate.UpstreamModel,
 			LatencyMS: int(time.Since(start).Milliseconds()), Outcome: "interrupted",
@@ -200,7 +292,34 @@ func (d Deps) handleResponsesStream(r *http.Request, w http.ResponseWriter, requ
 		return
 	}
 
+	if streamErr == nil && !sawTerminalEvent {
+		status := http.StatusBadGateway
+		errType := "upstream_stream_closed"
+		errMsg := "Upstream stream closed before response.completed."
+		var ctxErr error
+		if winner.Ctx != nil {
+			ctxErr = winner.Ctx.Err()
+			if errors.Is(ctxErr, context.DeadlineExceeded) {
+				status = http.StatusGatewayTimeout
+				errType = "stream_timeout"
+				errMsg = "Upstream stream timed out before response.completed."
+			}
+		}
+		streamErr = &schemas.BifrostError{
+			StatusCode: intPtr(status),
+			Type:       stringPtr(errType),
+			Error:      &schemas.ErrorField{Message: errMsg},
+		}
+		d.Logger.Warn("responses stream closed without terminal event",
+			"request_id", requestID,
+			"provider", winner.Candidate.Provider,
+			"upstream_model", winner.Candidate.UpstreamModel,
+			"duration_ms", time.Since(start).Milliseconds(),
+			"ctx_err", ctxErr)
+	}
+
 	if streamErr != nil {
+		logStreamSummary("failed")
 		statusCode, errCode, errType, errMsg := extractBifrostErrorInfo(streamErr)
 		d.Breaker().RecordFailure(r.Context(), winner.Candidate.ID, statusCode, errCode, errType, svc.Policy.RetryPolicy, svc.Policy.CircuitBreaker)
 		attempts = append(attempts, AttemptRecord{
@@ -216,6 +335,7 @@ func (d Deps) handleResponsesStream(r *http.Request, w http.ResponseWriter, requ
 		return
 	}
 
+	logStreamSummary("success")
 	d.Breaker().RecordSuccess(r.Context(), winner.Candidate.ID)
 	attempts = append(attempts, AttemptRecord{
 		CandidateID: winner.Candidate.ID, Provider: winner.Candidate.Provider, UpstreamModel: winner.Candidate.UpstreamModel,

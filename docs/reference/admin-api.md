@@ -100,8 +100,8 @@
 
 | 接口 | 说明 |
 | --- | --- |
-| `GET /api/v1/system/settings` | 查询公开注册与统一网关访问地址配置(仅平台管理员) |
-| `PATCH /api/v1/system/settings` | 修改公开注册、归属组织、默认角色、邮箱验证与统一网关地址配置(仅平台管理员) |
+| `GET /api/v1/system/settings` | 查询公开注册、统一网关访问地址与客户端额度透出配置(仅平台管理员) |
+| `PATCH /api/v1/system/settings` | 修改公开注册、归属组织、默认角色、邮箱验证、统一网关地址与上游额度透出配置(仅平台管理员) |
 | `GET /api/v1/system/gateway-info` | 查询系统统一配置的网关访问地址（所有已登录用户可读，未配置时返回空值由客户端自动识别） |
 | `GET /api/v1/system/email/settings` | 查询邮件服务配置；SMTP 密码只返回是否已保存(仅平台管理员) |
 | `PATCH /api/v1/system/email/settings` | 修改 SMTP、发件人与公开访问地址配置(仅平台管理员) |
@@ -111,7 +111,7 @@
 | `PUT /api/v1/system/fx-rates/{currency}` | 设置非 USD 货币汇率及手工锁定标记(仅平台管理员) |
 | `POST /api/v1/system/fx-rates/sync` | 立即从 Frankfurter (ECB) 与 Open ER-API 拉取权威汇率(仅平台管理员) |
 
-`PATCH /api/v1/system/settings` 按完整配置提交 `public_registration_enabled`、`registration_organization_id`、`registration_role`、`email_verification_required` 与可选 `gateway_base_url`（留空则由管理台自动识别当前访问地址）；仅在关闭公开注册时允许组织为空。公开注册默认关闭。开启前必须选择已存在组织和 `pending`（默认，零权限待分配）/ `viewer` / `developer` 默认角色;同一 IP 每分钟最多提交 5 次注册。关闭邮箱验证时注册成功后立即建立会话；开启邮箱验证时先创建待验证账号并发送邮件，验证后才建立会话。操作写入审计事件 `system.settings_updated`、`user.self_registered`、`email.verification_sent` 与 `auth.email_verified`。
+`PATCH /api/v1/system/settings` 按完整配置提交 `public_registration_enabled`、`registration_organization_id`、`registration_role`、`email_verification_required`、可选 `gateway_base_url`（留空则由管理台自动识别当前访问地址）以及可选 `expose_upstream_balance_to_clients`（默认 `false`；开启后未命中网关预算的 API Key 调用 `GET /v1/quota` 时将展示带 60 秒缓存的上游余额/套餐余量）；仅在关闭公开注册时允许组织为空。公开注册默认关闭。开启前必须选择已存在组织和 `pending`（默认，零权限待分配）/ `viewer` / `developer` 默认角色;同一 IP 每分钟最多提交 5 次注册。关闭邮箱验证时注册成功后立即建立会话；开启邮箱验证时先创建待验证账号并发送邮件，验证后才建立会话。操作写入审计事件 `system.settings_updated`、`user.self_registered`、`email.verification_sent` 与 `auth.email_verified`。
 
 邮件令牌由服务端 `crypto/rand` 生成，HMAC-SHA256 哈希后入库，只保存哈希与有效期。验证、邀请和密码重置分别使用一次性令牌；重发会作废旧令牌，撤销邀请会立即失效当前链接。
 
@@ -195,7 +195,7 @@
 | 接口 | 说明 |
 | --- | --- |
 | `GET /api/v1/route-policies` | 路由策略列表(含绑定模型服务与 24h 请求量/转移率/首字延迟) |
-| `POST /api/v1/route-policies` | 创建路由策略(支持 9 种调度模式、比价币种、四维权重、条件规则、错误码韧性、熔断与 `session_affinity` 粘性会话亲和) |
+| `POST /api/v1/route-policies` | 创建路由策略(支持 10 种调度模式，含 `auto_orchestrator` 智能编排、比价币种、四维权重、条件规则、错误码韧性、熔断与 `session_affinity` 粘性会话亲和) |
 | `PATCH /api/v1/route-policies/{id}` | 更新策略参数(未传字段保留原值，自增 `version`) |
 | `PATCH /api/v1/route-policies/{id}/status` | 启用或停用路由策略(被模型服务绑定时禁止停用，返回 409 `POLICY_IN_USE`) |
 | `POST /api/v1/route-policies/{id}/clone` | 复制既有策略为新策略 |
@@ -206,14 +206,14 @@
 | `GET /api/v1/route-policies/{id}/decisions` | 分页查询路由决策快照与尝试链 (`attempt_trail`) |
 | `DELETE /api/v1/route-policies/{id}` | 删除路由策略 |
 
-路由策略支持 `balanced`、`cost_first`、`quality_first`、`latency_first`、`reliability_first`、`weighted`、`round_robin`、`strict_failover` 与 `custom` 九种调度策略，并通过 `session_affinity`（`enabled`、`ttl_seconds`、`key_strategy`: `auto`/`user_id`/`header_only`）配置 KV Cache 粘性亲和；`model_candidates` 同时支持 `context_window`、`capabilities`（`vision`/`tools`/`reasoning`/`json_mode`/`streaming`/`prompt_caching`/`responses_api`/`pdf_input`）、`tags` 以及可选分级缓存价格 `cache_read_cost_per_million` / `cache_write_cost_per_million`，并允许同一模型服务混用不同结算币种候选。
+路由策略支持 `auto_orchestrator`、`balanced`、`cost_first`、`quality_first`、`latency_first`、`reliability_first`、`weighted`、`round_robin`、`strict_failover` 与 `custom` 十种调度策略，并通过 `session_affinity`（`enabled`、`ttl_seconds`、`key_strategy`: `auto`/`user_id`/`header_only`）与 `orchestrator_config`（`session_mode`: `adaptive`/`per_turn`/`sticky_upgrade`、`sticky_context_tokens`、`long_context_threshold`、`thresholds` 与可选四档 `tiers`）协同工作；`model_candidates` 同时支持 `context_window`、`capabilities`（`vision`/`tools`/`reasoning`/`json_mode`/`streaming`/`prompt_caching`/`responses_api`/`pdf_input`）、`tags` 以及可选分级缓存价格 `cache_read_cost_per_million` / `cache_write_cost_per_million`，并允许同一模型服务混用不同结算币种候选。
 
 ### 模型服务
 
 | 接口 | 说明 |
 | --- | --- |
-| `GET /api/v1/model-services` | 模型服务列表(含候选) |
-| `POST /api/v1/model-services` | 创建模型服务与候选 |
+| `GET /api/v1/model-services` | 模型服务列表(含 `expose_router`、`router_model_id` 与候选列表) |
+| `POST /api/v1/model-services` | 创建模型服务与候选(支持 `expose_router` 与 `router_model_id`) |
 | `PATCH /api/v1/model-services/{id}` | 更新模型服务(候选按稳定键 upsert,移除候选保留历史) |
 | `PATCH /api/v1/model-services/{id}/status` | 启用或停用模型服务 |
 | `PATCH /api/v1/model-candidates/{id}/status` | 启用或停用单个候选模型 |
@@ -223,7 +223,7 @@
 | `DELETE /api/v1/model-services/{id}/grants/{grantID}` | 撤销授权 |
 | `DELETE /api/v1/model-services/{id}` | 删除模型服务 |
 
-模型服务默认创建组织级 `read + invoke` 授权,撤销组织授权后可仅开放给指定部门或项目。`read` 控制 `GET /v1/models`,`invoke` 控制聊天、向量化和智能体执行,API Key 所属项目决定可见范围。账号与服务列表额外返回近 24 小时成功率、平均延迟、最近调用、可用候选数及健康状态;无流量标记为“未验证”,不等同于健康。
+模型服务默认 `expose_router = false`，即仅作为管理分组，向客户端 `GET /v1/models` 与 `GET /v1beta/models` 暴露各可用候选的具体 `upstream_model`（绝不透出管理台中文服务名）；只有显式开启 `expose_router = true` 并设置合规 ASCII `router_model_id`（如 `omniflux/auto`）的服务，才会额外暴露一个 `owned_by: "omniflux-router"` 的智能路由入口模型。无效 ID 返回 400 `SERVICE_ROUTER_MODEL_ID_INVALID`，同组织重复返回 409 `SERVICE_ROUTER_MODEL_ID_EXISTS`。模型服务默认创建组织级 `read + invoke` 授权,撤销组织授权后可仅开放给指定部门或项目。`read` 控制 `GET /v1/models`,`invoke` 控制聊天、向量化和智能体执行,API Key 所属项目决定可见范围。账号与服务列表额外返回近 24 小时成功率、平均延迟、最近调用、可用候选数及健康状态;无流量标记为“未验证”,不等同于健康。
 
 供应商账号声明结算币种,同一模型服务的候选必须使用相同币种;不同服务可使用不同币种。公开价格目录只提供 USD 参考价,其他币种不自动换算。成本按实际结算币种写入用量并分组汇总,预算只累计同币种成本。账户余额保留厂商原始币种与单位,不进行隐式汇率换算;Coding Plan 等套餐按 `kind=quota` 返回独立限额窗口,与货币余额区分。
 

@@ -51,28 +51,18 @@ func chunkHasMeaningfulDelta(resp *schemas.BifrostChatResponse) bool {
 
 // awaitFirstStreamChunk 在向客户端提交 HTTP 200 SSE 之前等待首条有效内容，
 // 确保 TTFT 超时或建流报错时能够无痕切换到备用候选而不污染输出流。
-func awaitFirstStreamChunk(ctx context.Context, stream chan *schemas.BifrostStreamChunk, ttftDur time.Duration) (
-	firstResp *schemas.BifrostChatResponse, snapshot usageSnapshot, streamErr *schemas.BifrostError, timedOut bool, closed bool) {
-	var timer *time.Timer
-	var timerCh <-chan time.Time
-	if ttftDur > 0 {
-		timer = time.NewTimer(ttftDur)
-		defer timer.Stop()
-		timerCh = timer.C
-	}
-
+func awaitFirstStreamChunk(ctx context.Context, stream chan *schemas.BifrostStreamChunk) (
+	firstResp *schemas.BifrostChatResponse, snapshot usageSnapshot, streamErr *schemas.BifrostError, closed bool) {
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, snapshot, nil, false, false
-		case <-timerCh:
-			return nil, snapshot, nil, true, false
+			return nil, snapshot, nil, false
 		case chunk, open := <-stream:
 			if !open {
-				return nil, snapshot, nil, false, true
+				return nil, snapshot, nil, true
 			}
 			if chunk.BifrostError != nil {
-				return nil, snapshot, chunk.BifrostError, false, false
+				return nil, snapshot, chunk.BifrostError, false
 			}
 			resp := chunk.BifrostChatResponse
 			if resp == nil {
@@ -82,7 +72,7 @@ func awaitFirstStreamChunk(ctx context.Context, stream chan *schemas.BifrostStre
 				snapshot = usageSnapshot(u)
 			}
 			if chunkHasMeaningfulDelta(resp) {
-				return resp, snapshot, nil, false, false
+				return resp, snapshot, nil, false
 			}
 		}
 	}
@@ -101,7 +91,12 @@ func (d Deps) handleStreamChain(r *http.Request, w http.ResponseWriter, requestI
 	}
 	ttftDur := time.Duration(svc.Policy.FirstTokenTimeoutMS) * time.Millisecond
 	if ttftDur <= 0 {
-		ttftDur = 15 * time.Second
+		ttftDur = 45 * time.Second
+	}
+
+	idleTimeout := defaultStreamIdleTimeout
+	if perTimeout > idleTimeout {
+		idleTimeout = perTimeout
 	}
 
 	attempts := make([]AttemptRecord, 0, len(decision.Chain))
@@ -116,6 +111,22 @@ func (d Deps) handleStreamChain(r *http.Request, w http.ResponseWriter, requestI
 		lastTTFT      bool
 		clientAborted bool
 	)
+	recordTTFT := func(cand candidate, attemptMS, retryIdx int) bool {
+		lastTTFT = true
+		lastErr = &schemas.BifrostError{
+			StatusCode: intPtr(http.StatusGatewayTimeout),
+			Type:       stringPtr("first_token_timeout"),
+			Error:      &schemas.ErrorField{Code: stringPtr("ttft_timeout"), Message: "Upstream did not return the first token within first_token_timeout_ms."},
+		}
+		action := ClassifyAttemptOutcome(http.StatusGatewayTimeout, "ttft_timeout", "first_token_timeout", rp)
+		d.Breaker().RecordFailure(r.Context(), cand.ID, http.StatusGatewayTimeout, "ttft_timeout", "first_token_timeout", rp, cb)
+		attempts = append(attempts, AttemptRecord{
+			CandidateID: cand.ID, Provider: cand.Provider, UpstreamModel: cand.UpstreamModel,
+			StatusCode: http.StatusGatewayTimeout, ErrorClass: "ttft_timeout", ErrorType: "first_token_timeout",
+			ErrorMessage: "first token timeout", LatencyMS: attemptMS, RetryCount: retryIdx, Outcome: "ttft_timeout",
+		})
+		return action.ShouldFallback
+	}
 
 candidateLoop:
 	for idx, cand := range decision.Chain {
@@ -139,26 +150,51 @@ candidateLoop:
 			continue
 		}
 
+		isFinalCandidate := idx == len(decision.Chain)-1
+		preCommitTimeout := ttftDur
+		if isFinalCandidate {
+			preCommitTimeout = minFinalCandidatePreCommitTimeout
+			if perTimeout > preCommitTimeout {
+				preCommitTimeout = perTimeout
+			}
+		}
+
 		maxRetries := rp.MaxRetriesPerCandidate
 		for retryIdx := 0; retryIdx <= maxRetries; retryIdx++ {
 			attemptStart := time.Now()
-			attemptCtx, cancelAttempt := context.WithTimeout(r.Context(), perTimeout)
-			bctx := schemas.NewBifrostContext(attemptCtx, time.Now().Add(perTimeout))
+			ctrl := newStreamAttemptControl(r.Context(), preCommitTimeout)
+			bctx := schemas.NewBifrostContext(ctrl.ctx, schemas.NoDeadline)
 			bctx.SetValue(schemas.BifrostContextKeyAPIKeyID, cand.AccountID)
-			if idx < len(decision.Chain)-1 {
+			bctx.SetValue(schemas.BifrostContextKeyStreamIdleTimeout, idleTimeout)
+			if !isFinalCandidate {
 				bctx.SetValue(schemas.BifrostContextKeyStreamFirstTokenTimeout, ttftDur)
+			}
+			candParams, passthrough := applyProviderStreamingHintsForChat(params, cand)
+			if passthrough {
+				bctx.SetValue(schemas.BifrostContextKeyPassthroughExtraParams, true)
 			}
 			req := &schemas.BifrostChatRequest{
 				Provider: provider,
 				Model:    cand.UpstreamModel,
 				Input:    input,
-				Params:   params,
+				Params:   candParams,
 			}
 
 			stream, bifrostErr := d.Engine.Client().ChatCompletionStreamRequest(bctx, req)
 			if bifrostErr != nil {
-				cancelAttempt()
+				wasTTFT := ctrl.disarmTimedOut()
+				ctrl.cancel()
 				attemptMS := int(time.Since(attemptStart).Milliseconds())
+				if r.Context().Err() != nil {
+					clientAborted = true
+					break candidateLoop
+				}
+				if wasTTFT {
+					if !recordTTFT(cand, attemptMS, retryIdx) {
+						break candidateLoop
+					}
+					break
+				}
 				statusCode, errCode, errType, errMsg := extractBifrostErrorInfo(bifrostErr)
 				if d.OnTransportError != nil && statusCode == 0 {
 					d.OnTransportError(logicalProviderName(cand.Provider))
@@ -195,41 +231,24 @@ candidateLoop:
 				break
 			}
 
-			// 只在尚未输出给客户端前应用首字超时，避免无尽挂起主候选或破坏已开始流。
-			attemptTTFT := ttftDur
-			if idx == len(decision.Chain)-1 && ttftDur > 0 && perTimeout < ttftDur {
-				attemptTTFT = perTimeout
-			}
-			resp, snap, preErr, timedOut, closedEarly := awaitFirstStreamChunk(attemptCtx, stream, attemptTTFT)
+			resp, snap, preErr, closedEarly := awaitFirstStreamChunk(ctrl.ctx, stream)
+			wasTTFT := ctrl.disarmTimedOut()
 			attemptMS := int(time.Since(attemptStart).Milliseconds())
 
 			if r.Context().Err() != nil {
-				cancelAttempt()
+				ctrl.cancel()
 				clientAborted = true
 				break candidateLoop
 			}
-			if timedOut {
-				cancelAttempt()
-				lastTTFT = true
-				lastErr = &schemas.BifrostError{
-					StatusCode: intPtr(http.StatusGatewayTimeout),
-					Type:       stringPtr("first_token_timeout"),
-					Error:      &schemas.ErrorField{Code: stringPtr("ttft_timeout"), Message: "Upstream did not return the first token within first_token_timeout_ms."},
-				}
-				action := ClassifyAttemptOutcome(http.StatusGatewayTimeout, "ttft_timeout", "first_token_timeout", rp)
-				d.Breaker().RecordFailure(r.Context(), cand.ID, http.StatusGatewayTimeout, "ttft_timeout", "first_token_timeout", rp, cb)
-				attempts = append(attempts, AttemptRecord{
-					CandidateID: cand.ID, Provider: cand.Provider, UpstreamModel: cand.UpstreamModel,
-					StatusCode: http.StatusGatewayTimeout, ErrorClass: "ttft_timeout", ErrorType: "first_token_timeout",
-					ErrorMessage: "first token timeout", LatencyMS: attemptMS, RetryCount: retryIdx, Outcome: "ttft_timeout",
-				})
-				if !action.ShouldFallback {
+			if wasTTFT {
+				ctrl.cancel()
+				if !recordTTFT(cand, attemptMS, retryIdx) {
 					break candidateLoop
 				}
 				break
 			}
 			if preErr != nil {
-				cancelAttempt()
+				ctrl.cancel()
 				lastTTFT = false
 				lastErr = preErr
 				statusCode, errCode, errType, errMsg := extractBifrostErrorInfo(preErr)
@@ -251,8 +270,9 @@ candidateLoop:
 				}
 				break
 			}
-			if closedEarly || resp == nil {
-				cancelAttempt()
+			if closedEarly || resp == nil || !ctrl.commit() {
+				ctrl.disarmTimedOut()
+				ctrl.cancel()
 				lastTTFT = false
 				lastErr = &schemas.BifrostError{
 					StatusCode: intPtr(http.StatusBadGateway),
@@ -276,7 +296,7 @@ candidateLoop:
 			winningStream = stream
 			firstResp = resp
 			initSnapshot = snap
-			cancelWinner = cancelAttempt
+			cancelWinner = ctrl.cancel
 			break candidateLoop
 		}
 	}
@@ -327,6 +347,7 @@ candidateLoop:
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	// Clear connection write deadline once SSE headers are committed so long responses are not cut at http.Server.WriteTimeout.
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
@@ -381,16 +402,25 @@ candidateLoop:
 	var streamErr *schemas.BifrostError
 
 	if !interrupted {
+		keepalive := time.NewTicker(sseKeepaliveInterval)
+		defer keepalive.Stop()
 	streamLoop:
 		for {
 			select {
 			case <-r.Context().Done():
 				interrupted = true
 				break streamLoop
+			case <-keepalive.C:
+				if _, err := w.Write([]byte(": keepalive\n\n")); err != nil {
+					interrupted = true
+					break streamLoop
+				}
+				flusher.Flush()
 			case chunk, open := <-winningStream:
 				if !open {
 					break streamLoop
 				}
+				keepalive.Reset(sseKeepaliveInterval)
 				if chunk.BifrostError != nil {
 					streamErr = chunk.BifrostError
 					break streamLoop

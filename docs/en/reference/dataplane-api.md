@@ -18,13 +18,14 @@ Clients may authenticate with their native credential header or query format usi
 
 | Method & Path | Description | Required Permission |
 | :--- | :--- | :---: |
-| `GET /v1/models` | List authorized logical model services (OpenAI format) | `read` |
-| `POST /v1/chat/completions` | Chat completions (vision images & SSE streaming) | `invoke` |
-| `POST /v1/responses` | OpenAI Responses API (Codex CLI native protocol: `input_image`, PDF `input_file`, tools, reasoning, prompt caching, SSE streaming; auto-bridges when routed to `openai_chat` accounts) | `invoke` |
+| `GET /v1/models` | List authorized concrete `upstream_model` IDs plus any smart-router services with `expose_router=true` (`router_model_id`, `owned_by: "omniflux-router"`) | `read` |
+| `GET /v1/quota` | Query API Key quota, budget remaining, optional cached upstream balances, and 30-day usage (used by CC Switch) | `read` |
+| `POST /v1/chat/completions` | Chat completions (vision images, direct model routing, SSE keepalive) | `invoke` |
+| `POST /v1/responses` | OpenAI Responses API (Codex CLI native protocol: direct model selection, `input_image`, PDF `input_file`, tools, reasoning, prompt caching, SSE keepalive; auto-bridges when routed to `openai_chat` accounts) | `invoke` |
 | `POST /v1/responses/compact` | OpenAI Responses context compaction | `invoke` |
-| `POST /v1/messages` | Anthropic Messages API (Claude Code native protocol: images, PDFs, cache read/write token reporting, SSE streaming) | `invoke` |
+| `POST /v1/messages` | Anthropic Messages API (Claude Code native protocol: images, PDFs, cache read/write token reporting, SSE keepalive) | `invoke` |
 | `POST /v1/messages/count_tokens` | Anthropic preflight token counting (falls back to local estimation if unsupported upstream) | `invoke` |
-| `GET /v1beta/models` | Gemini Native model discovery (`models/{service}`) | `read` |
+| `GET /v1beta/models` | Gemini Native model discovery (`models/{id}` for concrete models and smart routers) | `read` |
 | `POST /v1beta/models/{model}:generateContent` | Gemini Native non-streaming content generation | `invoke` |
 | `POST /v1beta/models/{model}:streamGenerateContent` | Gemini Native streaming generation (`?alt=sse` or JSON array chunks) | `invoke` |
 | `POST /v1beta/models/{model}:countTokens` | Gemini Native token counting (falls back to local estimation if unsupported upstream) | `invoke` |
@@ -77,6 +78,8 @@ gemini
 ```
 
 > **Sticky Session Affinity (KV Cache Pinning)**: The gateway extracts session identifiers from `Session-Id`, `X-Session-Id`, `X-Codex-Session-Id`, `Conversation-Id`, `prompt_cache_key`, `previous_response_id`, or `metadata.user_id`. When `session_affinity` is enabled on a route policy, consecutive turns stay pinned to the same top-tier candidate and automatically fail over when unhealthy or circuit-open.
+>
+> **Dual-Client Discovery & `auto_orchestrator`**: Ordinary model services expose only active concrete `upstream_model` IDs so CC Switch, Codex CLI, Claude Code, Dify, and Cherry Studio can discover and pick any authorized upstream model directly. Enable `expose_router = true` with an ASCII `router_model_id` (e.g. `omniflux/auto`) and an `auto_orchestrator` policy when callers want one self-routing model endpoint: `adaptive` mode routes short Q&A turns elastically to lower-cost tiers while locking prompt caches upward-only in long coding or multi-tool sessions.
 
 ## Examples
 

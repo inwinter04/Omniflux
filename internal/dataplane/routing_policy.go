@@ -19,6 +19,7 @@ const (
 	StrategyRoundRobin       = "round_robin"
 	StrategyStrictFailover   = "strict_failover"
 	StrategyCustom           = "custom"
+	StrategyAutoOrchestrator = "auto_orchestrator"
 )
 
 var allowedStrategies = map[string]bool{
@@ -31,6 +32,7 @@ var allowedStrategies = map[string]bool{
 	StrategyRoundRobin:       true,
 	StrategyStrictFailover:   true,
 	StrategyCustom:           true,
+	StrategyAutoOrchestrator: true,
 }
 
 var allowedCapabilities = map[string]bool{
@@ -505,33 +507,59 @@ type RouteContext struct {
 	SessionKey            string            `json:"session_key,omitempty"`
 	PreferredCandidateID  string            `json:"preferred_candidate_id,omitempty"`
 	KeywordText           string            `json:"keyword_text,omitempty"`
+	LatestUserText        string            `json:"latest_user_text,omitempty"`
+	ToolCount             int               `json:"tool_count,omitempty"`
+	ToolTurnCount         int               `json:"tool_turn_count,omitempty"`
+	MessageCount          int               `json:"message_count,omitempty"`
+	ReasoningEffort       string            `json:"reasoning_effort,omitempty"`
 	Metadata              map[string]string `json:"metadata,omitempty"`
 	RandomSeed            int64             `json:"random_seed,omitempty"`
 }
 
-func EstimateTokensFromMessagesJSON(rawMessages json.RawMessage) (tokens int, hasVision bool, textSample string) {
+type chatMessagesAnalysis struct {
+	EstimatedTokens int
+	HasVision       bool
+	KeywordText     string
+	LatestUserText  string
+	MessageCount    int
+	ToolTurnCount   int
+}
+
+func analyzeChatMessagesJSON(rawMessages json.RawMessage) chatMessagesAnalysis {
 	if len(rawMessages) == 0 {
-		return 0, false, ""
+		return chatMessagesAnalysis{}
 	}
 	var msgs []struct {
-		Role    string          `json:"role"`
-		Content json.RawMessage `json:"content"`
+		Role      string            `json:"role"`
+		Content   json.RawMessage   `json:"content"`
+		ToolCalls []json.RawMessage `json:"tool_calls"`
 	}
 	if err := json.Unmarshal(rawMessages, &msgs); err != nil {
-		return utf8.RuneCount(rawMessages) / 4, false, ""
+		return chatMessagesAnalysis{EstimatedTokens: utf8.RuneCount(rawMessages) / 4}
 	}
 	runes := 0
 	var sample strings.Builder
+	latestUserText := ""
+	toolTurnCount := 0
+	hasVision := false
 	for _, m := range msgs {
 		runes += 8
+		if m.Role == "tool" || len(m.ToolCalls) > 0 {
+			toolTurnCount++
+		}
 		var s string
 		if err := json.Unmarshal(m.Content, &s); err == nil {
 			runes += utf8.RuneCountInString(s)
-			if m.Role == "user" && sample.Len() < 4000 {
-				if sample.Len() > 0 {
-					sample.WriteByte(' ')
+			if m.Role == "user" {
+				if s != "" {
+					latestUserText = s
 				}
-				sample.WriteString(s)
+				if sample.Len() < 4000 {
+					if sample.Len() > 0 {
+						sample.WriteByte(' ')
+					}
+					sample.WriteString(s)
+				}
 			}
 			continue
 		}
@@ -540,6 +568,7 @@ func EstimateTokensFromMessagesJSON(rawMessages json.RawMessage) (tokens int, ha
 			Text string `json:"text"`
 		}
 		if err := json.Unmarshal(m.Content, &parts); err == nil {
+			var turnText strings.Builder
 			for _, p := range parts {
 				if strings.Contains(strings.ToLower(p.Type), "image") {
 					hasVision = true
@@ -547,13 +576,22 @@ func EstimateTokensFromMessagesJSON(rawMessages json.RawMessage) (tokens int, ha
 				}
 				if p.Text != "" {
 					runes += utf8.RuneCountInString(p.Text)
-					if m.Role == "user" && sample.Len() < 4000 {
-						if sample.Len() > 0 {
-							sample.WriteByte(' ')
+					if m.Role == "user" {
+						if turnText.Len() > 0 {
+							turnText.WriteByte(' ')
 						}
-						sample.WriteString(p.Text)
+						turnText.WriteString(p.Text)
+						if sample.Len() < 4000 {
+							if sample.Len() > 0 {
+								sample.WriteByte(' ')
+							}
+							sample.WriteString(p.Text)
+						}
 					}
 				}
+			}
+			if m.Role == "user" && turnText.Len() > 0 {
+				latestUserText = turnText.String()
 			}
 		}
 	}
@@ -561,18 +599,33 @@ func EstimateTokensFromMessagesJSON(rawMessages json.RawMessage) (tokens int, ha
 	if est < 1 && len(msgs) > 0 {
 		est = 1
 	}
-	return est, hasVision, sample.String()
+	return chatMessagesAnalysis{
+		EstimatedTokens: est,
+		HasVision:       hasVision,
+		KeywordText:     sample.String(),
+		LatestUserText:  latestUserText,
+		MessageCount:    len(msgs),
+		ToolTurnCount:   toolTurnCount,
+	}
+}
+
+func EstimateTokensFromMessagesJSON(rawMessages json.RawMessage) (tokens int, hasVision bool, textSample string) {
+	analyzed := analyzeChatMessagesJSON(rawMessages)
+	return analyzed.EstimatedTokens, analyzed.HasVision, analyzed.KeywordText
 }
 
 func ExtractChatRouteContext(meta chatRequestMeta, keyCtx apiKeyContext, headers http.Header) RouteContext {
-	estIn, hasVision, sample := EstimateTokensFromMessagesJSON(meta.Messages)
+	analyzed := analyzeChatMessagesJSON(meta.Messages)
 	caps := make([]string, 0, 4)
-	if hasVision {
+	if analyzed.HasVision {
 		caps = append(caps, "vision")
 	}
 	estOut := 500
+	toolCount := 0
+	reasoningEffort := ""
 	if meta.Params != nil {
-		if len(meta.Params.Tools) > 0 || meta.Params.ToolChoice != nil {
+		toolCount = len(meta.Params.Tools)
+		if toolCount > 0 || meta.Params.ToolChoice != nil {
 			caps = append(caps, "tools")
 		}
 		if meta.Params.ResponseFormat != nil {
@@ -580,12 +633,12 @@ func ExtractChatRouteContext(meta chatRequestMeta, keyCtx apiKeyContext, headers
 		}
 		if meta.Params.Reasoning != nil {
 			caps = append(caps, "reasoning")
+			if meta.Params.Reasoning.Effort != nil {
+				reasoningEffort = *meta.Params.Reasoning.Effort
+			}
 		}
 		if meta.Params.MaxCompletionTokens != nil && *meta.Params.MaxCompletionTokens > 0 {
 			estOut = *meta.Params.MaxCompletionTokens
-		}
-		if meta.Params.Metadata != nil {
-			// Checked below when merging header metadata.
 		}
 	}
 	metaMap := map[string]string{}
@@ -608,7 +661,7 @@ func ExtractChatRouteContext(meta chatRequestMeta, keyCtx apiKeyContext, headers
 		}
 	}
 	return RouteContext{
-		EstimatedInputTokens:  estIn,
+		EstimatedInputTokens:  analyzed.EstimatedTokens,
 		EstimatedOutputTokens: estOut,
 		Stream:                meta.Stream,
 		RequiredCapabilities:  caps,
@@ -617,7 +670,12 @@ func ExtractChatRouteContext(meta chatRequestMeta, keyCtx apiKeyContext, headers
 		APIKeyID:              keyCtx.KeyID.String(),
 		Source:                "api",
 		Protocol:              ClientProtocolOpenAIChat,
-		KeywordText:           sample,
+		KeywordText:           analyzed.KeywordText,
+		LatestUserText:        analyzed.LatestUserText,
+		ToolCount:             toolCount,
+		ToolTurnCount:         analyzed.ToolTurnCount,
+		MessageCount:          analyzed.MessageCount,
+		ReasoningEffort:       reasoningEffort,
 		Metadata:              metaMap,
 	}
 }

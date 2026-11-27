@@ -2,7 +2,7 @@
 import { h, onMounted, reactive, ref, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { NButton, NDataTable, NDropdown, NSpace, NTag } from 'naive-ui';
-import type { DataTableColumns, DropdownOption, FormInst, FormRules } from 'naive-ui';
+import type { DataTableColumns, DropdownOption, FormInst, FormItemRule, FormRules } from 'naive-ui';
 import {
   formatTime,
   healthStatusText,
@@ -67,22 +67,58 @@ const formRef = ref<FormInst | null>(null);
 const editFormRef = ref<FormInst | null>(null);
 const formModel = reactive({
   name: '',
+  expose_router: false,
+  router_model_id: '',
   route_policy_id: null as string | null,
   candidates: [] as CandidateForm[]
 });
 const editModel = reactive({
   id: '',
   name: '',
+  expose_router: false,
+  router_model_id: '',
   route_policy_id: null as string | null,
   candidates: [] as CandidateForm[]
 });
-const formRules = computed<FormRules>(() => ({
+
+function makeRouterModelIDRule(isExposed: () => boolean): FormItemRule {
+  return {
+    validator: (_rule, value: string) => {
+      if (!isExposed()) return true;
+      const trimmed = (value ?? '').trim();
+      if (!/^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,127}$/.test(trimmed)) {
+        return new Error($t('business.router-model-id-invalid-tip'));
+      }
+      return true;
+    },
+    trigger: ['input', 'blur']
+  };
+}
+
+const createFormRules = computed<FormRules>(() => ({
   name: {
     required: true,
     message: $t('business.enter-a-model-service-name'),
     trigger: 'blur'
-  }
+  },
+  router_model_id: makeRouterModelIDRule(() => formModel.expose_router)
 }));
+
+const editFormRules = computed<FormRules>(() => ({
+  name: {
+    required: true,
+    message: $t('business.enter-a-model-service-name'),
+    trigger: 'blur'
+  },
+  router_model_id: makeRouterModelIDRule(() => editModel.expose_router)
+}));
+
+function handleToggleExposeRouter(model: { expose_router: boolean; router_model_id: string }, val: boolean) {
+  model.expose_router = val;
+  if (val && !model.router_model_id.trim()) {
+    model.router_model_id = 'omniflux/auto';
+  }
+}
 
 function accountLabel(accountId: string | null) {
   return accountOptions.value.find(item => item.value === accountId)?.label ?? '-';
@@ -230,6 +266,16 @@ const columns = computed<DataTableColumns<Api.Management.ModelService>>(() => [
     }
   },
   { title: $t('business.name'), key: 'name', ellipsis: { tooltip: true }, width: 180 },
+  {
+    title: $t('business.router-exposure'),
+    key: 'router_model_id',
+    ellipsis: { tooltip: true },
+    width: 170,
+    render: row =>
+      row.expose_router && row.router_model_id
+        ? h(NTag, { type: 'primary', size: 'small', round: true }, { default: () => row.router_model_id })
+        : h(NTag, { type: 'default', size: 'small', round: true }, { default: () => $t('business.concrete-models-only-tag') })
+  },
   {
     title: $t('business.route-policy'),
     key: 'route_policy_id',
@@ -393,6 +439,8 @@ function makeCandidate(): CandidateForm {
 
 function openCreate() {
   formModel.name = '';
+  formModel.expose_router = false;
+  formModel.router_model_id = '';
   formModel.route_policy_id = null;
   formModel.candidates = [makeCandidate()];
   showCreate.value = true;
@@ -409,6 +457,8 @@ async function openDiscoveredModels() {
   const discovered = new Map((data?.models ?? []).map(item => [item.id, item]));
   formModel.name =
     modelIDs.length === 1 ? modelIDs[0] : $t('business.accountService', { account: accountLabel(accountID) });
+  formModel.expose_router = false;
+  formModel.router_model_id = '';
   formModel.route_policy_id = null;
   formModel.candidates = modelIDs.map(id => {
     const model = discovered.get(id);
@@ -444,6 +494,8 @@ function openEdit(row: Api.Management.ModelService) {
   editTab.value = 'candidates';
   editModel.id = row.id;
   editModel.name = row.name;
+  editModel.expose_router = Boolean(row.expose_router);
+  editModel.router_model_id = row.router_model_id ?? '';
   editModel.route_policy_id = row.route_policy_id;
   editModel.candidates = row.candidates.map(item => ({
     provider_account_id: item.provider_account_id,
@@ -502,6 +554,8 @@ async function handleCreate() {
   try {
     const { error } = await fetchCreateModelService({
       name: formModel.name.trim(),
+      expose_router: formModel.expose_router,
+      router_model_id: formModel.expose_router ? formModel.router_model_id.trim() : null,
       route_policy_id: formModel.route_policy_id,
       candidates: toCandidateParams(formModel.candidates)
     });
@@ -522,6 +576,8 @@ async function handleUpdate() {
   try {
     const { error } = await fetchUpdateModelService(editModel.id, {
       name: editModel.name.trim(),
+      expose_router: editModel.expose_router,
+      router_model_id: editModel.expose_router ? editModel.router_model_id.trim() : null,
       route_policy_id: editModel.route_policy_id,
       candidates: toCandidateParams(editModel.candidates)
     });
@@ -608,18 +664,37 @@ onMounted(async () => {
     </NCard>
 
     <NModal v-model:show="showCreate" preset="card" :title="$t('business.create-model-service')" class="w-1340px">
-      <NForm ref="formRef" :model="formModel" :rules="formRules" label-placement="top">
-        <NFormItem :label="$t('business.service-name')" path="name">
-          <NInput v-model:value="formModel.name" :placeholder="$t('business.logical-model-name-used-by')" />
-        </NFormItem>
-        <NFormItem :label="$t('business.route-policy')">
-          <NSelect
-            v-model:value="formModel.route_policy_id"
-            :options="policyOptions"
-            clearable
-            :placeholder="$t('business.optional-leave-unselected-to-use')"
-          />
-        </NFormItem>
+      <NForm ref="formRef" :model="formModel" :rules="createFormRules" label-placement="top">
+        <NGrid :cols="24" :x-gap="16">
+          <NFormItemGi :span="12" :label="$t('business.service-name')" path="name">
+            <NInput v-model:value="formModel.name" :placeholder="$t('business.logical-model-name-used-by')" />
+          </NFormItemGi>
+          <NFormItemGi :span="12" :label="$t('business.route-policy')">
+            <NSelect
+              v-model:value="formModel.route_policy_id"
+              :options="policyOptions"
+              clearable
+              :placeholder="$t('business.optional-leave-unselected-to-use')"
+            />
+          </NFormItemGi>
+          <NFormItemGi :span="12" :label="$t('business.expose-router')">
+            <div>
+              <NSwitch
+                :value="formModel.expose_router"
+                @update:value="val => handleToggleExposeRouter(formModel, val)"
+              />
+              <NText depth="3" class="mt-4px block text-12px">
+                {{ $t('business.expose-router-hint') }}
+              </NText>
+            </div>
+          </NFormItemGi>
+          <NFormItemGi v-if="formModel.expose_router" :span="12" :label="$t('business.router-model-id')" path="router_model_id">
+            <NInput
+              v-model:value="formModel.router_model_id"
+              :placeholder="$t('business.router-model-id-placeholder')"
+            />
+          </NFormItemGi>
+        </NGrid>
         <NDivider title-placement="left">{{ $t('business.candidate-models') }}</NDivider>
         <CandidateEditor v-model:candidates="formModel.candidates" :account-options="accountOptions" />
       </NForm>
@@ -636,18 +711,42 @@ onMounted(async () => {
       <NDrawerContent :title="$t('business.edit-model-service')" closable>
         <NTabs v-model:value="editTab" type="line" animated>
           <NTabPane name="candidates" :tab="$t('business.candidate-models')">
-            <NForm ref="editFormRef" :model="editModel" :rules="formRules" label-placement="top">
-              <NFormItem :label="$t('business.service-name')" path="name">
-                <NInput v-model:value="editModel.name" />
-              </NFormItem>
-              <NFormItem :label="$t('business.route-policy')">
-                <NSelect
-                  v-model:value="editModel.route_policy_id"
-                  :options="policyOptions"
-                  clearable
-                  :placeholder="$t('business.optional-leave-unselected-to-use')"
-                />
-              </NFormItem>
+            <NForm ref="editFormRef" :model="editModel" :rules="editFormRules" label-placement="top">
+              <NGrid :cols="24" :x-gap="16">
+                <NFormItemGi :span="12" :label="$t('business.service-name')" path="name">
+                  <NInput v-model:value="editModel.name" />
+                </NFormItemGi>
+                <NFormItemGi :span="12" :label="$t('business.route-policy')">
+                  <NSelect
+                    v-model:value="editModel.route_policy_id"
+                    :options="policyOptions"
+                    clearable
+                    :placeholder="$t('business.optional-leave-unselected-to-use')"
+                  />
+                </NFormItemGi>
+                <NFormItemGi :span="12" :label="$t('business.expose-router')">
+                  <div>
+                    <NSwitch
+                      :value="editModel.expose_router"
+                      @update:value="val => handleToggleExposeRouter(editModel, val)"
+                    />
+                    <NText depth="3" class="mt-4px block text-12px">
+                      {{ $t('business.expose-router-hint') }}
+                    </NText>
+                  </div>
+                </NFormItemGi>
+                <NFormItemGi
+                  v-if="editModel.expose_router"
+                  :span="12"
+                  :label="$t('business.router-model-id')"
+                  path="router_model_id"
+                >
+                  <NInput
+                    v-model:value="editModel.router_model_id"
+                    :placeholder="$t('business.router-model-id-placeholder')"
+                  />
+                </NFormItemGi>
+              </NGrid>
               <NDivider title-placement="left">{{ $t('business.candidate-models-all-replaced-after') }}</NDivider>
               <CandidateEditor v-model:candidates="editModel.candidates" :account-options="accountOptions" />
             </NForm>

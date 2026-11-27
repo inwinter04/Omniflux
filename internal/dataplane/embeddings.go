@@ -72,7 +72,7 @@ func (d Deps) Embeddings(w http.ResponseWriter, r *http.Request) {
 	}
 	start := time.Now()
 
-	svc, found, err := d.loadService(r.Context(), keyCtx.OrganizationID, meta.Model)
+	svc, found, allowed, err := d.resolveAuthorizedTarget(r.Context(), keyCtx, meta.Model, "invoke")
 	if err != nil {
 		apiError(w, http.StatusInternalServerError, "internal_error", "Failed to resolve model service.")
 		return
@@ -81,13 +81,10 @@ func (d Deps) Embeddings(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusNotFound, "model_not_found", "Model service does not exist or is not enabled.", apiErrorOptions{Reason: "model_not_found", Param: "model", Params: map[string]any{"model": meta.Model}})
 		return
 	}
-	allowed, err := d.hasModelServiceAccess(r.Context(), keyCtx.OrganizationID, keyCtx.ProjectID, svc.ID, "invoke")
-	if err != nil {
-		apiError(w, http.StatusInternalServerError, "internal_error", "Failed to check model service access.")
-		return
-	}
 	if !allowed {
-		d.auditDeniedModelAccess(r, keyCtx, svc.ID, "embeddings")
+		if svc.ID != uuid.Nil {
+			d.auditDeniedModelAccess(r, keyCtx, svc.ID, "embeddings")
+		}
 		apiError(w, http.StatusForbidden, "model_access_denied", "The current project is not allowed to invoke this model service.")
 		return
 	}

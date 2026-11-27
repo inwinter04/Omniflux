@@ -597,6 +597,56 @@ const decisionColumns = computed<DataTableColumns<Api.Management.RoutePolicyDeci
             <NDescriptionsItem :label="$t('business.sim-matched-rule')">
               {{ inspectedDecision.matched_rule_name || '-' }}
             </NDescriptionsItem>
+            <NDescriptionsItem
+              v-if="inspectedDecision.decision_detail?.orchestrator"
+              :label="$t('business.orchestrator-decision')"
+              :span="2"
+            >
+              <div class="flex flex-wrap items-center gap-6px">
+                <NTag type="primary" size="small" round>
+                  {{
+                    $t('business.orchestrator-tier-badge', {
+                      tier: inspectedDecision.decision_detail.orchestrator.tier,
+                      score: inspectedDecision.decision_detail.orchestrator.score.toFixed(2)
+                    })
+                  }}
+                </NTag>
+                <NTag
+                  v-if="inspectedDecision.decision_detail.orchestrator.upgraded_from_tier"
+                  type="warning"
+                  size="small"
+                  round
+                >
+                  {{
+                    $t('business.orchestrator-upgraded-from', {
+                      from: inspectedDecision.decision_detail.orchestrator.upgraded_from_tier
+                    })
+                  }}
+                </NTag>
+                <NTag v-if="inspectedDecision.decision_detail.orchestrator.cache_protected" type="info" size="small" round>
+                  {{ $t('business.orchestrator-cache-protected') }}
+                </NTag>
+                <NTag v-if="inspectedDecision.decision_detail.orchestrator.auto_bucketed" size="small" round>
+                  {{ $t('business.orchestrator-auto-bucketed') }}
+                </NTag>
+              </div>
+            </NDescriptionsItem>
+            <NDescriptionsItem
+              v-if="inspectedDecision.decision_detail?.orchestrator?.signals?.length"
+              :label="$t('business.orchestrator-signals')"
+              :span="2"
+            >
+              <div class="flex flex-wrap gap-6px">
+                <NTag
+                  v-for="sig in inspectedDecision.decision_detail.orchestrator.signals"
+                  :key="sig"
+                  size="tiny"
+                  :bordered="false"
+                >
+                  {{ sig }}
+                </NTag>
+              </div>
+            </NDescriptionsItem>
           </NDescriptions>
           <NText strong>{{ $t('business.attempt-trail') }}</NText>
           <pre class="my-8px overflow-auto rounded bg-gray-100 p-8px text-12px dark:bg-gray-800">{{

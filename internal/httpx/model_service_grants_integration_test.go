@@ -41,7 +41,7 @@ func TestIntegrationModelServiceGrants(t *testing.T) {
 			t.Fatalf("models without grants status = %d body = %#v", code, raw)
 		}
 		code, raw = doDataJSON(t, http.MethodPost, "/v1/chat/completions", map[string]any{
-			"model": "governed-model", "messages": []any{map[string]any{"role": "user", "content": "deny"}},
+			"model": "agent-mock", "messages": []any{map[string]any{"role": "user", "content": "deny"}},
 		}, key)
 		if code != http.StatusForbidden {
 			t.Fatalf("chat without grants status = %d body = %#v, want 403", code, raw)
@@ -57,7 +57,7 @@ func TestIntegrationModelServiceGrants(t *testing.T) {
 		t.Fatalf("allowed models status = %d body = %#v", code, raw)
 	}
 	code, raw = doDataJSON(t, http.MethodPost, "/v1/chat/completions", map[string]any{
-		"model": "governed-model", "messages": []any{map[string]any{"role": "user", "content": "allow"}},
+		"model": "agent-mock", "messages": []any{map[string]any{"role": "user", "content": "allow"}},
 	}, allowedKey)
 	if code != http.StatusOK {
 		t.Fatalf("allowed chat status = %d body = %#v", code, raw)
@@ -78,7 +78,7 @@ func TestIntegrationModelServiceGrants(t *testing.T) {
 		t.Fatalf("read-only models status = %d body = %#v", code, raw)
 	}
 	code, raw = doDataJSON(t, http.MethodPost, "/v1/chat/completions", map[string]any{
-		"model": "governed-model", "messages": []any{map[string]any{"role": "user", "content": "deny read only"}},
+		"model": "agent-mock", "messages": []any{map[string]any{"role": "user", "content": "deny read only"}},
 	}, allowedKey)
 	if code != http.StatusForbidden {
 		t.Fatalf("read-only chat status = %d body = %#v, want 403", code, raw)

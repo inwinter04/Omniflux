@@ -91,7 +91,7 @@ func TestIntegrationMultiCurrencyUsageReporting(t *testing.T) {
 	code, body = doJSON(t, admin, http.MethodPost, "/api/v1/assets/"+agentID+"/agent/chat", map[string]any{"message": "debug"})
 	assertAssetStatus(t, code, body, http.StatusOK)
 	code, raw := doDataJSON(t, http.MethodPost, "/v1/chat/completions", map[string]any{
-		"model": "cny-model", "messages": []any{map[string]any{"role": "user", "content": "api"}},
+		"model": "cny-upstream", "messages": []any{map[string]any{"role": "user", "content": "api"}},
 	}, apiKey)
 	if code != http.StatusOK {
 		t.Fatalf("cny api call = %d %#v", code, raw)
@@ -106,7 +106,7 @@ func TestIntegrationMultiCurrencyUsageReporting(t *testing.T) {
 
 	_ = createAgentTestService(t, admin, upstream.URL, "usd-model")
 	code, raw = doDataJSON(t, http.MethodPost, "/v1/chat/completions", map[string]any{
-		"model": "usd-model", "messages": []any{map[string]any{"role": "user", "content": "api"}},
+		"model": "agent-mock", "messages": []any{map[string]any{"role": "user", "content": "api"}},
 	}, apiKey)
 	if code != http.StatusOK {
 		t.Fatalf("usd api call = %d %#v", code, raw)

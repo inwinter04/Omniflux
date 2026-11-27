@@ -309,6 +309,10 @@ const snapshotFieldKeyMap: Record<string, App.I18n.I18nKey> = {
   asset_type: 'business.asset-type',
   base_url: 'business.api-endpoint',
   gateway_base_url: 'business.gateway-base-url',
+  expose_upstream_balance_to_clients: 'business.expose-upstream-balance-to-clients',
+  expose_router: 'business.expose-router',
+  router_model_id: 'business.router-model-id',
+  orchestrator_config: 'business.orchestrator-config',
   billing_currency: 'business.currency',
   candidates: 'business.candidates',
   cases: 'business.case-count',
@@ -437,6 +441,7 @@ const snapshotEnumLabels: Record<string, Record<string, App.I18n.I18nKey>> = {
   scope_type: scopeTypeLabels,
   subject_type: scopeTypeLabels,
   strategy: {
+    auto_orchestrator: 'business.strategy-auto-orchestrator',
     balanced: 'business.balanced',
     cost_first: 'business.cost-first',
     quality_first: 'business.quality-first',
@@ -456,10 +461,11 @@ export function routeStrategyText(strategy: string) {
 
 export function routeStrategyTagType(strategy: string): 'default' | 'info' | 'success' | 'warning' | 'primary' {
   switch (strategy) {
-    case 'cost_first':
-      return 'success';
+    case 'auto_orchestrator':
     case 'quality_first':
       return 'primary';
+    case 'cost_first':
+      return 'success';
     case 'latency_first':
       return 'info';
     case 'reliability_first':

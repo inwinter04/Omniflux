@@ -68,9 +68,9 @@ func (d Deps) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	reqCtx := ExtractResponsesRouteContext(bifrostReq, isStream, ClientProtocolAnthropicMessages, keyCtx, r.Header, "")
-	svc, found, loadErr := d.loadService(r.Context(), keyCtx.OrganizationID, requestedModel)
+	svc, found, allowed, loadErr := d.resolveAuthorizedTarget(r.Context(), keyCtx, requestedModel, "invoke")
 	strategy := "auto"
-	if loadErr == nil && found {
+	if loadErr == nil && found && allowed {
 		strategy = svc.Policy.SessionAffinity.KeyStrategy
 	}
 	reqCtx.SessionKey = DeriveSessionKey(r, "", "", metaUserID, strategy)
@@ -142,10 +142,14 @@ func (d Deps) handleAnthropicStream(r *http.Request, w http.ResponseWriter, requ
 	snapshot := winner.Snapshot
 	attempts = winner.Attempts
 	convCtx := schemas.NewBifrostContext(r.Context(), schemas.NoDeadline)
+	sawTerminalEvent := false
 
 	emitResponsesEvent := func(ev *schemas.BifrostResponsesStreamResponse) bool {
 		if ev == nil {
 			return true
+		}
+		if isResponsesTerminalEvent(ev) {
+			sawTerminalEvent = true
 		}
 		if ev.Response != nil && ev.Response.Usage != nil {
 			mergeUsageSnapshot(&snapshot, usageFromResponses(ev.Response.Usage))
@@ -182,16 +186,25 @@ func (d Deps) handleAnthropicStream(r *http.Request, w http.ResponseWriter, requ
 
 	var streamErr *schemas.BifrostError
 	if !interrupted {
+		keepalive := time.NewTicker(sseKeepaliveInterval)
+		defer keepalive.Stop()
 	streamLoop:
 		for {
 			select {
 			case <-r.Context().Done():
 				interrupted = true
 				break streamLoop
+			case <-keepalive.C:
+				if _, err := w.Write([]byte(": keepalive\n\n")); err != nil {
+					interrupted = true
+					break streamLoop
+				}
+				flusher.Flush()
 			case chunk, open := <-winner.Stream:
 				if !open {
 					break streamLoop
 				}
+				keepalive.Reset(sseKeepaliveInterval)
 				if chunk.BifrostError != nil {
 					streamErr = chunk.BifrostError
 					break streamLoop
@@ -213,6 +226,19 @@ func (d Deps) handleAnthropicStream(r *http.Request, w http.ResponseWriter, requ
 		})
 		d.recordStreamInterruptedWithProtocol(r.Context(), requestID, winner.Candidate, attempts, start, firstTokenMS, snapshot, ClientProtocolAnthropicMessages)
 		return
+	}
+
+	if streamErr == nil && !sawTerminalEvent {
+		streamErr = &schemas.BifrostError{
+			StatusCode: intPtr(http.StatusBadGateway),
+			Type:       stringPtr("upstream_stream_closed"),
+			Error:      &schemas.ErrorField{Message: "Upstream stream closed before completion."},
+		}
+		d.Logger.Warn("anthropic stream closed without terminal event",
+			"request_id", requestID,
+			"provider", winner.Candidate.Provider,
+			"upstream_model", winner.Candidate.UpstreamModel,
+			"duration_ms", time.Since(start).Milliseconds())
 	}
 
 	if streamErr != nil {
@@ -266,7 +292,7 @@ func (d Deps) AnthropicCountTokens(w http.ResponseWriter, r *http.Request) {
 	}
 	reqCtx := ExtractResponsesRouteContext(bifrostReq, false, ClientProtocolAnthropicMessages, keyCtx, r.Header, "")
 
-	svc, found, err := d.loadService(r.Context(), keyCtx.OrganizationID, requestedModel)
+	svc, found, allowed, err := d.resolveAuthorizedTarget(r.Context(), keyCtx, requestedModel, "invoke")
 	if err != nil {
 		writeProtocolError(w, r, http.StatusInternalServerError, "internal_error", "Failed to resolve model service.")
 		return
@@ -276,13 +302,10 @@ func (d Deps) AnthropicCountTokens(w http.ResponseWriter, r *http.Request) {
 			apiErrorOptions{Reason: "model_not_found", Param: "model", Params: map[string]any{"model": requestedModel}})
 		return
 	}
-	allowed, err := d.hasModelServiceAccess(r.Context(), keyCtx.OrganizationID, keyCtx.ProjectID, svc.ID, "invoke")
-	if err != nil {
-		writeProtocolError(w, r, http.StatusInternalServerError, "internal_error", "Failed to check model service access.")
-		return
-	}
 	if !allowed {
-		d.auditDeniedModelAccess(r, keyCtx, svc.ID, "anthropic_count_tokens")
+		if svc.ID != uuid.Nil {
+			d.auditDeniedModelAccess(r, keyCtx, svc.ID, "anthropic_count_tokens")
+		}
 		writeProtocolError(w, r, http.StatusForbidden, "model_access_denied", "The current project is not allowed to invoke this model service.")
 		return
 	}

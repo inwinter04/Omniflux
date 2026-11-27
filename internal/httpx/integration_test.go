@@ -832,8 +832,8 @@ func TestIntegrationGovernance(t *testing.T) {
 		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 			t.Fatalf("decode models: %v", err)
 		}
-		if len(payload.Data) != 1 || payload.Data[0]["id"] != "it-model" {
-			t.Fatalf("models payload = %v, want it-model", payload.Data)
+		if len(payload.Data) != 1 || payload.Data[0]["id"] != "gpt-test" {
+			t.Fatalf("models payload = %v, want gpt-test", payload.Data)
 		}
 	})
 
@@ -856,7 +856,7 @@ func TestIntegrationGovernance(t *testing.T) {
 			t.Fatalf("insert budget window: %v", err)
 		}
 		req, _ := http.NewRequest(http.MethodPost, env.base()+"/v1/chat/completions",
-			bytes.NewBufferString(`{"model":"it-model","messages":[{"role":"user","content":"hi"}]}`))
+			bytes.NewBufferString(`{"model":"gpt-test","messages":[{"role":"user","content":"hi"}]}`))
 		req.Header.Set("Authorization", "Bearer "+plainKey)
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := http.DefaultClient.Do(req)

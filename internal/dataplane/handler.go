@@ -1,6 +1,7 @@
 package dataplane
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -13,14 +14,30 @@ import (
 	"github.com/inwinter04/omniflux/internal/fx"
 )
 
+// UpstreamQuotaItem 表示由授权上游供应商账户查询得到的归一化余额或套餐额度窗口。
+type UpstreamQuotaItem struct {
+	AccountID     string   `json:"account_id"`
+	AccountName   string   `json:"account_name"`
+	Provider      string   `json:"provider"`
+	LabelKey      string   `json:"label_key"`
+	Kind          string   `json:"kind"`
+	PlanName      string   `json:"plan_name"`
+	Remaining     *float64 `json:"remaining"`
+	Total         *float64 `json:"total"`
+	Used          *float64 `json:"used"`
+	Unit          string   `json:"unit"`
+	NextResetTime *int64   `json:"next_reset_time,omitempty"`
+}
+
 // Deps 是数据面处理器的依赖集合。
 type Deps struct {
-	Logger           *slog.Logger
-	Pool             *pgxpool.Pool
-	Engine           *bifrostx.Engine
-	FX               *fx.Service
-	APIKeyPepper     string
-	OnTransportError func(providerKey string)
+	Logger                *slog.Logger
+	Pool                  *pgxpool.Pool
+	Engine                *bifrostx.Engine
+	FX                    *fx.Service
+	APIKeyPepper          string
+	OnTransportError      func(providerKey string)
+	QueryUpstreamBalances func(ctx context.Context, orgID, projectID uuid.UUID) ([]UpstreamQuotaItem, error)
 
 	rateLimiter *rateLimiter
 	breaker     *CandidateBreaker

@@ -42,10 +42,39 @@ const rules = computed<FormRules>(() => ({
 }));
 
 const isScoringStrategy = computed(() => SCORING_STRATEGIES.has(draft.strategy));
+const isOrchestratorStrategy = computed(() => draft.strategy === 'auto_orchestrator');
 const weightSum = computed(() => {
   const s = draft.weights.cost + draft.weights.quality + draft.weights.latency + draft.weights.reliability;
   return Math.round(s * 100) / 100;
 });
+
+const tierCandidateOptions = computed<SelectOption[]>(() => {
+  const seen = new Set<string>();
+  const items: SelectOption[] = [];
+  for (const svc of props.modelServices) {
+    for (const cand of svc.candidates ?? []) {
+      const model = cand.upstream_model?.trim();
+      if (model && !seen.has(model)) {
+        seen.add(model);
+        items.push({ label: model, value: model });
+      }
+      for (const tag of cand.tags ?? []) {
+        const cleanTag = tag.trim();
+        if (cleanTag && !seen.has(cleanTag)) {
+          seen.add(cleanTag);
+          items.push({ label: `#${cleanTag}`, value: cleanTag });
+        }
+      }
+    }
+  }
+  return items.sort((a, b) => String(a.label).localeCompare(String(b.label)));
+});
+
+const orchestratorSessionModeOptions = computed<SelectOption[]>(() => [
+  { label: $t('business.orchestrator-session-adaptive'), value: 'adaptive' },
+  { label: $t('business.orchestrator-session-per-turn'), value: 'per_turn' },
+  { label: $t('business.orchestrator-session-sticky-upgrade'), value: 'sticky_upgrade' }
+]);
 
 const baselineCandidateOptions = computed<SelectOption[]>(() => {
   const items: SelectOption[] = [];
@@ -237,11 +266,123 @@ async function handleSave() {
               </NFormItemGi>
             </NGrid>
 
-            <NAlert v-if="!isScoringStrategy" type="info" :bordered="false" class="mb-12px">
+            <NAlert v-if="!isScoringStrategy && !isOrchestratorStrategy" type="info" :bordered="false" class="mb-12px">
               {{ $t('business.non-scoring-strategy-hint') }}
             </NAlert>
 
-            <NCard size="small" :title="$t('business.scoring-weights')" class="mt-8px">
+            <NCard v-if="isOrchestratorStrategy" size="small" :title="$t('business.orchestrator-title')" class="mt-8px">
+              <NAlert type="info" :bordered="false" class="mb-12px">
+                {{ $t('business.orchestrator-auto-hint') }}
+              </NAlert>
+              <NGrid :cols="2" :x-gap="16">
+                <NFormItemGi :span="2" :label="$t('business.orchestrator-session-mode')">
+                  <NSelect
+                    v-model:value="draft.orchestrator_config.session_mode"
+                    :options="orchestratorSessionModeOptions"
+                  />
+                </NFormItemGi>
+                <NFormItemGi :label="$t('business.orchestrator-sticky-context-tokens')">
+                  <NInputNumber
+                    v-model:value="draft.orchestrator_config.sticky_context_tokens"
+                    :min="1000"
+                    :max="200000"
+                    :step="1000"
+                    :disabled="draft.orchestrator_config.session_mode !== 'adaptive'"
+                    class="w-full"
+                  />
+                </NFormItemGi>
+                <NFormItemGi :label="$t('business.orchestrator-long-context-threshold')">
+                  <NInputNumber
+                    v-model:value="draft.orchestrator_config.long_context_threshold"
+                    :min="2000"
+                    :max="1000000"
+                    :step="4000"
+                    class="w-full"
+                  />
+                </NFormItemGi>
+              </NGrid>
+
+              <NDivider title-placement="left">{{ $t('business.orchestrator-thresholds') }}</NDivider>
+              <NGrid :cols="3" :x-gap="12">
+                <NFormItemGi :label="$t('business.orchestrator-threshold-simple-medium')" :show-feedback="false">
+                  <NInputNumber
+                    v-model:value="draft.orchestrator_config.thresholds.simple_medium"
+                    :min="0.05"
+                    :max="0.9"
+                    :step="0.02"
+                    class="w-full"
+                  />
+                </NFormItemGi>
+                <NFormItemGi :label="$t('business.orchestrator-threshold-medium-complex')" :show-feedback="false">
+                  <NInputNumber
+                    v-model:value="draft.orchestrator_config.thresholds.medium_complex"
+                    :min="0.1"
+                    :max="0.95"
+                    :step="0.02"
+                    class="w-full"
+                  />
+                </NFormItemGi>
+                <NFormItemGi :label="$t('business.orchestrator-threshold-complex-reasoning')" :show-feedback="false">
+                  <NInputNumber
+                    v-model:value="draft.orchestrator_config.thresholds.complex_reasoning"
+                    :min="0.2"
+                    :max="0.98"
+                    :step="0.02"
+                    class="w-full"
+                  />
+                </NFormItemGi>
+              </NGrid>
+
+              <NDivider title-placement="left">{{ $t('business.orchestrator-tiers-optional') }}</NDivider>
+              <NGrid v-if="draft.orchestrator_config.tiers" :cols="2" :x-gap="16" :y-gap="8">
+                <NFormItemGi :label="$t('business.orchestrator-tier-simple')" :show-feedback="false">
+                  <NSelect
+                    v-model:value="draft.orchestrator_config.tiers.simple"
+                    :options="tierCandidateOptions"
+                    :placeholder="$t('business.orchestrator-tiers-placeholder')"
+                    multiple
+                    filterable
+                    tag
+                    clearable
+                  />
+                </NFormItemGi>
+                <NFormItemGi :label="$t('business.orchestrator-tier-medium')" :show-feedback="false">
+                  <NSelect
+                    v-model:value="draft.orchestrator_config.tiers.medium"
+                    :options="tierCandidateOptions"
+                    :placeholder="$t('business.orchestrator-tiers-placeholder')"
+                    multiple
+                    filterable
+                    tag
+                    clearable
+                  />
+                </NFormItemGi>
+                <NFormItemGi :label="$t('business.orchestrator-tier-complex')" :show-feedback="false">
+                  <NSelect
+                    v-model:value="draft.orchestrator_config.tiers.complex"
+                    :options="tierCandidateOptions"
+                    :placeholder="$t('business.orchestrator-tiers-placeholder')"
+                    multiple
+                    filterable
+                    tag
+                    clearable
+                  />
+                </NFormItemGi>
+                <NFormItemGi :label="$t('business.orchestrator-tier-reasoning')" :show-feedback="false">
+                  <NSelect
+                    v-model:value="draft.orchestrator_config.tiers.reasoning"
+                    :options="tierCandidateOptions"
+                    :placeholder="$t('business.orchestrator-tiers-placeholder')"
+                    multiple
+                    filterable
+                    tag
+                    clearable
+                  />
+                </NFormItemGi>
+              </NGrid>
+            </NCard>
+
+            <NCard v-if="!isOrchestratorStrategy" size="small" :title="$t('business.scoring-weights')" class="mt-8px">
               <template #header-extra>
                 <NSpace align="center" :size="8">
                   <NTag size="small" :type="weightSum > 0 ? 'success' : 'error'">

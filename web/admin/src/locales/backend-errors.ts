@@ -427,6 +427,9 @@ export const zhCNBackendErrors: Record<string, string> = {
   'invalid-route-policy-session-affinity': '会话亲和性配置不合法（TTL 必须在 30 到 86400 秒之间，策略支持 auto/user_id/header_only）',
   'provider-protocol-unsupported': '该供应商不支持所选上游协议 api_protocol',
   'provider-base-url-not-allowed': '该厂商的接口地址由系统内置,无需填写 base_url',
+  'invalid-router-model-id': '智能路由对外模型 ID 仅支持 1-128 位字母、数字与 . _ / -，且需以字母或数字开头',
+  'router-model-id-already-exists': '该智能路由对外模型 ID 在当前组织内已存在',
+  'invalid-route-policy-orchestrator': '智能编排调度配置无效，请检查会话模式与分级阈值设置',
   agentEmptyResponse: '模型未返回内容',
   promptRunFinalizeFailed: '运行结果保存失败'
 };
@@ -877,6 +880,9 @@ export const enUSBackendErrors: Record<string, string> = {
     'Invalid session affinity configuration (TTL must be 30-86400 seconds; strategy must be auto, user_id, or header_only)',
   'provider-protocol-unsupported': 'Selected upstream api_protocol is not supported for this provider',
   'provider-base-url-not-allowed': 'This provider’s API endpoint is managed by the system; base_url is not required.',
+  'invalid-router-model-id': 'Router model ID must be 1-128 characters starting with a letter or digit (allowed: letters, digits, . _ / -).',
+  'router-model-id-already-exists': 'A smart router with this router_model_id already exists in the organization.',
+  'invalid-route-policy-orchestrator': 'Invalid auto-orchestrator configuration. Check session mode and tier thresholds.',
   agentEmptyResponse: 'The model returned no content',
   promptRunFinalizeFailed: 'Failed to save the run result'
 };

@@ -41,7 +41,27 @@ export function defaultSessionAffinity(): Api.Management.RouteSessionAffinityPol
   };
 }
 
+export function defaultOrchestratorConfig(): Api.Management.RouteOrchestratorConfig {
+  return {
+    session_mode: 'adaptive',
+    sticky_context_tokens: 8000,
+    long_context_threshold: 32000,
+    thresholds: {
+      simple_medium: 0.22,
+      medium_complex: 0.48,
+      complex_reasoning: 0.72
+    },
+    tiers: {
+      simple: [],
+      medium: [],
+      complex: [],
+      reasoning: []
+    }
+  };
+}
+
 export const ALL_STRATEGIES = [
+  'auto_orchestrator',
   'balanced',
   'cost_first',
   'quality_first',
@@ -64,6 +84,7 @@ export const SCORING_STRATEGIES = new Set([
 
 export function useStrategyOptions() {
   return computed(() => [
+    { label: $t('business.strategy-auto-orchestrator'), value: 'auto_orchestrator' },
     { label: $t('business.balanced'), value: 'balanced' },
     { label: $t('business.cost-first'), value: 'cost_first' },
     { label: $t('business.quality-first'), value: 'quality_first' },
@@ -121,6 +142,7 @@ export interface PolicyDraftModel {
   retry_policy: Api.Management.RouteRetryPolicy;
   circuit_breaker: Api.Management.RouteCircuitBreakerPolicy;
   session_affinity: Api.Management.RouteSessionAffinityPolicy;
+  orchestrator_config: Api.Management.RouteOrchestratorConfig;
 }
 
 export function createEmptyPolicyDraft(): PolicyDraftModel {
@@ -133,7 +155,7 @@ export function createEmptyPolicyDraft(): PolicyDraftModel {
     baseline_candidate_id: null,
     fallback_limit: 3,
     provider_timeout_ms: 60000,
-    first_token_timeout_ms: 15000,
+    first_token_timeout_ms: 45000,
     constraints: {
       allowed_providers: [],
       blocked_providers: [],
@@ -144,13 +166,16 @@ export function createEmptyPolicyDraft(): PolicyDraftModel {
     rules: [],
     retry_policy: defaultRetryPolicy(),
     circuit_breaker: defaultCircuitBreaker(),
-    session_affinity: defaultSessionAffinity()
+    session_affinity: defaultSessionAffinity(),
+    orchestrator_config: defaultOrchestratorConfig()
   };
 }
 
 export function draftFromPolicy(row: Api.Management.RoutePolicy): PolicyDraftModel {
   const c = row.constraints ?? {};
   const w = row.weights ?? PRESET_WEIGHTS[row.strategy] ?? PRESET_WEIGHTS.balanced;
+  const orch = row.orchestrator_config;
+  const defOrch = defaultOrchestratorConfig();
   return {
     id: row.id,
     name: row.name,
@@ -165,7 +190,7 @@ export function draftFromPolicy(row: Api.Management.RoutePolicy): PolicyDraftMod
     baseline_candidate_id: row.baseline_candidate_id ?? null,
     fallback_limit: row.fallback_limit ?? 3,
     provider_timeout_ms: row.provider_timeout_ms ?? 60000,
-    first_token_timeout_ms: row.first_token_timeout_ms ?? 15000,
+    first_token_timeout_ms: row.first_token_timeout_ms ?? 45000,
     constraints: {
       allowed_providers: [...(c.allowed_providers ?? [])],
       blocked_providers: [...(c.blocked_providers ?? [])],
@@ -199,7 +224,19 @@ export function draftFromPolicy(row: Api.Management.RoutePolicy): PolicyDraftMod
     })),
     retry_policy: { ...defaultRetryPolicy(), ...(row.retry_policy ?? {}) },
     circuit_breaker: { ...defaultCircuitBreaker(), ...(row.circuit_breaker ?? {}) },
-    session_affinity: { ...defaultSessionAffinity(), ...(row.session_affinity ?? {}) }
+    session_affinity: { ...defaultSessionAffinity(), ...(row.session_affinity ?? {}) },
+    orchestrator_config: {
+      session_mode: orch?.session_mode || defOrch.session_mode,
+      sticky_context_tokens: orch?.sticky_context_tokens ?? defOrch.sticky_context_tokens,
+      long_context_threshold: orch?.long_context_threshold ?? defOrch.long_context_threshold,
+      thresholds: { ...defOrch.thresholds, ...(orch?.thresholds ?? {}) },
+      tiers: {
+        simple: [...(orch?.tiers?.simple ?? [])],
+        medium: [...(orch?.tiers?.medium ?? [])],
+        complex: [...(orch?.tiers?.complex ?? [])],
+        reasoning: [...(orch?.tiers?.reasoning ?? [])]
+      }
+    }
   };
 }
 
@@ -263,6 +300,18 @@ export function buildPolicyPayload(draft: PolicyDraftModel): Api.Management.Crea
     rules: sanitizedRules,
     retry_policy: { ...draft.retry_policy },
     circuit_breaker: { ...draft.circuit_breaker },
-    session_affinity: { ...draft.session_affinity }
+    session_affinity: { ...draft.session_affinity },
+    orchestrator_config: {
+      session_mode: draft.orchestrator_config.session_mode,
+      sticky_context_tokens: draft.orchestrator_config.sticky_context_tokens,
+      long_context_threshold: draft.orchestrator_config.long_context_threshold,
+      thresholds: { ...draft.orchestrator_config.thresholds },
+      tiers: {
+        simple: [...(draft.orchestrator_config.tiers?.simple ?? [])],
+        medium: [...(draft.orchestrator_config.tiers?.medium ?? [])],
+        complex: [...(draft.orchestrator_config.tiers?.complex ?? [])],
+        reasoning: [...(draft.orchestrator_config.tiers?.reasoning ?? [])]
+      }
+    }
   };
 }

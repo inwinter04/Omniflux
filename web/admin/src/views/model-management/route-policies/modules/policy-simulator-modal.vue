@@ -32,6 +32,9 @@ const form = reactive<{
   required_capabilities: string[];
   keyword_text: string;
   metadata_text: string;
+  reasoning_effort: string | null;
+  tool_count: number;
+  tool_turn_count: number;
   rr_counter: number;
   simulate_failed_candidate_ids: string[];
 }>({
@@ -43,9 +46,19 @@ const form = reactive<{
   required_capabilities: [],
   keyword_text: '',
   metadata_text: '',
+  reasoning_effort: null,
+  tool_count: 0,
+  tool_turn_count: 0,
   rr_counter: 0,
   simulate_failed_candidate_ids: []
 });
+
+const reasoningEffortOptions: SelectOption[] = [
+  { label: 'low', value: 'low' },
+  { label: 'medium', value: 'medium' },
+  { label: 'high', value: 'high' },
+  { label: 'xhigh', value: 'xhigh' }
+];
 
 const serviceOptions = computed<SelectOption[]>(() =>
   props.modelServices.map(s => ({ label: s.name, value: s.id }))
@@ -201,6 +214,9 @@ async function handleRunSimulate() {
       required_capabilities: form.required_capabilities,
       keyword_text: form.keyword_text || undefined,
       metadata: parseMetadataText(form.metadata_text),
+      reasoning_effort: form.reasoning_effort || undefined,
+      tool_count: form.tool_count > 0 ? form.tool_count : undefined,
+      tool_turn_count: form.tool_turn_count > 0 ? form.tool_turn_count : undefined,
       rr_counter: form.rr_counter,
       simulate_failed_candidate_ids: form.simulate_failed_candidate_ids
     };
@@ -253,6 +269,15 @@ async function handleRunSimulate() {
       <NFormItemGi :label="$t('business.sim-failed-candidates')" :show-feedback="false">
         <NSelect v-model:value="form.simulate_failed_candidate_ids" :options="candidateFailOptions" multiple clearable />
       </NFormItemGi>
+      <NFormItemGi :label="$t('business.sim-reasoning-effort')" :show-feedback="false">
+        <NSelect v-model:value="form.reasoning_effort" :options="reasoningEffortOptions" clearable />
+      </NFormItemGi>
+      <NFormItemGi :label="$t('business.sim-tool-count')" :show-feedback="false">
+        <NInputNumber v-model:value="form.tool_count" :min="0" :max="100" class="w-full" />
+      </NFormItemGi>
+      <NFormItemGi :label="$t('business.sim-tool-turns')" :show-feedback="false">
+        <NInputNumber v-model:value="form.tool_turn_count" :min="0" :max="100" class="w-full" />
+      </NFormItemGi>
     </NGrid>
 
     <div class="my-12px flex justify-end gap-8px">
@@ -266,11 +291,35 @@ async function handleRunSimulate() {
         <NTag :type="routeStrategyTagType(result.decision.effective_strategy)" round>
           {{ $t('business.sim-effective-strategy') }}: {{ routeStrategyText(result.decision.effective_strategy) }}
         </NTag>
+        <NTag v-if="result.decision.orchestrator" type="primary" round>
+          {{
+            $t('business.orchestrator-tier-badge', {
+              tier: result.decision.orchestrator.tier,
+              score: result.decision.orchestrator.score.toFixed(2)
+            })
+          }}
+        </NTag>
+        <NTag v-if="result.decision.orchestrator?.upgraded_from_tier" type="warning" round>
+          {{ $t('business.orchestrator-upgraded-from', { from: result.decision.orchestrator.upgraded_from_tier }) }}
+        </NTag>
+        <NTag v-if="result.decision.orchestrator?.cache_protected" type="info" round>
+          {{ $t('business.orchestrator-cache-protected') }}
+        </NTag>
+        <NTag v-if="result.decision.orchestrator?.auto_bucketed" size="small" round>
+          {{ $t('business.orchestrator-auto-bucketed') }}
+        </NTag>
         <NTag v-if="result.decision.matched_rule_name" type="primary" round>
           {{ $t('business.sim-matched-rule') }}: {{ result.decision.matched_rule_name }}
         </NTag>
         <NTag v-if="result.estimated_savings.savings_rate !== null && result.estimated_savings.savings_rate !== undefined" type="success" round>
           {{ $t('business.sim-estimated-savings') }}: {{ Math.round(result.estimated_savings.savings_rate * 1000) / 10 }}%
+        </NTag>
+      </NSpace>
+
+      <NSpace v-if="result.decision.orchestrator?.signals?.length" align="center" :size="6" class="mb-8px flex-wrap">
+        <NText depth="3" class="text-12px">{{ $t('business.orchestrator-signals') }}:</NText>
+        <NTag v-for="sig in result.decision.orchestrator.signals" :key="sig" size="tiny" :bordered="false">
+          {{ sig }}
         </NTag>
       </NSpace>
 

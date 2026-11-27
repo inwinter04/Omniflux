@@ -1,6 +1,7 @@
 package dataplane
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,11 +10,13 @@ import (
 	"math"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/tidwall/sjson"
 
 	"github.com/inwinter04/omniflux/internal/bifrostx"
 )
@@ -56,11 +59,14 @@ func isPDFContentBlock(file *schemas.ResponsesInputMessageContentBlockFile) bool
 // required model capabilities, token estimates, metadata, and rule matching context.
 func ExtractResponsesRouteContext(req *schemas.BifrostResponsesRequest, stream bool, protocol string, keyCtx apiKeyContext, headers http.Header, sessionKey string) RouteContext {
 	var (
-		hasVision  bool
-		hasPDF     bool
-		hasCaching bool
-		runes      int
-		sample     strings.Builder
+		hasVision      bool
+		hasPDF         bool
+		hasCaching     bool
+		runes          int
+		sample         strings.Builder
+		latestUserText string
+		toolTurnCount  int
+		messageCount   int
 	)
 
 	appendSample := func(txt string) {
@@ -74,8 +80,18 @@ func ExtractResponsesRouteContext(req *schemas.BifrostResponsesRequest, stream b
 	}
 
 	if req != nil {
+		messageCount = len(req.Input)
 		for _, msg := range req.Input {
 			runes += 8
+			if msg.Type != nil {
+				switch *msg.Type {
+				case schemas.ResponsesMessageTypeFunctionCall,
+					schemas.ResponsesMessageTypeFunctionCallOutput,
+					schemas.ResponsesMessageTypeCustomToolCall,
+					schemas.ResponsesMessageTypeCustomToolCallOutput:
+					toolTurnCount++
+				}
+			}
 			isUser := msg.Role != nil && *msg.Role == schemas.ResponsesInputMessageRoleUser
 			if msg.Content == nil {
 				continue
@@ -83,9 +99,13 @@ func ExtractResponsesRouteContext(req *schemas.BifrostResponsesRequest, stream b
 			if msg.Content.ContentStr != nil {
 				runes += utf8.RuneCountInString(*msg.Content.ContentStr)
 				if isUser {
+					if *msg.Content.ContentStr != "" {
+						latestUserText = *msg.Content.ContentStr
+					}
 					appendSample(*msg.Content.ContentStr)
 				}
 			}
+			var turnText strings.Builder
 			for _, block := range msg.Content.ContentBlocks {
 				if block.CacheControl != nil || block.PromptCacheBreakpoint != nil {
 					hasCaching = true
@@ -105,16 +125,25 @@ func ExtractResponsesRouteContext(req *schemas.BifrostResponsesRequest, stream b
 					if block.Text != nil {
 						runes += utf8.RuneCountInString(*block.Text)
 						if isUser {
+							if turnText.Len() > 0 {
+								turnText.WriteByte(' ')
+							}
+							turnText.WriteString(*block.Text)
 							appendSample(*block.Text)
 						}
 					}
 				}
+			}
+			if isUser && turnText.Len() > 0 {
+				latestUserText = turnText.String()
 			}
 		}
 	}
 
 	estOut := 500
 	var hasTools, hasReasoning, hasJSONMode bool
+	toolCount := 0
+	reasoningEffort := ""
 	metaMap := map[string]string{}
 
 	if req != nil && req.Params != nil {
@@ -122,11 +151,15 @@ func ExtractResponsesRouteContext(req *schemas.BifrostResponsesRequest, stream b
 		if p.Instructions != nil {
 			runes += utf8.RuneCountInString(*p.Instructions)
 		}
-		if len(p.Tools) > 0 || p.ToolChoice != nil {
+		toolCount = len(p.Tools)
+		if toolCount > 0 || p.ToolChoice != nil {
 			hasTools = true
 		}
 		if p.Reasoning != nil {
 			hasReasoning = true
+			if p.Reasoning.Effort != nil {
+				reasoningEffort = *p.Reasoning.Effort
+			}
 		}
 		if p.Text != nil && p.Text.Format != nil {
 			t := strings.ToLower(strings.TrimSpace(p.Text.Format.Type))
@@ -197,13 +230,18 @@ func ExtractResponsesRouteContext(req *schemas.BifrostResponsesRequest, stream b
 		Protocol:              protocol,
 		SessionKey:            sessionKey,
 		KeywordText:           sample.String(),
+		LatestUserText:        latestUserText,
+		ToolCount:             toolCount,
+		ToolTurnCount:         toolTurnCount,
+		MessageCount:          messageCount,
+		ReasoningEffort:       reasoningEffort,
 		Metadata:              metaMap,
 	}
 }
 
 func (d Deps) resolveServiceAndRoute(w http.ResponseWriter, r *http.Request, keyCtx apiKeyContext,
 	requestedModel string, reqCtx RouteContext, auditOp string) (resolvedService, RouteDecision, bool) {
-	svc, found, err := d.loadService(r.Context(), keyCtx.OrganizationID, requestedModel)
+	svc, found, allowed, err := d.resolveAuthorizedTarget(r.Context(), keyCtx, requestedModel, "invoke")
 	if err != nil {
 		writeProtocolError(w, r, http.StatusInternalServerError, "internal_error", "Failed to resolve model service.")
 		return resolvedService{}, RouteDecision{}, false
@@ -213,13 +251,10 @@ func (d Deps) resolveServiceAndRoute(w http.ResponseWriter, r *http.Request, key
 			apiErrorOptions{Reason: "model_not_found", Param: "model", Params: map[string]any{"model": requestedModel}})
 		return resolvedService{}, RouteDecision{}, false
 	}
-	allowed, err := d.hasModelServiceAccess(r.Context(), keyCtx.OrganizationID, keyCtx.ProjectID, svc.ID, "invoke")
-	if err != nil {
-		writeProtocolError(w, r, http.StatusInternalServerError, "internal_error", "Failed to check model service access.")
-		return resolvedService{}, RouteDecision{}, false
-	}
 	if !allowed {
-		d.auditDeniedModelAccess(r, keyCtx, svc.ID, auditOp)
+		if svc.ID != uuid.Nil {
+			d.auditDeniedModelAccess(r, keyCtx, svc.ID, auditOp)
+		}
 		writeProtocolError(w, r, http.StatusForbidden, "model_access_denied", "The current project is not allowed to invoke this model service.")
 		return resolvedService{}, RouteDecision{}, false
 	}
@@ -254,6 +289,62 @@ func cloneResponsesRequestForCandidate(req *schemas.BifrostResponsesRequest, pro
 	copied.Fallbacks = nil
 	copied.RawRequestBody = nil
 	return &copied
+}
+
+func isZhipuChatProvider(provider string) bool {
+	switch provider {
+	case "zhipu-glm", "zhipu-glm-en", "zhipu-glm-coding", "zhipu-glm-en-coding":
+		return true
+	default:
+		return false
+	}
+}
+
+func injectToolStreamExtraParam(existing map[string]any) (map[string]any, bool) {
+	if existing != nil {
+		if _, exists := existing["tool_stream"]; exists {
+			return existing, true
+		}
+	}
+	next := make(map[string]any, len(existing)+1)
+	for k, v := range existing {
+		next[k] = v
+	}
+	next["tool_stream"] = true
+	return next, true
+}
+
+func applyProviderStreamingHintsForResponses(req *schemas.BifrostResponsesRequest, cand candidate) bool {
+	if req == nil || req.Params == nil || len(req.Params.Tools) == 0 {
+		return false
+	}
+	if bifrostx.EffectiveProtocol(cand.Provider, cand.APIProtocol) != bifrostx.ProtocolOpenAIChat {
+		return false
+	}
+	if !isZhipuChatProvider(logicalProviderName(cand.Provider)) {
+		return false
+	}
+	paramsCopy := *req.Params
+	extra, passthrough := injectToolStreamExtraParam(paramsCopy.ExtraParams)
+	paramsCopy.ExtraParams = extra
+	req.Params = &paramsCopy
+	return passthrough
+}
+
+func applyProviderStreamingHintsForChat(params *schemas.ChatParameters, cand candidate) (*schemas.ChatParameters, bool) {
+	if params == nil || len(params.Tools) == 0 {
+		return params, false
+	}
+	if bifrostx.EffectiveProtocol(cand.Provider, cand.APIProtocol) != bifrostx.ProtocolOpenAIChat {
+		return params, false
+	}
+	if !isZhipuChatProvider(logicalProviderName(cand.Provider)) {
+		return params, false
+	}
+	paramsCopy := *params
+	extra, passthrough := injectToolStreamExtraParam(paramsCopy.ExtraParams)
+	paramsCopy.ExtraParams = extra
+	return &paramsCopy, passthrough
 }
 
 func shouldBridgeResponsesUnsupported(cand candidate, bifrostErr *schemas.BifrostError) bool {
@@ -403,6 +494,73 @@ func mergeUsageSnapshot(dst *usageSnapshot, src usageSnapshot) {
 	}
 }
 
+var sseKeepaliveInterval = 15 * time.Second
+
+const (
+	defaultStreamIdleTimeout          = 120 * time.Second
+	minFinalCandidatePreCommitTimeout = 180 * time.Second
+)
+
+type streamAttemptControl struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	state  atomic.Int32 // 0=pending, 1=timed_out, 2=committed
+	timer  *time.Timer
+}
+
+func newStreamAttemptControl(parent context.Context, preCommitTimeout time.Duration) *streamAttemptControl {
+	ctx, cancel := context.WithCancel(parent)
+	ctrl := &streamAttemptControl{
+		ctx:    ctx,
+		cancel: cancel,
+	}
+	if preCommitTimeout > 0 {
+		ctrl.timer = time.AfterFunc(preCommitTimeout, func() {
+			if ctrl.state.CompareAndSwap(0, 1) {
+				cancel()
+			}
+		})
+	}
+	return ctrl
+}
+
+func (c *streamAttemptControl) disarmTimedOut() bool {
+	if c == nil {
+		return false
+	}
+	if c.timer != nil {
+		c.timer.Stop()
+	}
+	return c.state.Load() == 1
+}
+
+func (c *streamAttemptControl) commit() bool {
+	if c == nil {
+		return true
+	}
+	if c.timer != nil {
+		c.timer.Stop()
+	}
+	if c.state.CompareAndSwap(0, 2) {
+		return true
+	}
+	return c.state.Load() == 2
+}
+
+func isResponsesTerminalEvent(ev *schemas.BifrostResponsesStreamResponse) bool {
+	if ev == nil {
+		return false
+	}
+	switch ev.Type {
+	case schemas.ResponsesStreamResponseTypeCompleted,
+		schemas.ResponsesStreamResponseTypeIncomplete,
+		schemas.ResponsesStreamResponseTypeFailed:
+		return true
+	default:
+		return false
+	}
+}
+
 func responsesEventShouldCommit(ev *schemas.BifrostResponsesStreamResponse) bool {
 	if ev == nil {
 		return false
@@ -412,39 +570,41 @@ func responsesEventShouldCommit(ev *schemas.BifrostResponsesStreamResponse) bool
 		schemas.ResponsesStreamResponseTypeCreated,
 		schemas.ResponsesStreamResponseTypeInProgress,
 		schemas.ResponsesStreamResponseTypeQueued,
-		schemas.ResponsesStreamResponseTypeOutputItemAdded,
 		schemas.ResponsesStreamResponseTypeContentPartAdded:
 		return false
+	case schemas.ResponsesStreamResponseTypeOutputItemAdded:
+		if ev.Item == nil || ev.Item.Type == nil {
+			return false
+		}
+		switch *ev.Item.Type {
+		case schemas.ResponsesMessageTypeReasoning,
+			schemas.ResponsesMessageTypeFunctionCall,
+			schemas.ResponsesMessageTypeCustomToolCall,
+			schemas.ResponsesMessageTypeMessage:
+			return true
+		default:
+			return false
+		}
 	default:
 		return true
 	}
 }
 
-func awaitFirstResponsesChunks(ctx context.Context, stream chan *schemas.BifrostStreamChunk, ttftDur time.Duration) (
-	buffered []*schemas.BifrostResponsesStreamResponse, snapshot usageSnapshot, streamErr *schemas.BifrostError, timedOut bool, closed bool) {
-	var timer *time.Timer
-	var timerCh <-chan time.Time
-	if ttftDur > 0 {
-		timer = time.NewTimer(ttftDur)
-		defer timer.Stop()
-		timerCh = timer.C
-	}
-
+func awaitFirstResponsesChunks(ctx context.Context, stream chan *schemas.BifrostStreamChunk, allowImmediateCommit bool) (
+	buffered []*schemas.BifrostResponsesStreamResponse, snapshot usageSnapshot, streamErr *schemas.BifrostError, closed bool) {
 	for {
 		select {
 		case <-ctx.Done():
-			return buffered, snapshot, nil, false, false
-		case <-timerCh:
-			return buffered, snapshot, nil, true, false
+			return buffered, snapshot, nil, false
 		case chunk, open := <-stream:
 			if !open {
 				if len(buffered) > 0 {
-					return buffered, snapshot, nil, false, false
+					return buffered, snapshot, nil, false
 				}
-				return nil, snapshot, nil, false, true
+				return nil, snapshot, nil, true
 			}
 			if chunk.BifrostError != nil {
-				return nil, snapshot, chunk.BifrostError, false, false
+				return nil, snapshot, chunk.BifrostError, false
 			}
 			ev := chunk.BifrostResponsesStreamResponse
 			if ev == nil {
@@ -468,11 +628,17 @@ func awaitFirstResponsesChunks(ctx context.Context, stream chan *schemas.Bifrost
 					StatusCode: intPtr(http.StatusBadGateway),
 					Type:       stringPtr("upstream_error"),
 					Error:      &schemas.ErrorField{Message: msg},
-				}, false, false
+				}, false
 			}
 			buffered = append(buffered, ev)
+			if allowImmediateCommit {
+				if ev.Type != schemas.ResponsesStreamResponseTypePing {
+					return buffered, snapshot, nil, false
+				}
+				continue
+			}
 			if responsesEventShouldCommit(ev) {
-				return buffered, snapshot, nil, false, false
+				return buffered, snapshot, nil, false
 			}
 		}
 	}
@@ -483,6 +649,7 @@ type responsesStreamWinner struct {
 	Stream    chan *schemas.BifrostStreamChunk
 	Buffered  []*schemas.BifrostResponsesStreamResponse
 	Snapshot  usageSnapshot
+	Ctx       context.Context
 	Cancel    context.CancelFunc
 	Attempts  []AttemptRecord
 }
@@ -498,11 +665,31 @@ func (d Deps) openResponsesStreamWinner(r *http.Request, svc resolvedService, de
 	}
 	ttftDur := time.Duration(svc.Policy.FirstTokenTimeoutMS) * time.Millisecond
 	if ttftDur <= 0 {
-		ttftDur = 15 * time.Second
+		ttftDur = 45 * time.Second
+	}
+	idleTimeout := defaultStreamIdleTimeout
+	if perTimeout > idleTimeout {
+		idleTimeout = perTimeout
 	}
 
 	attempts = make([]AttemptRecord, 0, len(decision.Chain))
 	skipAccounts := make(map[string]bool)
+	recordTTFT := func(cand candidate, attemptMS, retryIdx int) bool {
+		lastTTFT = true
+		lastErr = &schemas.BifrostError{
+			StatusCode: intPtr(http.StatusGatewayTimeout),
+			Type:       stringPtr("first_token_timeout"),
+			Error:      &schemas.ErrorField{Code: stringPtr("ttft_timeout"), Message: "Upstream did not return the first token within first_token_timeout_ms."},
+		}
+		action := ClassifyAttemptOutcome(http.StatusGatewayTimeout, "ttft_timeout", "first_token_timeout", rp)
+		d.Breaker().RecordFailure(r.Context(), cand.ID, http.StatusGatewayTimeout, "ttft_timeout", "first_token_timeout", rp, cb)
+		attempts = append(attempts, AttemptRecord{
+			CandidateID: cand.ID, Provider: cand.Provider, UpstreamModel: cand.UpstreamModel,
+			StatusCode: http.StatusGatewayTimeout, ErrorClass: "ttft_timeout", ErrorType: "first_token_timeout",
+			ErrorMessage: "first token timeout", LatencyMS: attemptMS, RetryCount: retryIdx, Outcome: "ttft_timeout",
+		})
+		return action.ShouldFallback
+	}
 
 candidateLoop:
 	for idx, cand := range decision.Chain {
@@ -526,13 +713,25 @@ candidateLoop:
 			continue
 		}
 
+		isFinalCandidate := idx == len(decision.Chain)-1
+		preCommitTimeout := ttftDur
+		if isFinalCandidate {
+			preCommitTimeout = minFinalCandidatePreCommitTimeout
+			if perTimeout > preCommitTimeout {
+				preCommitTimeout = perTimeout
+			}
+		}
+
 		maxRetries := rp.MaxRetriesPerCandidate
 		for retryIdx := 0; retryIdx <= maxRetries; retryIdx++ {
 			attemptStart := time.Now()
-			attemptCtx, cancelAttempt := context.WithTimeout(r.Context(), perTimeout)
-			bctx := schemas.NewBifrostContext(attemptCtx, time.Now().Add(perTimeout))
+			// Stream connections use cancellation + idle timeouts rather than a short whole-request deadline
+			// so long reasoning or generation turns never terminate mid-response at ProviderTimeoutMS.
+			ctrl := newStreamAttemptControl(r.Context(), preCommitTimeout)
+			bctx := schemas.NewBifrostContext(ctrl.ctx, schemas.NoDeadline)
 			bctx.SetValue(schemas.BifrostContextKeyAPIKeyID, cand.AccountID)
-			if idx < len(decision.Chain)-1 {
+			bctx.SetValue(schemas.BifrostContextKeyStreamIdleTimeout, idleTimeout)
+			if !isFinalCandidate {
 				bctx.SetValue(schemas.BifrostContextKeyStreamFirstTokenTimeout, ttftDur)
 			}
 			if prepareCtx != nil {
@@ -540,6 +739,9 @@ candidateLoop:
 			}
 
 			candReq := cloneResponsesRequestForCandidate(req, provider, cand.UpstreamModel)
+			if applyProviderStreamingHintsForResponses(candReq, cand) {
+				bctx.SetValue(schemas.BifrostContextKeyPassthroughExtraParams, true)
+			}
 			stream, bifrostErr := d.Engine.Client().ResponsesStreamRequest(bctx, candReq)
 			if bifrostErr != nil && shouldBridgeResponsesUnsupported(cand, bifrostErr) && r.Context().Err() == nil {
 				bctx.SetValue(schemas.BifrostContextKeyIsResponsesToChatCompletionFallback, true)
@@ -547,8 +749,19 @@ candidateLoop:
 			}
 
 			if bifrostErr != nil {
-				cancelAttempt()
+				wasTTFT := ctrl.disarmTimedOut()
+				ctrl.cancel()
 				attemptMS := int(time.Since(attemptStart).Milliseconds())
+				if r.Context().Err() != nil {
+					clientAborted = true
+					break candidateLoop
+				}
+				if wasTTFT {
+					if !recordTTFT(cand, attemptMS, retryIdx) {
+						break candidateLoop
+					}
+					break
+				}
 				statusCode, errCode, errType, errMsg := extractBifrostErrorInfo(bifrostErr)
 				if d.OnTransportError != nil && statusCode == 0 {
 					d.OnTransportError(logicalProviderName(cand.Provider))
@@ -585,61 +798,53 @@ candidateLoop:
 				break
 			}
 
-			attemptTTFT := ttftDur
-			if idx == len(decision.Chain)-1 && ttftDur > 0 && perTimeout < ttftDur {
-				attemptTTFT = perTimeout
-			}
-			buffered, snap, preErr, timedOut, closedEarly := awaitFirstResponsesChunks(attemptCtx, stream, attemptTTFT)
+			buffered, snap, preErr, closedEarly := awaitFirstResponsesChunks(ctrl.ctx, stream, isFinalCandidate)
+			wasTTFT := ctrl.disarmTimedOut()
 			// If Responses API returned 404/405/501 inside the async stream reader, run a single Chat bridge attempt on this candidate.
-			if preErr != nil && shouldBridgeResponsesUnsupported(cand, preErr) && r.Context().Err() == nil {
-				cancelAttempt()
-				attemptCtx, cancelAttempt = context.WithTimeout(r.Context(), perTimeout)
-				bridgeCtx := schemas.NewBifrostContext(attemptCtx, time.Now().Add(perTimeout))
+			if !wasTTFT && preErr != nil && shouldBridgeResponsesUnsupported(cand, preErr) && r.Context().Err() == nil {
+				ctrl.cancel()
+				ctrl = newStreamAttemptControl(r.Context(), preCommitTimeout)
+				bridgeCtx := schemas.NewBifrostContext(ctrl.ctx, schemas.NoDeadline)
 				bridgeCtx.SetValue(schemas.BifrostContextKeyAPIKeyID, cand.AccountID)
+				bridgeCtx.SetValue(schemas.BifrostContextKeyStreamIdleTimeout, idleTimeout)
 				bridgeCtx.SetValue(schemas.BifrostContextKeyIsResponsesToChatCompletionFallback, true)
-				if idx < len(decision.Chain)-1 {
+				if !isFinalCandidate {
 					bridgeCtx.SetValue(schemas.BifrostContextKeyStreamFirstTokenTimeout, ttftDur)
 				}
 				if prepareCtx != nil {
 					prepareCtx(bridgeCtx, cand)
 				}
+				if candReq.Params != nil && candReq.Params.ExtraParams != nil {
+					if _, hasToolStream := candReq.Params.ExtraParams["tool_stream"]; hasToolStream {
+						bridgeCtx.SetValue(schemas.BifrostContextKeyPassthroughExtraParams, true)
+					}
+				}
 				bridgeStream, bridgeErr := d.Engine.Client().ChatCompletionStreamRequest(bridgeCtx, candReq.ToChatRequest())
 				if bridgeErr == nil {
 					stream = bridgeStream
-					buffered, snap, preErr, timedOut, closedEarly = awaitFirstResponsesChunks(attemptCtx, stream, attemptTTFT)
+					buffered, snap, preErr, closedEarly = awaitFirstResponsesChunks(ctrl.ctx, stream, isFinalCandidate)
+					wasTTFT = ctrl.disarmTimedOut()
 				} else {
 					preErr = bridgeErr
+					wasTTFT = ctrl.disarmTimedOut()
 				}
 			}
 			attemptMS := int(time.Since(attemptStart).Milliseconds())
 
 			if r.Context().Err() != nil {
-				cancelAttempt()
+				ctrl.cancel()
 				clientAborted = true
 				break candidateLoop
 			}
-			if timedOut {
-				cancelAttempt()
-				lastTTFT = true
-				lastErr = &schemas.BifrostError{
-					StatusCode: intPtr(http.StatusGatewayTimeout),
-					Type:       stringPtr("first_token_timeout"),
-					Error:      &schemas.ErrorField{Code: stringPtr("ttft_timeout"), Message: "Upstream did not return the first token within first_token_timeout_ms."},
-				}
-				action := ClassifyAttemptOutcome(http.StatusGatewayTimeout, "ttft_timeout", "first_token_timeout", rp)
-				d.Breaker().RecordFailure(r.Context(), cand.ID, http.StatusGatewayTimeout, "ttft_timeout", "first_token_timeout", rp, cb)
-				attempts = append(attempts, AttemptRecord{
-					CandidateID: cand.ID, Provider: cand.Provider, UpstreamModel: cand.UpstreamModel,
-					StatusCode: http.StatusGatewayTimeout, ErrorClass: "ttft_timeout", ErrorType: "first_token_timeout",
-					ErrorMessage: "first token timeout", LatencyMS: attemptMS, RetryCount: retryIdx, Outcome: "ttft_timeout",
-				})
-				if !action.ShouldFallback {
+			if wasTTFT {
+				ctrl.cancel()
+				if !recordTTFT(cand, attemptMS, retryIdx) {
 					break candidateLoop
 				}
 				break
 			}
 			if preErr != nil {
-				cancelAttempt()
+				ctrl.cancel()
 				lastTTFT = false
 				lastErr = preErr
 				statusCode, errCode, errType, errMsg := extractBifrostErrorInfo(preErr)
@@ -661,8 +866,9 @@ candidateLoop:
 				}
 				break
 			}
-			if closedEarly || len(buffered) == 0 {
-				cancelAttempt()
+			if closedEarly || len(buffered) == 0 || !ctrl.commit() {
+				ctrl.disarmTimedOut()
+				ctrl.cancel()
 				lastTTFT = false
 				lastErr = &schemas.BifrostError{
 					StatusCode: intPtr(http.StatusBadGateway),
@@ -686,7 +892,8 @@ candidateLoop:
 				Stream:    stream,
 				Buffered:  buffered,
 				Snapshot:  snap,
-				Cancel:    cancelAttempt,
+				Ctx:       ctrl.ctx,
+				Cancel:    ctrl.cancel,
 				Attempts:  attempts,
 			}, attempts, nil, false, false
 		}
@@ -780,6 +987,8 @@ func (d Deps) recordStreamInterruptedWithProtocol(ctx context.Context, requestID
 	}
 }
 
+var extraFieldsKeyPattern = []byte(`"extra_fields"`)
+
 // sanitizeOpenAIResponsesPayload marshals Bifrost OpenAI Responses / Compaction structs
 // without internal "extra_fields" metadata leaked to downstream Codex/OpenAI clients.
 func sanitizeOpenAIResponsesPayload(v any) ([]byte, error) {
@@ -787,17 +996,16 @@ func sanitizeOpenAIResponsesPayload(v any) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	var obj map[string]any
-	if err := json.Unmarshal(raw, &obj); err != nil {
+	if !bytes.Contains(raw, extraFieldsKeyPattern) {
 		return raw, nil
 	}
-	delete(obj, "extra_fields")
-	if respObj, ok := obj["response"].(map[string]any); ok {
-		delete(respObj, "extra_fields")
-	}
-	cleaned, err := json.Marshal(obj)
+	cleaned, err := sjson.DeleteBytes(raw, "extra_fields")
 	if err != nil {
-		return nil, err
+		return raw, nil
+	}
+	cleaned, err = sjson.DeleteBytes(cleaned, "response.extra_fields")
+	if err != nil {
+		return raw, nil
 	}
 	return cleaned, nil
 }
@@ -810,6 +1018,7 @@ func commitSSEHeaders(w http.ResponseWriter) (http.Flusher, bool) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	// Clear http.Server.WriteTimeout once SSE headers are flushed so long coding sessions stay open.
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})

@@ -205,14 +205,14 @@ func (d Deps) loadCandidateHealthWithBreaker(ctx context.Context, orgID uuid.UUI
 func (d Deps) loadPolicyByID(ctx context.Context, orgID, policyID uuid.UUID) (routePolicy, bool, error) {
 	var p routePolicy
 	var pid uuid.UUID
-	var weightsRaw, constraintsRaw, rulesRaw, retryRaw, cbRaw, affinityRaw []byte
+	var weightsRaw, constraintsRaw, rulesRaw, retryRaw, cbRaw, affinityRaw, orchRaw []byte
 	err := d.Pool.QueryRow(ctx, `
 		SELECT id, version, strategy, compare_currency, fallback_limit, provider_timeout_ms, first_token_timeout_ms,
-		       weights, constraints, rules, retry_policy, circuit_breaker, session_affinity
+		       weights, constraints, rules, retry_policy, circuit_breaker, session_affinity, orchestrator_config
 		FROM route_policies
 		WHERE id = $1 AND organization_id = $2 AND status = 'active'
 	`, policyID, orgID).Scan(&pid, &p.Version, &p.Strategy, &p.CompareCurrency, &p.FallbackLimit,
-		&p.ProviderTimeoutMS, &p.FirstTokenTimeoutMS, &weightsRaw, &constraintsRaw, &rulesRaw, &retryRaw, &cbRaw, &affinityRaw)
+		&p.ProviderTimeoutMS, &p.FirstTokenTimeoutMS, &weightsRaw, &constraintsRaw, &rulesRaw, &retryRaw, &cbRaw, &affinityRaw, &orchRaw)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return defaultPolicy, false, nil
 	}
@@ -226,6 +226,7 @@ func (d Deps) loadPolicyByID(ctx context.Context, orgID, policyID uuid.UUID) (ro
 	p.RetryPolicy = ParseRetryPolicy(retryRaw)
 	p.CircuitBreaker = ParseCircuitBreakerPolicy(cbRaw)
 	p.SessionAffinity = ParseSessionAffinityPolicy(affinityRaw)
+	p.Orchestrator = ParseOrchestratorConfig(orchRaw)
 	if p.ProviderTimeoutMS <= 0 {
 		p.ProviderTimeoutMS = defaultPolicy.ProviderTimeoutMS
 	}
@@ -256,6 +257,27 @@ func (d Deps) loadServiceWithPolicyOverride(ctx context.Context, orgID uuid.UUID
 	if err != nil {
 		return svc, false, err
 	}
+	return d.loadServiceCandidatesAndPolicy(ctx, orgID, svc, policyID, policyOverride)
+}
+
+// loadRouterService looks up an active smart-routing virtual model exposed via expose_router=true.
+func (d Deps) loadRouterService(ctx context.Context, orgID uuid.UUID, routerModelID string) (resolvedService, bool, error) {
+	svc := resolvedService{}
+	var policyID *uuid.UUID
+	err := d.Pool.QueryRow(ctx, `
+		SELECT id, COALESCE(router_model_id, name), route_policy_id FROM model_services
+		WHERE organization_id = $1 AND expose_router = true AND router_model_id = $2 AND status = 'active'
+	`, orgID, routerModelID).Scan(&svc.ID, &svc.Name, &policyID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return svc, false, nil
+	}
+	if err != nil {
+		return svc, false, err
+	}
+	return d.loadServiceCandidatesAndPolicy(ctx, orgID, svc, policyID, nil)
+}
+
+func (d Deps) loadServiceCandidatesAndPolicy(ctx context.Context, orgID uuid.UUID, svc resolvedService, policyID, policyOverride *uuid.UUID) (resolvedService, bool, error) {
 	if policyOverride != nil {
 		policyID = policyOverride
 	}
@@ -334,7 +356,7 @@ func (d Deps) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	start := time.Now()
 
-	svc, found, err := d.loadService(r.Context(), keyCtx.OrganizationID, meta.Model)
+	svc, found, allowed, err := d.resolveAuthorizedTarget(r.Context(), keyCtx, meta.Model, "invoke")
 	if err != nil {
 		apiError(w, http.StatusInternalServerError, "internal_error", "Failed to resolve model service.")
 		return
@@ -343,13 +365,10 @@ func (d Deps) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusNotFound, "model_not_found", "Model service does not exist or is not enabled.", apiErrorOptions{Reason: "model_not_found", Param: "model", Params: map[string]any{"model": meta.Model}})
 		return
 	}
-	allowed, err := d.hasModelServiceAccess(r.Context(), keyCtx.OrganizationID, keyCtx.ProjectID, svc.ID, "invoke")
-	if err != nil {
-		apiError(w, http.StatusInternalServerError, "internal_error", "Failed to check model service access.")
-		return
-	}
 	if !allowed {
-		d.auditDeniedModelAccess(r, keyCtx, svc.ID, "chat")
+		if svc.ID != uuid.Nil {
+			d.auditDeniedModelAccess(r, keyCtx, svc.ID, "chat")
+		}
 		apiError(w, http.StatusForbidden, "model_access_denied", "The current project is not allowed to invoke this model service.")
 		return
 	}
@@ -808,6 +827,7 @@ func (d Deps) ExecutePlayground(ctx context.Context, orgID, userID, serviceID uu
 		RequiredCapabilities:  requiredCaps,
 		Source:                "route_playground",
 		KeywordText:           prompt,
+		LatestUserText:        prompt,
 		Metadata:              metadata,
 	}
 	scores := d.loadCandidateHealthWithBreaker(ctx, orgID, svc.Candidates, svc.Policy.CircuitBreaker)

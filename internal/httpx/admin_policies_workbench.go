@@ -33,6 +33,7 @@ type simulateRoutePolicyRequest struct {
 	RetryPolicy                json.RawMessage   `json:"retry_policy"`
 	CircuitBreaker             json.RawMessage   `json:"circuit_breaker"`
 	SessionAffinity            json.RawMessage   `json:"session_affinity"`
+	OrchestratorConfig         json.RawMessage   `json:"orchestrator_config"`
 	BaselineCandidateID        *string           `json:"baseline_candidate_id"`
 	FallbackLimit              *int              `json:"fallback_limit"`
 	ProviderTimeoutMS          *int              `json:"provider_timeout_ms"`
@@ -45,6 +46,9 @@ type simulateRoutePolicyRequest struct {
 	ApplicationID              string            `json:"application_id"`
 	APIKeyID                   string            `json:"api_key_id"`
 	KeywordText                string            `json:"keyword_text"`
+	ReasoningEffort            string            `json:"reasoning_effort"`
+	ToolCount                  int               `json:"tool_count"`
+	ToolTurnCount              int               `json:"tool_turn_count"`
 	Metadata                   map[string]string `json:"metadata"`
 	RandomSeed                 int64             `json:"random_seed"`
 	RRCounter                  uint64            `json:"rr_counter"`
@@ -119,10 +123,11 @@ func (d ServerDeps) SimulateRoutePolicy(w http.ResponseWriter, r *http.Request) 
 		CompareCurrency:     "USD",
 		FallbackLimit:       3,
 		ProviderTimeoutMS:   60000,
-		FirstTokenTimeoutMS: 15000,
+		FirstTokenTimeoutMS: 45000,
 		RetryPolicy:         dataplane.DefaultRetryPolicy(),
 		CircuitBreaker:      dataplane.DefaultCircuitBreakerPolicy(),
 		SessionAffinity:     dataplane.DefaultSessionAffinityPolicy(),
+		Orchestrator:        dataplane.DefaultOrchestratorConfig(),
 	}
 	simPol.ApplyWeightsJSON(dataplane.MarshalPresetWeights(dataplane.StrategyBalanced))
 
@@ -133,13 +138,13 @@ func (d ServerDeps) SimulateRoutePolicy(w http.ResponseWriter, r *http.Request) 
 			adminError(w, http.StatusBadRequest, "POLICY_ID_INVALID", "invalid-route-policy-id", nil)
 			return
 		}
-		var dbWeights, dbConstraints, dbRules, dbRetry, dbCB, dbAffinity []byte
+		var dbWeights, dbConstraints, dbRules, dbRetry, dbCB, dbAffinity, dbOrchestrator []byte
 		err = d.Pool.QueryRow(r.Context(), `
-			SELECT version, strategy, compare_currency, weights, constraints, rules, retry_policy, circuit_breaker, session_affinity,
+			SELECT version, strategy, compare_currency, weights, constraints, rules, retry_policy, circuit_breaker, session_affinity, orchestrator_config,
 			       baseline_candidate_id, fallback_limit, provider_timeout_ms, first_token_timeout_ms
 			FROM route_policies WHERE id = $1 AND organization_id = $2
 		`, pid, principal.OrganizationID).Scan(&simPol.Version, &simPol.Strategy, &simPol.CompareCurrency,
-			&dbWeights, &dbConstraints, &dbRules, &dbRetry, &dbCB, &dbAffinity,
+			&dbWeights, &dbConstraints, &dbRules, &dbRetry, &dbCB, &dbAffinity, &dbOrchestrator,
 			&baselineID, &simPol.FallbackLimit, &simPol.ProviderTimeoutMS, &simPol.FirstTokenTimeoutMS)
 		if errors.Is(err, pgx.ErrNoRows) {
 			adminError(w, http.StatusNotFound, "POLICY_NOT_FOUND", "route-policy-does-not-exist-or", nil)
@@ -156,12 +161,13 @@ func (d ServerDeps) SimulateRoutePolicy(w http.ResponseWriter, r *http.Request) 
 		simPol.RetryPolicy = dataplane.ParseRetryPolicy(dbRetry)
 		simPol.CircuitBreaker = dataplane.ParseCircuitBreakerPolicy(dbCB)
 		simPol.SessionAffinity = dataplane.ParseSessionAffinityPolicy(dbAffinity)
+		simPol.Orchestrator = dataplane.ParseOrchestratorConfig(dbOrchestrator)
 	}
 
 	if !validateRoutePolicyLimits(w, body.FallbackLimit, body.ProviderTimeoutMS, body.FirstTokenTimeoutMS) {
 		return
 	}
-	if !validateRoutePolicyJSONFields(w, body.Weights, body.Constraints, body.Rules, body.RetryPolicy, body.CircuitBreaker, body.SessionAffinity) {
+	if !validateRoutePolicyJSONFields(w, body.Weights, body.Constraints, body.Rules, body.RetryPolicy, body.CircuitBreaker, body.SessionAffinity, body.OrchestratorConfig) {
 		return
 	}
 	if strings.TrimSpace(body.Strategy) != "" {
@@ -200,6 +206,9 @@ func (d ServerDeps) SimulateRoutePolicy(w http.ResponseWriter, r *http.Request) 
 	}
 	if len(body.SessionAffinity) > 0 && string(body.SessionAffinity) != "null" {
 		simPol.SessionAffinity = dataplane.ParseSessionAffinityPolicy(body.SessionAffinity)
+	}
+	if len(body.OrchestratorConfig) > 0 && string(body.OrchestratorConfig) != "null" {
+		simPol.Orchestrator = dataplane.ParseOrchestratorConfig(body.OrchestratorConfig)
 	}
 	if body.FallbackLimit != nil {
 		simPol.FallbackLimit = *body.FallbackLimit
@@ -351,6 +360,10 @@ func (d ServerDeps) SimulateRoutePolicy(w http.ResponseWriter, r *http.Request) 
 		APIKeyID:              strings.TrimSpace(body.APIKeyID),
 		Source:                "simulate",
 		KeywordText:           body.KeywordText,
+		LatestUserText:        body.KeywordText,
+		ToolCount:             body.ToolCount,
+		ToolTurnCount:         body.ToolTurnCount,
+		ReasoningEffort:       strings.TrimSpace(body.ReasoningEffort),
 		Metadata:              body.Metadata,
 		RandomSeed:            body.RandomSeed,
 	}

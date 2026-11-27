@@ -18,13 +18,14 @@ Omniflux 数据面提供面向应用程序、Agent 与 **AI 编程客户端（Co
 
 | HTTP 方法与路径 | 功能说明 | 所需权限 |
 | :--- | :--- | :---: |
-| `GET /v1/models` | 获取当前项目授权可调用的逻辑模型服务列表（OpenAI 格式） | `read` |
-| `POST /v1/chat/completions` | OpenAI Chat Completions 接口（支持图文多模态与 SSE 流式） | `invoke` |
-| `POST /v1/responses` | OpenAI Responses 接口（Codex CLI 主协议，支持 `input_image`、PDF `input_file`、工具调用、Prompt Caching 与 SSE 流式；当路由到 `openai_chat` 账号时自动桥接） | `invoke` |
+| `GET /v1/models` | 获取当前项目授权可用的全部具体模型（`upstream_model`）及已开启 `expose_router` 的智能路由入口模型（`router_model_id`，`owned_by: "omniflux-router"`） | `read` |
+| `GET /v1/quota` | 查询当前 API Key 额度与近 30 天用量（优先预算窗口，可选开启 60s 缓存上游余量，否则返回用量汇总；供 CC Switch 等客户端使用） | `read` |
+| `POST /v1/chat/completions` | OpenAI Chat Completions 接口（支持图文多模态、具体模型直选与 SSE 流式保活） | `invoke` |
+| `POST /v1/responses` | OpenAI Responses 接口（Codex CLI 主协议，支持具体模型直选、`input_image`、PDF `input_file`、工具调用、Prompt Caching 与 SSE 流式保活；当路由到 `openai_chat` 账号时自动桥接） | `invoke` |
 | `POST /v1/responses/compact` | OpenAI Responses 上下文压缩接口 | `invoke` |
-| `POST /v1/messages` | Anthropic Messages 接口（Claude Code 主协议，支持 `image`/`document` 多模态、Prompt Caching 读/写计费与 SSE 流式） | `invoke` |
+| `POST /v1/messages` | Anthropic Messages 接口（Claude Code 主协议，支持 `image`/`document` 多模态、Prompt Caching 读/写计费与 SSE 流式保活） | `invoke` |
 | `POST /v1/messages/count_tokens` | Anthropic Token 计数预检（上游不支持时自动降级本地估算） | `invoke` |
-| `GET /v1beta/models` | Gemini Native 模型发现接口（`models/{service}` 格式） | `read` |
+| `GET /v1beta/models` | Gemini Native 模型发现接口（具体模型及智能路由服务，`models/{id}` 格式） | `read` |
 | `POST /v1beta/models/{model}:generateContent` | Gemini Native 非流式生成接口 | `invoke` |
 | `POST /v1beta/models/{model}:streamGenerateContent` | Gemini Native 流式生成接口（支持 `?alt=sse` 与原生 JSON 数组分块流） | `invoke` |
 | `POST /v1beta/models/{model}:countTokens` | Gemini Native Token 计数接口（上游不支持时自动降级本地估算） | `invoke` |
@@ -77,6 +78,8 @@ gemini
 ```
 
 > **粘性会话亲和 (KV Cache Pinning)**：网关会自动提取 `Session-Id`、`X-Session-Id`、`X-Codex-Session-Id`、`Conversation-Id`、`prompt_cache_key` / `previous_response_id` / `metadata.user_id`；当路由策略启用 `session_affinity` 时，同一会话优先固定路由至同优先级组内的同一候选节点以提高缓存命中率，并在节点异常或熔断时自动无缝转移。
+>
+> **双端适配与智能编排 (`auto_orchestrator`)**：普通模型服务默认只向外暴露各可用候选的具体 `upstream_model`，便于 Codex CLI、Claude Code、CC Switch 与 Dify / Cherry Studio 等工具直接列举并自由切换底层模型；仅需向调用方暴露单一自动编排入口（如 `omniflux/auto`）时开启 `expose_router = true` 并绑定 `auto_orchestrator` 策略。`auto_orchestrator` 默认采用 `adaptive` 模式：短问答按轮动态分流降本，进入多步工具链或长上下文编程会话时自动锁定缓存只升不降。
 
 ## 调用示例实战
 

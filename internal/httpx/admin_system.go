@@ -21,31 +21,34 @@ var registrationRoles = map[string]bool{
 }
 
 type systemSettingsResponse struct {
-	PublicRegistrationEnabled  bool    `json:"public_registration_enabled"`
-	RegistrationOrganizationID *string `json:"registration_organization_id"`
-	RegistrationRole           string  `json:"registration_role"`
-	EmailVerificationRequired  bool    `json:"email_verification_required"`
-	GatewayBaseURL             string  `json:"gateway_base_url"`
-	UpdatedBy                  *string `json:"updated_by"`
-	UpdatedAt                  string  `json:"updated_at"`
+	PublicRegistrationEnabled     bool    `json:"public_registration_enabled"`
+	RegistrationOrganizationID    *string `json:"registration_organization_id"`
+	RegistrationRole              string  `json:"registration_role"`
+	EmailVerificationRequired     bool    `json:"email_verification_required"`
+	GatewayBaseURL                string  `json:"gateway_base_url"`
+	ExposeUpstreamBalanceToClients bool   `json:"expose_upstream_balance_to_clients"`
+	UpdatedBy                     *string `json:"updated_by"`
+	UpdatedAt                     string  `json:"updated_at"`
 }
 
 type updateSystemSettingsRequest struct {
-	PublicRegistrationEnabled  bool   `json:"public_registration_enabled"`
-	RegistrationOrganizationID string `json:"registration_organization_id"`
-	EmailVerificationRequired  bool   `json:"email_verification_required"`
-	RegistrationRole           string `json:"registration_role"`
-	GatewayBaseURL             string `json:"gateway_base_url"`
+	PublicRegistrationEnabled      bool   `json:"public_registration_enabled"`
+	RegistrationOrganizationID     string `json:"registration_organization_id"`
+	EmailVerificationRequired      bool   `json:"email_verification_required"`
+	RegistrationRole               string `json:"registration_role"`
+	GatewayBaseURL                 string `json:"gateway_base_url"`
+	ExposeUpstreamBalanceToClients bool   `json:"expose_upstream_balance_to_clients"`
 }
 
 type systemSettingsRecord struct {
-	PublicRegistrationEnabled  bool
-	RegistrationOrganizationID *uuid.UUID
-	RegistrationRole           string
-	EmailVerificationRequired  bool
-	GatewayBaseURL             string
-	UpdatedBy                  *uuid.UUID
-	UpdatedAt                  time.Time
+	PublicRegistrationEnabled      bool
+	RegistrationOrganizationID     *uuid.UUID
+	RegistrationRole               string
+	EmailVerificationRequired      bool
+	GatewayBaseURL                 string
+	ExposeUpstreamBalanceToClients bool
+	UpdatedBy                      *uuid.UUID
+	UpdatedAt                      time.Time
 }
 
 // SystemSettings 返回平台级系统配置;仅平台管理员可访问。
@@ -135,6 +138,7 @@ func (d ServerDeps) UpdateSystemSettings(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	next.GatewayBaseURL = normalizedGatewayURL
+	next.ExposeUpstreamBalanceToClients = body.ExposeUpstreamBalanceToClients
 	if next.RegistrationOrganizationID != nil {
 		var count int
 		if err := d.Pool.QueryRow(r.Context(), `SELECT count(*) FROM organizations WHERE id = $1`, *next.RegistrationOrganizationID).Scan(&count); err != nil {
@@ -157,22 +161,25 @@ func (d ServerDeps) UpdateSystemSettings(w http.ResponseWriter, r *http.Request)
 			registration_organization_id = $3,
 			registration_role = $4, email_verification_required = $5,
 			gateway_base_url = $6,
-			updated_by = $7,
+			expose_upstream_balance_to_clients = $7,
+			updated_by = $8,
 			updated_at = now()
 		WHERE singleton = $1::boolean
-	`, []any{true, next.PublicRegistrationEnabled, organizationID, next.RegistrationRole, next.EmailVerificationRequired, next.GatewayBaseURL, principal.UserID},
+	`, []any{true, next.PublicRegistrationEnabled, organizationID, next.RegistrationRole, next.EmailVerificationRequired, next.GatewayBaseURL, next.ExposeUpstreamBalanceToClients, principal.UserID},
 		principal.OrganizationID, principal.UserID, "system.settings_updated", "system_settings", "singleton",
 		map[string]any{
 			"public_registration_enabled": current.PublicRegistrationEnabled, "email_verification_required": current.EmailVerificationRequired,
-			"registration_organization_id": uuidString(current.RegistrationOrganizationID),
-			"registration_role":            current.RegistrationRole,
-			"gateway_base_url":             current.GatewayBaseURL,
+			"registration_organization_id":       uuidString(current.RegistrationOrganizationID),
+			"registration_role":                  current.RegistrationRole,
+			"gateway_base_url":                   current.GatewayBaseURL,
+			"expose_upstream_balance_to_clients": current.ExposeUpstreamBalanceToClients,
 		},
 		map[string]any{
 			"public_registration_enabled": next.PublicRegistrationEnabled, "email_verification_required": next.EmailVerificationRequired,
-			"registration_organization_id": uuidString(next.RegistrationOrganizationID),
-			"registration_role":            next.RegistrationRole,
-			"gateway_base_url":             next.GatewayBaseURL,
+			"registration_organization_id":       uuidString(next.RegistrationOrganizationID),
+			"registration_role":                  next.RegistrationRole,
+			"gateway_base_url":                   next.GatewayBaseURL,
+			"expose_upstream_balance_to_clients": next.ExposeUpstreamBalanceToClients,
 		})
 	if err != nil {
 		adminError(w, http.StatusInternalServerError, "SYSTEM_SETTINGS_UPDATE_FAILED", "failed-to-update-system-settings", nil)
@@ -240,9 +247,9 @@ func (d ServerDeps) readSystemSettings(ctx context.Context) (systemSettingsRecor
 	var organizationID uuid.NullUUID
 	var updatedBy uuid.NullUUID
 	err := d.Pool.QueryRow(ctx, `
-		SELECT public_registration_enabled, registration_organization_id, registration_role, email_verification_required, gateway_base_url, updated_by, updated_at
+		SELECT public_registration_enabled, registration_organization_id, registration_role, email_verification_required, gateway_base_url, expose_upstream_balance_to_clients, updated_by, updated_at
 		FROM system_settings WHERE singleton
-	`).Scan(&record.PublicRegistrationEnabled, &organizationID, &record.RegistrationRole, &record.EmailVerificationRequired, &record.GatewayBaseURL, &updatedBy, &record.UpdatedAt)
+	`).Scan(&record.PublicRegistrationEnabled, &organizationID, &record.RegistrationRole, &record.EmailVerificationRequired, &record.GatewayBaseURL, &record.ExposeUpstreamBalanceToClients, &updatedBy, &record.UpdatedAt)
 	if err != nil {
 		return record, err
 	}
@@ -259,11 +266,12 @@ func (d ServerDeps) readSystemSettings(ctx context.Context) (systemSettingsRecor
 
 func newSystemSettingsResponse(record systemSettingsRecord) systemSettingsResponse {
 	response := systemSettingsResponse{
-		PublicRegistrationEnabled: record.PublicRegistrationEnabled,
-		EmailVerificationRequired: record.EmailVerificationRequired,
-		RegistrationRole:          record.RegistrationRole,
-		GatewayBaseURL:            record.GatewayBaseURL,
-		UpdatedAt:                 record.UpdatedAt.UTC().Format(time.RFC3339),
+		PublicRegistrationEnabled:      record.PublicRegistrationEnabled,
+		EmailVerificationRequired:      record.EmailVerificationRequired,
+		RegistrationRole:               record.RegistrationRole,
+		GatewayBaseURL:                 record.GatewayBaseURL,
+		ExposeUpstreamBalanceToClients: record.ExposeUpstreamBalanceToClients,
+		UpdatedAt:                      record.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 	if record.RegistrationOrganizationID != nil {
 		value := record.RegistrationOrganizationID.String()

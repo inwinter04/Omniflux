@@ -78,12 +78,13 @@ func New(deps ServerDeps) http.Handler {
 		onTransportError = deps.Governance.ReportTransportError
 	}
 	plane := dataplane.Deps{
-		Logger:           deps.Logger,
-		Pool:             deps.Pool,
-		Engine:           deps.Engine,
-		FX:               deps.FX,
-		APIKeyPepper:     deps.APIKeyPepper,
-		OnTransportError: onTransportError,
+		Logger:                deps.Logger,
+		Pool:                  deps.Pool,
+		Engine:                deps.Engine,
+		FX:                    deps.FX,
+		APIKeyPepper:          deps.APIKeyPepper,
+		OnTransportError:      onTransportError,
+		QueryUpstreamBalances: deps.queryAuthorizedUpstreamBalances,
 	}
 	plane.SetRateLimit(deps.Redis, deps.RateLimitPerMin)
 	deps.Plane = &plane
@@ -91,6 +92,7 @@ func New(deps ServerDeps) http.Handler {
 		r.Use(plane.RequireAPIKey)
 		r.Use(plane.RateLimit)
 		r.Get("/models", plane.ListModels)
+		r.Get("/quota", plane.Quota)
 		r.Get("/prompt-templates", plane.ListPromptTemplates)
 		r.Get("/prompt-templates/{name}", plane.GetPromptTemplate)
 		r.Post("/prompt-templates/{name}/render", plane.RenderPromptTemplate)
