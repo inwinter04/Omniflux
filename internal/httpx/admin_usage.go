@@ -24,26 +24,28 @@ type usageCurrencyTotal struct {
 }
 
 type usageSummaryResponse struct {
-	Costs             []usageCurrencyTotal `json:"costs"`
-	TotalRequests     int64                `json:"total_requests"`
-	SuccessRequests   int64                `json:"success_requests"`
-	FailedRequests    int64                `json:"failed_requests"`
-	TotalInputTokens  int64                `json:"total_input_tokens"`
-	TotalOutputTokens int64                `json:"total_output_tokens"`
-	TotalCost         string               `json:"total_cost"`
-	CostCurrency      string               `json:"cost_currency"`
-	ByModel           []usageModelSummary  `json:"by_model"`
-	ByProject         []usageScopeSummary  `json:"by_project"`
-	ByApplication     []usageScopeSummary  `json:"by_application"`
-	ByAPIKey          []usageScopeSummary  `json:"by_api_key"`
-	ByDepartment      []usageScopeSummary  `json:"by_department"`
-	ByModelService    []usageScopeSummary  `json:"by_model_service"`
-	ByState           []usageScopeSummary  `json:"by_state"`
-	BySource          []usageScopeSummary  `json:"by_source"`
-	ByProvider        []usageScopeSummary  `json:"by_provider"`
-	ByRoutePolicy     []usageScopeSummary  `json:"by_route_policy"`
-	ByErrorType       []usageScopeSummary  `json:"by_error_type"`
-	ByDay             []usageDaySummary    `json:"by_day"`
+	Costs                    []usageCurrencyTotal `json:"costs"`
+	TotalRequests            int64                `json:"total_requests"`
+	SuccessRequests          int64                `json:"success_requests"`
+	FailedRequests           int64                `json:"failed_requests"`
+	TotalInputTokens         int64                `json:"total_input_tokens"`
+	TotalOutputTokens        int64                `json:"total_output_tokens"`
+	TotalCacheCreationTokens int64                `json:"total_cache_creation_tokens"`
+	TotalCost                string               `json:"total_cost"`
+	CostCurrency             string               `json:"cost_currency"`
+	ByModel                  []usageModelSummary  `json:"by_model"`
+	ByProject                []usageScopeSummary  `json:"by_project"`
+	ByApplication            []usageScopeSummary  `json:"by_application"`
+	ByAPIKey                 []usageScopeSummary  `json:"by_api_key"`
+	ByDepartment             []usageScopeSummary  `json:"by_department"`
+	ByModelService           []usageScopeSummary  `json:"by_model_service"`
+	ByState                  []usageScopeSummary  `json:"by_state"`
+	BySource                 []usageScopeSummary  `json:"by_source"`
+	ByProtocol               []usageScopeSummary  `json:"by_protocol"`
+	ByProvider               []usageScopeSummary  `json:"by_provider"`
+	ByRoutePolicy            []usageScopeSummary  `json:"by_route_policy"`
+	ByErrorType              []usageScopeSummary  `json:"by_error_type"`
+	ByDay                    []usageDaySummary    `json:"by_day"`
 }
 
 type usageScopeSummary struct {
@@ -77,29 +79,31 @@ type usageTrendPoint struct {
 }
 
 type usageRecordResponse struct {
-	ID              string  `json:"id"`
-	RequestID       string  `json:"request_id"`
-	CreatedAt       string  `json:"created_at"`
-	ProjectName     *string `json:"project_name"`
-	ApplicationName *string `json:"application_name"`
-	KeyName         *string `json:"key_name"`
-	ModelService    string  `json:"model_service"`
-	RoutePolicyID   *string `json:"route_policy_id"`
-	State           string  `json:"state"`
-	StatusCode      *int    `json:"status_code"`
-	Provider        *string `json:"provider"`
-	UpstreamModel   *string `json:"upstream_model"`
-	InputTokens     int64   `json:"input_tokens"`
-	OutputTokens    int64   `json:"output_tokens"`
-	CachedTokens    int64   `json:"cached_tokens"`
-	ReasoningTokens int64   `json:"reasoning_tokens"`
-	FirstTokenMS    *int    `json:"first_token_ms"`
-	TotalMS         *int    `json:"total_ms"`
-	Cost            string  `json:"cost"`
-	CostCurrency    string  `json:"cost_currency"`
-	Source          string  `json:"source"`
-	ErrorType       *string `json:"error_type"`
-	ErrorMessage    *string `json:"error_message"`
+	ID                  string  `json:"id"`
+	RequestID           string  `json:"request_id"`
+	CreatedAt           string  `json:"created_at"`
+	ProjectName         *string `json:"project_name"`
+	ApplicationName     *string `json:"application_name"`
+	KeyName             *string `json:"key_name"`
+	ModelService        string  `json:"model_service"`
+	RoutePolicyID       *string `json:"route_policy_id"`
+	State               string  `json:"state"`
+	StatusCode          *int    `json:"status_code"`
+	Provider            *string `json:"provider"`
+	UpstreamModel       *string `json:"upstream_model"`
+	InputTokens         int64   `json:"input_tokens"`
+	OutputTokens        int64   `json:"output_tokens"`
+	CachedTokens        int64   `json:"cached_tokens"`
+	CacheCreationTokens int64   `json:"cache_creation_tokens"`
+	ReasoningTokens     int64   `json:"reasoning_tokens"`
+	FirstTokenMS        *int    `json:"first_token_ms"`
+	TotalMS             *int    `json:"total_ms"`
+	Cost                string  `json:"cost"`
+	CostCurrency        string  `json:"cost_currency"`
+	Source              string  `json:"source"`
+	Protocol            string  `json:"protocol"`
+	ErrorType           *string `json:"error_type"`
+	ErrorMessage        *string `json:"error_message"`
 }
 
 type usageRecordsPage struct {
@@ -164,6 +168,15 @@ func buildUsageFilters(r *http.Request, organizationID uuid.UUID) (string, []any
 		case "api", "agent_api", "route_playground", "prompt_debug", "agent_debug":
 			args = append(args, value)
 			where = append(where, fmt.Sprintf("u.source = $%d", len(args)))
+		default:
+			return "", nil, errors.New("invalid usage filter")
+		}
+	}
+	if value := strings.TrimSpace(r.URL.Query().Get("protocol")); value != "" {
+		switch value {
+		case "openai_chat", "openai_responses", "anthropic_messages", "gemini_native":
+			args = append(args, value)
+			where = append(where, fmt.Sprintf("u.protocol = $%d", len(args)))
 		default:
 			return "", nil, errors.New("invalid usage filter")
 		}
@@ -310,11 +323,13 @@ func (d ServerDeps) UsageSummary(w http.ResponseWriter, r *http.Request) {
 		SELECT count(*) FILTER (WHERE u.state IN ('success','failed','interrupted')),
 		       count(*) FILTER (WHERE u.state = 'success'),
 		       count(*) FILTER (WHERE u.state IN ('failed','interrupted')),
-		       COALESCE(sum(u.input_tokens), 0), COALESCE(sum(u.output_tokens), 0)
+		       COALESCE(sum(u.input_tokens), 0), COALESCE(sum(u.output_tokens), 0),
+		       COALESCE(sum(u.cache_creation_tokens), 0)
 		FROM reporting_usage_records u
 		WHERE `+whereSQL, args...).Scan(
 		&summary.TotalRequests, &summary.SuccessRequests, &summary.FailedRequests,
 		&summary.TotalInputTokens, &summary.TotalOutputTokens,
+		&summary.TotalCacheCreationTokens,
 	); err != nil {
 		adminError(w, http.StatusInternalServerError, "USAGE_SUMMARY_FAILED", "failed-to-query-usage-summaries", nil)
 		return
@@ -538,6 +553,28 @@ func (d ServerDeps) UsageSummary(w http.ResponseWriter, r *http.Request) {
 		}
 		summary.BySource = append(summary.BySource, item)
 	}
+	protocolRows, err := d.Pool.Query(r.Context(), `
+		SELECT COALESCE(u.protocol, 'openai_chat'), count(*), COALESCE(sum(u.input_tokens), 0), COALESCE(sum(u.output_tokens), 0),
+		       COALESCE(sum(u.cost), 0)::text, u.cost_currency
+		FROM reporting_usage_records u
+		WHERE `+whereSQL+`
+		GROUP BY u.protocol, u.cost_currency
+		ORDER BY count(*) DESC
+	`, args...)
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "USAGE_SUMMARY_FAILED", "failed-to-query-usage-summaries", nil)
+		return
+	}
+	defer protocolRows.Close()
+	summary.ByProtocol = []usageScopeSummary{}
+	for protocolRows.Next() {
+		var item usageScopeSummary
+		if err := protocolRows.Scan(&item.Name, &item.Requests, &item.InputTokens, &item.OutputTokens, &item.Cost, &item.CostCurrency); err != nil {
+			adminError(w, http.StatusInternalServerError, "USAGE_SUMMARY_FAILED", "failed-to-query-usage-summaries", nil)
+			return
+		}
+		summary.ByProtocol = append(summary.ByProtocol, item)
+	}
 	providerRows, err := d.Pool.Query(r.Context(), `
 		SELECT COALESCE(u.provider, '-'), count(*), COALESCE(sum(u.input_tokens), 0), COALESCE(sum(u.output_tokens), 0),
 		       COALESCE(sum(u.cost), 0)::text, u.cost_currency
@@ -684,6 +721,16 @@ func (d ServerDeps) UsageRecords(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if value := strings.TrimSpace(r.URL.Query().Get("protocol")); value != "" {
+		switch value {
+		case "openai_chat", "openai_responses", "anthropic_messages", "gemini_native":
+			args = append(args, value)
+			where = append(where, fmt.Sprintf("u.protocol = $%d", len(args)))
+		default:
+			adminError(w, http.StatusBadRequest, "USAGE_FILTER_INVALID", "invalid-usage-filter", nil)
+			return
+		}
+	}
 	if value := strings.TrimSpace(r.URL.Query().Get("start_time")); value != "" {
 		parsed, err := time.Parse(time.RFC3339, value)
 		if err != nil {
@@ -713,8 +760,8 @@ func (d ServerDeps) UsageRecords(w http.ResponseWriter, r *http.Request) {
 	rows, err := d.Pool.Query(r.Context(), `
 		SELECT u.id, u.request_id, u.created_at, p.name, a.name, k.name, m.name, u.route_policy_id,
 		       u.state, u.status_code, u.provider, u.upstream_model,
-		       u.input_tokens, u.output_tokens, u.cached_tokens, u.reasoning_tokens,
-		       u.first_token_ms, u.total_ms, u.cost::text, u.cost_currency, u.source,
+		       u.input_tokens, u.output_tokens, u.cached_tokens, u.cache_creation_tokens, u.reasoning_tokens,
+		       u.first_token_ms, u.total_ms, u.cost::text, u.cost_currency, u.source, u.protocol,
 		       u.error_type, u.error_message
 		FROM reporting_usage_records u
 		LEFT JOIN projects p ON p.id = u.project_id
@@ -736,8 +783,8 @@ func (d ServerDeps) UsageRecords(w http.ResponseWriter, r *http.Request) {
 		var createdAt time.Time
 		if err := rows.Scan(&id, &requestID, &createdAt, &item.ProjectName, &item.ApplicationName, &item.KeyName,
 			&item.ModelService, &routePolicyID, &item.State, &item.StatusCode, &item.Provider, &item.UpstreamModel,
-			&item.InputTokens, &item.OutputTokens, &item.CachedTokens, &item.ReasoningTokens,
-			&item.FirstTokenMS, &item.TotalMS, &item.Cost, &item.CostCurrency, &item.Source,
+			&item.InputTokens, &item.OutputTokens, &item.CachedTokens, &item.CacheCreationTokens, &item.ReasoningTokens,
+			&item.FirstTokenMS, &item.TotalMS, &item.Cost, &item.CostCurrency, &item.Source, &item.Protocol,
 			&item.ErrorType, &item.ErrorMessage); err != nil {
 			adminError(w, http.StatusInternalServerError, "USAGE_RECORDS_FAILED", "failed-to-query-usage-records", nil)
 			return
@@ -769,9 +816,9 @@ func (d ServerDeps) UsageRecordsExport(w http.ResponseWriter, r *http.Request) {
 		SELECT u.request_id, u.created_at, COALESCE(p.name, ''), COALESCE(a.name, ''), COALESCE(k.name, ''), m.name,
 		       COALESCE(u.route_policy_id::text, ''), u.state, COALESCE(u.status_code::text, ''),
 		       COALESCE(u.provider, ''), COALESCE(u.upstream_model, ''),
-		       u.input_tokens, u.output_tokens, u.cached_tokens, u.reasoning_tokens,
+		       u.input_tokens, u.output_tokens, u.cached_tokens, u.cache_creation_tokens, u.reasoning_tokens,
 		       COALESCE(u.first_token_ms::text, ''), COALESCE(u.total_ms::text, ''),
-		       u.cost::text, u.cost_currency, u.source, COALESCE(u.error_type, ''), COALESCE(u.error_message, '')
+		       u.cost::text, u.cost_currency, u.source, u.protocol, COALESCE(u.error_type, ''), COALESCE(u.error_message, '')
 		FROM reporting_usage_records u
 		LEFT JOIN projects p ON p.id = u.project_id
 		LEFT JOIN applications a ON a.id = u.application_id
@@ -793,17 +840,17 @@ func (d ServerDeps) UsageRecordsExport(w http.ResponseWriter, r *http.Request) {
 	_ = writer.Write([]string{
 		"request_id", "created_at", "project", "application", "api_key", "model_service", "route_policy_id",
 		"state", "status_code", "provider", "upstream_model", "input_tokens", "output_tokens",
-		"cached_tokens", "reasoning_tokens", "first_token_ms", "total_ms", "cost", "cost_currency",
-		"source", "error_type", "error_message",
+		"cached_tokens", "cache_creation_tokens", "reasoning_tokens", "first_token_ms", "total_ms", "cost", "cost_currency",
+		"source", "protocol", "error_type", "error_message",
 	})
 	for rows.Next() {
 		var requestID uuid.UUID
 		var createdAt time.Time
-		var record [22]string
+		var record [24]string
 		if err := rows.Scan(&requestID, &createdAt, &record[2], &record[3], &record[4], &record[5], &record[6],
 			&record[7], &record[8], &record[9], &record[10], &record[11], &record[12], &record[13],
 			&record[14], &record[15], &record[16], &record[17], &record[18], &record[19], &record[20],
-			&record[21]); err != nil {
+			&record[21], &record[22], &record[23]); err != nil {
 			adminError(w, http.StatusInternalServerError, "USAGE_EXPORT_FAILED", "failed-to-export-usage-records", nil)
 			return
 		}

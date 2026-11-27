@@ -17,20 +17,23 @@ import (
 
 // candidate 是路由链中的一个上游候选,对应 model_candidates 加上其 provider account 的信息。
 type candidate struct {
-	ID             string
-	Provider       string
-	AccountID      string
-	AccountName    string
-	UpstreamModel  string
-	Priority       int
-	Weight         float64
-	InputCostPerM  float64
-	OutputCostPerM float64
-	CostCurrency   string
-	Quality        float64
-	ContextWindow  *int
-	Capabilities   []string
-	Tags           []string
+	ID               string
+	Provider         string
+	APIProtocol      string
+	AccountID        string
+	AccountName      string
+	UpstreamModel    string
+	Priority         int
+	Weight           float64
+	InputCostPerM    float64
+	OutputCostPerM   float64
+	CacheReadCostPerM  *float64
+	CacheWriteCostPerM *float64
+	CostCurrency     string
+	Quality          float64
+	ContextWindow    *int
+	Capabilities     []string
+	Tags             []string
 }
 
 // policyWeights 是路由策略的评分权重,来自 route_policies.weights JSON。
@@ -55,6 +58,7 @@ type routePolicy struct {
 	Rules               []RouteRule
 	RetryPolicy         RetryPolicy
 	CircuitBreaker      CircuitBreakerPolicy
+	SessionAffinity     SessionAffinityPolicy
 }
 
 var defaultPolicy = routePolicy{
@@ -67,6 +71,7 @@ var defaultPolicy = routePolicy{
 	FirstTokenTimeoutMS: 15000,
 	RetryPolicy:         DefaultRetryPolicy(),
 	CircuitBreaker:      DefaultCircuitBreakerPolicy(),
+	SessionAffinity:     DefaultSessionAffinityPolicy(),
 }
 
 // candidateHealth 是候选的表现统计:兼顾流式 TTFT、总延迟与成功率平滑评分。
@@ -138,26 +143,33 @@ type RouteDecision struct {
 	MatchedRuleID     string                `json:"matched_rule_id,omitempty"`
 	MatchedRuleName   string                `json:"matched_rule_name,omitempty"`
 	RandomSeed        int64                 `json:"random_seed,omitempty"`
+	AffinityHit       bool                  `json:"affinity_hit,omitempty"`
+	StickyCandidateID string                `json:"sticky_candidate_id,omitempty"`
+	SessionKey        string                `json:"-"`
+	Protocol          string                `json:"-"`
 	Warnings          []string              `json:"warnings,omitempty"`
 	Evaluations       []CandidateEvaluation `json:"evaluations"`
 }
 
 // SimCandidate 与 EvaluateSimulation 为管理面模拟器与跨包调用提供无 DB 的纯路由接口。
 type SimCandidate struct {
-	ID             string
-	Provider       string
-	AccountID      string
-	AccountName    string
-	UpstreamModel  string
-	Priority       int
-	Weight         float64
-	InputCostPerM  float64
-	OutputCostPerM float64
-	CostCurrency   string
-	Quality        float64
-	ContextWindow  *int
-	Capabilities   []string
-	Tags           []string
+	ID                 string
+	Provider           string
+	APIProtocol        string
+	AccountID          string
+	AccountName        string
+	UpstreamModel      string
+	Priority           int
+	Weight             float64
+	InputCostPerM      float64
+	OutputCostPerM     float64
+	CacheReadCostPerM  *float64
+	CacheWriteCostPerM *float64
+	CostCurrency       string
+	Quality            float64
+	ContextWindow      *int
+	Capabilities       []string
+	Tags               []string
 }
 
 type SimPolicy struct {
@@ -177,6 +189,7 @@ type SimPolicy struct {
 	Rules               []RouteRule
 	RetryPolicy         RetryPolicy
 	CircuitBreaker      CircuitBreakerPolicy
+	SessionAffinity     SessionAffinityPolicy
 }
 
 func (p *SimPolicy) ApplyWeightsJSON(raw []byte) {
@@ -217,9 +230,11 @@ func EvaluateSimulation(cands []SimCandidate, policy SimPolicy, reqCtx RouteCont
 	}
 	for i, c := range cands {
 		internalCands[i] = candidate{
-			ID: c.ID, Provider: c.Provider, AccountID: c.AccountID, AccountName: c.AccountName,
+			ID: c.ID, Provider: c.Provider, APIProtocol: c.APIProtocol, AccountID: c.AccountID, AccountName: c.AccountName,
 			UpstreamModel: c.UpstreamModel, Priority: c.Priority, Weight: c.Weight,
-			InputCostPerM: c.InputCostPerM, OutputCostPerM: c.OutputCostPerM, CostCurrency: c.CostCurrency,
+			InputCostPerM: c.InputCostPerM, OutputCostPerM: c.OutputCostPerM,
+			CacheReadCostPerM: c.CacheReadCostPerM, CacheWriteCostPerM: c.CacheWriteCostPerM,
+			CostCurrency: c.CostCurrency,
 			Quality: c.Quality, ContextWindow: c.ContextWindow, Capabilities: c.Capabilities, Tags: c.Tags,
 		}
 		if h, ok := healthByCand[c.ID]; ok {
@@ -250,6 +265,7 @@ func EvaluateSimulation(cands []SimCandidate, policy SimPolicy, reqCtx RouteCont
 			MaxCostPerMillion:    policy.MaxCostPerMillion,
 		},
 		Rules: policy.Rules, RetryPolicy: policy.RetryPolicy, CircuitBreaker: policy.CircuitBreaker,
+		SessionAffinity: policy.SessionAffinity,
 	}
 	return EvaluateRoute(internalCands, rp, reqCtx, scores, fxRates, rrCounter)
 }
@@ -508,6 +524,22 @@ func EvaluateRoute(cands []candidate, policy routePolicy, reqCtx RouteContext, s
 		orderedGroup := orderPriorityGroup(working[start:end], decision.EffectiveStrategy, evalMetrics, evalByID, scores, rrCounter, prng)
 		chain = append(chain, orderedGroup...)
 		start = end
+	}
+
+	// 6.5) 粘性会话亲和：仅当优选候选位于同最高优先级组且通过硬约束与熔断检查时置顶。
+	if policy.SessionAffinity.Enabled && strings.TrimSpace(reqCtx.PreferredCandidateID) != "" && len(chain) > 0 {
+		bestPriority := chain[0].Priority
+		for idx, c := range chain {
+			if c.ID == reqCtx.PreferredCandidateID && c.Priority == bestPriority {
+				if idx > 0 {
+					copy(chain[1:idx+1], chain[0:idx])
+					chain[0] = c
+				}
+				decision.AffinityHit = true
+				decision.StickyCandidateID = c.ID
+				break
+			}
+		}
 	}
 
 	// 7) 按 max_attempts (FallbackLimit) 截断链条。
@@ -935,19 +967,70 @@ func cryptoSeed() int64 {
 	return 1
 }
 
+// costForUsage 按 input/cache_read/cache_write/output 分档计算成本(按候选原结算币种计价)。
+// 遵循 Bifrost 约定：InputTokens 已包含 CachedReadTokens 与 CacheCreationTokens，未缓存输入需扣除这两部分避免重复计费。
+func (c candidate) costForUsage(u usageSnapshot) float64 {
+	input := u.InputTokens
+	if input < 0 {
+		input = 0
+	}
+	cachedRead := u.CachedTokens
+	if cachedRead < 0 {
+		cachedRead = 0
+	}
+	if cachedRead > input {
+		cachedRead = input
+	}
+	rem := input - cachedRead
+	cachedWrite := u.CacheCreationTokens
+	if cachedWrite < 0 {
+		cachedWrite = 0
+	}
+	if cachedWrite > rem {
+		cachedWrite = rem
+	}
+	uncached := rem - cachedWrite
+
+	readPrice := c.InputCostPerM
+	if c.CacheReadCostPerM != nil {
+		readPrice = *c.CacheReadCostPerM
+	}
+	writePrice := c.InputCostPerM
+	if c.CacheWriteCostPerM != nil {
+		writePrice = *c.CacheWriteCostPerM
+	}
+	output := u.OutputTokens
+	if output < 0 {
+		output = 0
+	}
+	return (float64(uncached)*c.InputCostPerM +
+		float64(cachedRead)*readPrice +
+		float64(cachedWrite)*writePrice +
+		float64(output)*c.OutputCostPerM) / 1_000_000
+}
+
 // costUSD 按 input/output 每百万 token 单价计算成本(按候选原结算币种计价)。
 func (c candidate) costUSD(inputTokens, outputTokens int64) float64 {
-	return (float64(inputTokens)*c.InputCostPerM + float64(outputTokens)*c.OutputCostPerM) / 1_000_000
+	return c.costForUsage(usageSnapshot{InputTokens: inputTokens, OutputTokens: outputTokens})
+}
+
+func logicalProviderName(provider string) string {
+	if mapped, err := bifrostx.MapProvider(provider); err == nil {
+		return string(mapped)
+	}
+	return provider
 }
 
 // findCandidate 按 provider + upstream model 在链中定位实际服务请求的候选。
 func (chain routeChain) findCandidate(provider, model, accountID string) (candidate, error) {
 	for _, c := range chain {
-		mapped, err := bifrostx.MapProvider(c.Provider)
-		if err != nil {
+		engineKey, engineErr := bifrostx.EngineProviderKey(c.AccountID, c.Provider, c.APIProtocol)
+		mapped, mapErr := bifrostx.MapProvider(c.Provider)
+		if engineErr != nil && mapErr != nil {
 			continue
 		}
-		if string(mapped) == provider && c.UpstreamModel == model && (accountID == "" || c.AccountID == accountID) {
+		providerMatched := (engineErr == nil && string(engineKey) == provider) || (mapErr == nil && string(mapped) == provider)
+		if providerMatched && c.UpstreamModel == model && (accountID == "" || c.AccountID == accountID) {
 			return c, nil
 		}
 	}
@@ -958,14 +1041,14 @@ func bifrostFindErr(provider, model string) error {
 	return &AgentInputError{Code: "candidate_not_found", Message: "served provider/model (" + provider + ", " + model + ") not found in route chain"}
 }
 
-// fallbackSpecs 把主候选之后的链转成 Bifrost 的 fallback 列表(供提示词/智能体调试路径复用)。
+// fallbackSpecs 把主候选之后的链转成 Bifrost 的 fallback 列表(供 embeddings 等路径复用)。
 func fallbackSpecs(chain routeChain) []schemas.Fallback {
 	if len(chain) <= 1 {
 		return nil
 	}
 	fallbacks := make([]schemas.Fallback, 0, len(chain)-1)
 	for _, c := range chain[1:] {
-		provider, err := bifrostx.MapProvider(c.Provider)
+		provider, err := bifrostx.EngineProviderKey(c.AccountID, c.Provider, c.APIProtocol)
 		if err != nil {
 			continue
 		}

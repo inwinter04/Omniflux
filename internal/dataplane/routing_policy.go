@@ -34,11 +34,14 @@ var allowedStrategies = map[string]bool{
 }
 
 var allowedCapabilities = map[string]bool{
-	"vision":    true,
-	"tools":     true,
-	"reasoning": true,
-	"json_mode": true,
-	"streaming": true,
+	"vision":         true,
+	"tools":          true,
+	"reasoning":      true,
+	"json_mode":      true,
+	"streaming":      true,
+	"prompt_caching": true,
+	"responses_api":  true,
+	"pdf_input":      true,
 }
 
 func IsAllowedStrategy(strategy string) bool {
@@ -433,7 +436,62 @@ func ClassifyAttemptOutcome(statusCode int, errCode, errType string, rp RetryPol
 	}
 }
 
-// RouteContext carries extracted request features for conditional rule matching & cost estimation.
+// SessionAffinityPolicy controls sticky candidate routing within a service session.
+type SessionAffinityPolicy struct {
+	Enabled     bool   `json:"enabled"`
+	TTLSeconds  int    `json:"ttl_seconds"`
+	KeyStrategy string `json:"key_strategy"` // auto | user_id | header_only
+}
+
+func DefaultSessionAffinityPolicy() SessionAffinityPolicy {
+	return SessionAffinityPolicy{
+		Enabled:     true,
+		TTLSeconds:  300,
+		KeyStrategy: "auto",
+	}
+}
+
+func ParseSessionAffinityPolicy(raw []byte) SessionAffinityPolicy {
+	p := DefaultSessionAffinityPolicy()
+	if len(raw) == 0 {
+		return p
+	}
+	_ = json.Unmarshal(raw, &p)
+	if p.TTLSeconds < 30 {
+		p.TTLSeconds = 30
+	}
+	if p.TTLSeconds > 86400 {
+		p.TTLSeconds = 86400
+	}
+	switch strings.TrimSpace(p.KeyStrategy) {
+	case "auto", "user_id", "header_only":
+		p.KeyStrategy = strings.TrimSpace(p.KeyStrategy)
+	default:
+		p.KeyStrategy = "auto"
+	}
+	return p
+}
+
+func ValidateSessionAffinityJSON(raw json.RawMessage) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	var p SessionAffinityPolicy
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return fmt.Errorf("session_affinity must be a JSON object")
+	}
+	if p.TTLSeconds != 0 && (p.TTLSeconds < 30 || p.TTLSeconds > 86400) {
+		return fmt.Errorf("session_affinity.ttl_seconds must be between 30 and 86400")
+	}
+	switch strings.TrimSpace(p.KeyStrategy) {
+	case "", "auto", "user_id", "header_only":
+	default:
+		return fmt.Errorf("session_affinity.key_strategy must be one of auto, user_id, header_only")
+	}
+	return nil
+}
+
+// RouteContext carries extracted request features for conditional rule matching, affinity & cost estimation.
 type RouteContext struct {
 	EstimatedInputTokens  int               `json:"estimated_input_tokens"`
 	EstimatedOutputTokens int               `json:"estimated_output_tokens"`
@@ -443,6 +501,9 @@ type RouteContext struct {
 	ApplicationID         string            `json:"application_id,omitempty"`
 	APIKeyID              string            `json:"api_key_id,omitempty"`
 	Source                string            `json:"source,omitempty"`
+	Protocol              string            `json:"protocol,omitempty"`
+	SessionKey            string            `json:"session_key,omitempty"`
+	PreferredCandidateID  string            `json:"preferred_candidate_id,omitempty"`
 	KeywordText           string            `json:"keyword_text,omitempty"`
 	Metadata              map[string]string `json:"metadata,omitempty"`
 	RandomSeed            int64             `json:"random_seed,omitempty"`
@@ -555,6 +616,7 @@ func ExtractChatRouteContext(meta chatRequestMeta, keyCtx apiKeyContext, headers
 		ApplicationID:         keyCtx.ApplicationID.String(),
 		APIKeyID:              keyCtx.KeyID.String(),
 		Source:                "api",
+		Protocol:              ClientProtocolOpenAIChat,
 		KeywordText:           sample,
 		Metadata:              metaMap,
 	}

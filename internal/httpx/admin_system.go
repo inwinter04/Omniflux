@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -24,6 +25,7 @@ type systemSettingsResponse struct {
 	RegistrationOrganizationID *string `json:"registration_organization_id"`
 	RegistrationRole           string  `json:"registration_role"`
 	EmailVerificationRequired  bool    `json:"email_verification_required"`
+	GatewayBaseURL             string  `json:"gateway_base_url"`
 	UpdatedBy                  *string `json:"updated_by"`
 	UpdatedAt                  string  `json:"updated_at"`
 }
@@ -33,6 +35,7 @@ type updateSystemSettingsRequest struct {
 	RegistrationOrganizationID string `json:"registration_organization_id"`
 	EmailVerificationRequired  bool   `json:"email_verification_required"`
 	RegistrationRole           string `json:"registration_role"`
+	GatewayBaseURL             string `json:"gateway_base_url"`
 }
 
 type systemSettingsRecord struct {
@@ -40,6 +43,7 @@ type systemSettingsRecord struct {
 	RegistrationOrganizationID *uuid.UUID
 	RegistrationRole           string
 	EmailVerificationRequired  bool
+	GatewayBaseURL             string
 	UpdatedBy                  *uuid.UUID
 	UpdatedAt                  time.Time
 }
@@ -125,6 +129,12 @@ func (d ServerDeps) UpdateSystemSettings(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	}
+	normalizedGatewayURL, validGatewayURL := normalizeGatewayBaseURL(body.GatewayBaseURL)
+	if !validGatewayURL {
+		adminError(w, http.StatusBadRequest, "SYSTEM_SETTINGS_GATEWAY_URL_INVALID", "invalid-gateway-base-url", nil)
+		return
+	}
+	next.GatewayBaseURL = normalizedGatewayURL
 	if next.RegistrationOrganizationID != nil {
 		var count int
 		if err := d.Pool.QueryRow(r.Context(), `SELECT count(*) FROM organizations WHERE id = $1`, *next.RegistrationOrganizationID).Scan(&count); err != nil {
@@ -146,20 +156,23 @@ func (d ServerDeps) UpdateSystemSettings(w http.ResponseWriter, r *http.Request)
 			public_registration_enabled = $2,
 			registration_organization_id = $3,
 			registration_role = $4, email_verification_required = $5,
-			updated_by = $6,
+			gateway_base_url = $6,
+			updated_by = $7,
 			updated_at = now()
 		WHERE singleton = $1::boolean
-	`, []any{true, next.PublicRegistrationEnabled, organizationID, next.RegistrationRole, next.EmailVerificationRequired, principal.UserID},
+	`, []any{true, next.PublicRegistrationEnabled, organizationID, next.RegistrationRole, next.EmailVerificationRequired, next.GatewayBaseURL, principal.UserID},
 		principal.OrganizationID, principal.UserID, "system.settings_updated", "system_settings", "singleton",
 		map[string]any{
 			"public_registration_enabled": current.PublicRegistrationEnabled, "email_verification_required": current.EmailVerificationRequired,
 			"registration_organization_id": uuidString(current.RegistrationOrganizationID),
 			"registration_role":            current.RegistrationRole,
+			"gateway_base_url":             current.GatewayBaseURL,
 		},
 		map[string]any{
 			"public_registration_enabled": next.PublicRegistrationEnabled, "email_verification_required": next.EmailVerificationRequired,
 			"registration_organization_id": uuidString(next.RegistrationOrganizationID),
 			"registration_role":            next.RegistrationRole,
+			"gateway_base_url":             next.GatewayBaseURL,
 		})
 	if err != nil {
 		adminError(w, http.StatusInternalServerError, "SYSTEM_SETTINGS_UPDATE_FAILED", "failed-to-update-system-settings", nil)
@@ -171,6 +184,36 @@ func (d ServerDeps) UpdateSystemSettings(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	adminOK(w, newSystemSettingsResponse(updated))
+}
+
+// GatewayInfo 返回客户端接入向导所需的统一网关公开地址;所有已登录用户均可读取。
+func (d ServerDeps) GatewayInfo(w http.ResponseWriter, r *http.Request) {
+	if _, ok := auth.FromContext(r.Context()); !ok {
+		return
+	}
+	var gatewayBaseURL string
+	err := d.Pool.QueryRow(r.Context(), `SELECT gateway_base_url FROM system_settings WHERE singleton`).Scan(&gatewayBaseURL)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		adminError(w, http.StatusInternalServerError, "SYSTEM_SETTINGS_READ_FAILED", "failed-to-query-system-settings", nil)
+		return
+	}
+	gatewayBaseURL = strings.TrimRight(strings.TrimSpace(gatewayBaseURL), "/")
+	adminOK(w, map[string]any{
+		"gateway_base_url": gatewayBaseURL,
+		"configured":       gatewayBaseURL != "",
+	})
+}
+
+func normalizeGatewayBaseURL(raw string) (string, bool) {
+	trimmed := strings.TrimRight(strings.TrimSpace(raw), "/")
+	if trimmed == "" {
+		return "", true
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", false
+	}
+	return trimmed, true
 }
 
 // RegistrationOptions 只暴露匿名登录页需要的注册开关,不泄露组织与角色配置。
@@ -197,9 +240,9 @@ func (d ServerDeps) readSystemSettings(ctx context.Context) (systemSettingsRecor
 	var organizationID uuid.NullUUID
 	var updatedBy uuid.NullUUID
 	err := d.Pool.QueryRow(ctx, `
-		SELECT public_registration_enabled, registration_organization_id, registration_role, email_verification_required, updated_by, updated_at
+		SELECT public_registration_enabled, registration_organization_id, registration_role, email_verification_required, gateway_base_url, updated_by, updated_at
 		FROM system_settings WHERE singleton
-	`).Scan(&record.PublicRegistrationEnabled, &organizationID, &record.RegistrationRole, &record.EmailVerificationRequired, &updatedBy, &record.UpdatedAt)
+	`).Scan(&record.PublicRegistrationEnabled, &organizationID, &record.RegistrationRole, &record.EmailVerificationRequired, &record.GatewayBaseURL, &updatedBy, &record.UpdatedAt)
 	if err != nil {
 		return record, err
 	}
@@ -219,6 +262,7 @@ func newSystemSettingsResponse(record systemSettingsRecord) systemSettingsRespon
 		PublicRegistrationEnabled: record.PublicRegistrationEnabled,
 		EmailVerificationRequired: record.EmailVerificationRequired,
 		RegistrationRole:          record.RegistrationRole,
+		GatewayBaseURL:            record.GatewayBaseURL,
 		UpdatedAt:                 record.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 	if record.RegistrationOrganizationID != nil {

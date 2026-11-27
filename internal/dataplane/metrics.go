@@ -43,6 +43,9 @@ func recordFinalizedMetrics(f finalUsage, fxRates map[string]float64) {
 	metricTokensTotal.WithLabelValues(provider, state, "input").Add(float64(f.InputTokens))
 	metricTokensTotal.WithLabelValues(provider, state, "output").Add(float64(f.OutputTokens))
 	metricTokensTotal.WithLabelValues(provider, state, "cached").Add(float64(f.CachedTokens))
+	if f.CacheCreationTokens > 0 {
+		metricTokensTotal.WithLabelValues(provider, state, "cache_creation").Add(float64(f.CacheCreationTokens))
+	}
 	metricTokensTotal.WithLabelValues(provider, state, "reasoning").Add(float64(f.ReasoningTokens))
 	if f.Cost > 0 {
 		costUSD := f.Cost

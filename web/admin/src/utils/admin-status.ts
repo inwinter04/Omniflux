@@ -287,6 +287,20 @@ export const auditActions = Object.keys(actionTextKeyMap).sort();
 
 export const auditResourceTypes = Object.keys(resourceTextKeyMap).sort();
 
+/** Resolve automatic gateway origin from VITE_SERVICE_BASE_URL or browser origin. */
+export function resolveAutoGatewayOrigin(): string {
+  if (typeof window === 'undefined') return 'http://127.0.0.1:8080';
+  const serviceBase = import.meta.env.VITE_SERVICE_BASE_URL;
+  if (serviceBase && /^https?:\/\//i.test(serviceBase)) {
+    try {
+      return new URL(serviceBase).origin;
+    } catch {
+      // fall back to window.location.origin
+    }
+  }
+  return window.location.origin;
+}
+
 /** 审计快照字段的展示名称;未登记的字段原样显示字段名。 */
 const snapshotFieldKeyMap: Record<string, App.I18n.I18nKey> = {
   actions: 'business.allowed-actions',
@@ -294,6 +308,7 @@ const snapshotFieldKeyMap: Record<string, App.I18n.I18nKey> = {
   asset_id: 'business.enterprise-asset',
   asset_type: 'business.asset-type',
   base_url: 'business.api-endpoint',
+  gateway_base_url: 'business.gateway-base-url',
   billing_currency: 'business.currency',
   candidates: 'business.candidates',
   cases: 'business.case-count',
@@ -346,6 +361,10 @@ const snapshotFieldKeyMap: Record<string, App.I18n.I18nKey> = {
   runs: 'business.run-count',
   role: 'business.role',
   route_policy_id: 'business.route-policy',
+  api_protocol: 'business.api-protocol',
+  cache_read_cost_per_million: 'business.cache-read-price-million',
+  cache_write_cost_per_million: 'business.cache-write-price-million',
+  session_affinity: 'business.session-affinity',
   scope_id: 'business.budget-subject',
   scope_name: 'business.subject',
   scope_type: 'business.scope-type',
@@ -522,6 +541,27 @@ export function actorTypeText(actorType: string) {
       return $t('business.system');
     default:
       return actorType;
+  }
+}
+
+export function apiProtocolText(protocol?: string | null) {
+  switch (protocol) {
+    case 'openai_chat':
+      return $t('business.protocol-openai-chat');
+    case 'openai_responses':
+      return $t('business.protocol-openai-responses');
+    case 'anthropic_messages':
+      return $t('business.protocol-anthropic-messages');
+    case 'gemini_native':
+      return $t('business.protocol-gemini-native');
+    case 'azure_openai':
+      return $t('business.protocol-azure-openai');
+    case 'bedrock':
+      return $t('business.protocol-bedrock');
+    case 'vertex':
+      return $t('business.protocol-vertex');
+    default:
+      return protocol || '-';
   }
 }
 

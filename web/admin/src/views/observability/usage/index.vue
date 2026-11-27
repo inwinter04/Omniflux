@@ -3,7 +3,7 @@ import { h, onMounted, ref, reactive, computed, watch } from 'vue';
 import { NButton, NPagination, NTag } from 'naive-ui';
 import type { DataTableColumns, SelectGroupOption, SelectOption } from 'naive-ui';
 import type { LineSeriesOption } from 'echarts/charts';
-import { formatTime, usageStateTagType, usageStateText } from '@/utils/admin-status';
+import { apiProtocolText, formatTime, usageStateTagType, usageStateText } from '@/utils/admin-status';
 import { formatCurrency } from '@/utils/currency';
 import {
   fetchApiKeys,
@@ -110,13 +110,15 @@ const filters = reactive<{
   model_service_id: string | null;
   state: string | null;
   source: string | null;
+  protocol: string | null;
 }>({
   project_id: null,
   application_id: null,
   api_key_id: null,
   model_service_id: null,
   state: null,
-  source: null
+  source: null,
+  protocol: null
 });
 const projects = ref<Api.Management.Project[]>([]);
 const applications = ref<Api.Management.Application[]>([]);
@@ -139,6 +141,13 @@ const sourceFilterOptions = computed(() => [
   { label: $t('business.source-route-playground'), value: 'route_playground' },
   { label: $t('business.prompt-debugging'), value: 'prompt_debug' },
   { label: $t('business.agent-debugging'), value: 'agent_debug' }
+]);
+
+const protocolFilterOptions = computed(() => [
+  { label: $t('business.protocol-openai-chat'), value: 'openai_chat' },
+  { label: $t('business.protocol-openai-responses'), value: 'openai_responses' },
+  { label: $t('business.protocol-anthropic-messages'), value: 'anthropic_messages' },
+  { label: $t('business.protocol-gemini-native'), value: 'gemini_native' }
 ]);
 
 function formatNumber(value: number) {
@@ -203,6 +212,39 @@ const modelColumns = computed<DataTableColumns<Api.Management.UsageModelSummary>
 
 const scopeColumns = computed<DataTableColumns<Api.Management.UsageScopeSummary>>(() => [
   { title: $t('business.name'), key: 'name', ellipsis: { tooltip: true }, minWidth: 160 },
+  {
+    title: $t('business.requests'),
+    key: 'requests',
+    width: 100,
+    render: row => formatNumber(row.requests)
+  },
+  {
+    title: $t('business.input-tokens'),
+    key: 'input_tokens',
+    width: 130,
+    render: row => formatNumber(row.input_tokens)
+  },
+  {
+    title: $t('business.output-tokens'),
+    key: 'output_tokens',
+    width: 130,
+    render: row => formatNumber(row.output_tokens)
+  },
+  {
+    title: $t('business.cost'),
+    key: 'cost',
+    width: 140,
+    render: row => formatCost(row.cost, row.cost_currency)
+  }
+]);
+
+const protocolScopeColumns = computed<DataTableColumns<Api.Management.UsageScopeSummary>>(() => [
+  {
+    title: $t('business.protocol'),
+    key: 'name',
+    minWidth: 160,
+    render: row => (row.name ? apiProtocolText(row.name) : '-')
+  },
   {
     title: $t('business.requests'),
     key: 'requests',
@@ -302,6 +344,15 @@ const recordColumns = computed<DataTableColumns<Api.Management.UsageRecord>>(() 
     render: row => sourceText(row.source)
   },
   {
+    title: $t('business.protocol'),
+    key: 'protocol',
+    width: 150,
+    render: row =>
+      row.protocol
+        ? h(NTag, { size: 'small', type: 'info', bordered: false }, { default: () => apiProtocolText(row.protocol) })
+        : '-'
+  },
+  {
     title: $t('business.latency-ms'),
     key: 'total_ms',
     width: 115,
@@ -354,6 +405,7 @@ function currentFilterParams(): Api.Management.UsageRecordFilters {
   if (filters.model_service_id) params.model_service_id = filters.model_service_id;
   if (filters.state) params.state = filters.state;
   if (filters.source) params.source = filters.source;
+  if (filters.protocol) params.protocol = filters.protocol;
   if (filterRange.value) {
     params.start_time = new Date(filterRange.value[0]).toISOString();
     params.end_time = new Date(filterRange.value[1]).toISOString();
@@ -472,6 +524,7 @@ function resetFilters() {
   filters.model_service_id = null;
   filters.state = null;
   filters.source = null;
+  filters.protocol = null;
   quickRange.value = 'last7';
   days.value = 7;
   filterRange.value = null;
@@ -604,6 +657,14 @@ onMounted(() => {
               :placeholder="$t('business.all')"
             />
           </NFormItemGi>
+          <NFormItemGi :label="$t('business.protocol')">
+            <NSelect
+              v-model:value="filters.protocol"
+              :options="protocolFilterOptions"
+              clearable
+              :placeholder="$t('business.all-protocols')"
+            />
+          </NFormItemGi>
         </NGrid>
       </NForm>
 
@@ -633,6 +694,9 @@ onMounted(() => {
             </div>
             <div class="mt-8px text-24px font-semibold">
               {{ summary ? formatNumber(summary.total_input_tokens + summary.total_output_tokens) : '-' }}
+            </div>
+            <div v-if="(summary?.total_cache_creation_tokens ?? 0) > 0" class="mt-4px text-12px text-#6b7280">
+              {{ $t('business.cache-creation-tokens') }}: {{ formatNumber(summary?.total_cache_creation_tokens ?? 0) }}
             </div>
           </NCard>
         </NGi>
@@ -750,6 +814,15 @@ onMounted(() => {
             size="small"
           />
         </NTabPane>
+        <NTabPane name="protocol" :tab="$t('business.by-protocol')">
+          <NDataTable
+            :columns="protocolScopeColumns"
+            :data="summary?.by_protocol ?? []"
+            :loading="summaryLoading"
+            :bordered="false"
+            size="small"
+          />
+        </NTabPane>
         <NTabPane name="routePolicy" :tab="$t('business.by-route-policy')">
           <NDataTable
             :columns="scopeColumns"
@@ -778,7 +851,7 @@ onMounted(() => {
         :loading="recordsLoading"
         :bordered="false"
         size="small"
-        :scroll-x="1400"
+        :scroll-x="1560"
       >
         <template #empty>
           <NEmpty :description="$t('business.noUsageRecords')" />
@@ -808,8 +881,14 @@ onMounted(() => {
         <NDescriptionsItem :label="$t('business.input-tokens')">{{ formatNumber(detail.input_tokens) }}</NDescriptionsItem>
         <NDescriptionsItem :label="$t('business.output-tokens')">{{ formatNumber(detail.output_tokens) }}</NDescriptionsItem>
         <NDescriptionsItem :label="$t('business.cachedTokens')">{{ formatNumber(detail.cached_tokens) }}</NDescriptionsItem>
+        <NDescriptionsItem :label="$t('business.cache-creation-tokens')">
+          {{ formatNumber(detail.cache_creation_tokens ?? 0) }}
+        </NDescriptionsItem>
         <NDescriptionsItem :label="$t('business.reasoningTokens')">
           {{ formatNumber(detail.reasoning_tokens) }}
+        </NDescriptionsItem>
+        <NDescriptionsItem :label="$t('business.protocol')">
+          {{ detail.protocol ? apiProtocolText(detail.protocol) : '-' }}
         </NDescriptionsItem>
         <NDescriptionsItem :label="$t('business.firstTokenLatency')">
           {{ detail.first_token_ms != null ? `${detail.first_token_ms} ms` : '-' }}

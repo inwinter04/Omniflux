@@ -42,6 +42,8 @@ interface CandidateForm {
   weight: number;
   input_cost_per_million: number;
   output_cost_per_million: number;
+  cache_read_cost_per_million: number | null;
+  cache_write_cost_per_million: number | null;
   quality_score: number;
   cost_currency: string;
   context_window: number | null;
@@ -145,14 +147,20 @@ const candidateColumns = computed<DataTableColumns<Api.Management.ModelCandidate
   {
     title: $t('business.input-price-million'),
     key: 'input_cost_per_million',
-    width: 150,
-    render: row => `${row.input_cost_per_million} ${row.cost_currency}`
+    width: 175,
+    render: row =>
+      row.cache_read_cost_per_million != null
+        ? `${row.input_cost_per_million} ${row.cost_currency} (${$t('business.cache-read-short')}: ${row.cache_read_cost_per_million})`
+        : `${row.input_cost_per_million} ${row.cost_currency}`
   },
   {
     title: $t('business.output-price-million'),
     key: 'output_cost_per_million',
-    width: 150,
-    render: row => `${row.output_cost_per_million} ${row.cost_currency}`
+    width: 175,
+    render: row =>
+      row.cache_write_cost_per_million != null
+        ? `${row.output_cost_per_million} ${row.cost_currency} (${$t('business.cache-write-short')}: ${row.cache_write_cost_per_million})`
+        : `${row.output_cost_per_million} ${row.cost_currency}`
   },
   { title: $t('business.quality-score'), key: 'quality_score', width: 90 },
   {
@@ -280,11 +288,11 @@ const columns = computed<DataTableColumns<Api.Management.ModelService>>(() => [
   {
     title: $t('business.actions'),
     key: 'actions',
-    width: 210,
+    width: 220,
     // 操作列固定在右侧:列多于一屏宽度时,行内操作不用横向滚动也能点到。
     fixed: 'right',
     render: row => {
-      // 只读角色只能查看授权范围:授权接口本身允许 viewer 读取。
+      // 只读角色可查看授权范围:授权接口本身允许 viewer 读取。
       if (!canManage.value) {
         return h(
           NButton,
@@ -372,6 +380,8 @@ function makeCandidate(): CandidateForm {
     weight: 1,
     input_cost_per_million: 0,
     output_cost_per_million: 0,
+    cache_read_cost_per_million: null,
+    cache_write_cost_per_million: null,
     quality_score: 0.5,
     cost_currency: accountOptions.value[0]?.currency ?? 'USD',
     context_window: null,
@@ -415,6 +425,8 @@ async function openDiscoveredModels() {
         (accountOptions.value.find(item => item.value === accountID)?.currency ?? 'USD') === 'USD'
           ? (model?.output_cost_per_million ?? 0)
           : 0,
+      cache_read_cost_per_million: null,
+      cache_write_cost_per_million: null,
       quality_score: 0.5,
       cost_currency: accountOptions.value.find(item => item.value === accountID)?.currency ?? 'USD',
       context_window: null,
@@ -440,6 +452,8 @@ function openEdit(row: Api.Management.ModelService) {
     weight: item.weight,
     input_cost_per_million: item.input_cost_per_million,
     output_cost_per_million: item.output_cost_per_million,
+    cache_read_cost_per_million: item.cache_read_cost_per_million ?? null,
+    cache_write_cost_per_million: item.cache_write_cost_per_million ?? null,
     quality_score: item.quality_score,
     cost_currency: item.cost_currency,
     context_window: item.context_window ?? null,
@@ -470,6 +484,8 @@ function toCandidateParams(candidates: CandidateForm[]) {
     weight: item.weight,
     input_cost_per_million: item.input_cost_per_million,
     output_cost_per_million: item.output_cost_per_million,
+    cache_read_cost_per_million: item.cache_read_cost_per_million,
+    cache_write_cost_per_million: item.cache_write_cost_per_million,
     quality_score: item.quality_score,
     cost_currency: item.cost_currency,
     context_window: item.context_window,

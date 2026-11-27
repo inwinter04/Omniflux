@@ -50,7 +50,7 @@ func (d ServerDeps) ProviderModels(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusInternalServerError, "PROVIDER_MODELS_FAILED", "failed-to-build-provider-proxy", nil)
 		return
 	}
-	modelsURL, headers, err := governance.ProviderProbeRequest(access.Provider, access.BaseURL, access.APIKey)
+	modelsURL, headers, err := governance.ProviderProbeRequestForProtocol(access.Provider, access.APIProtocol, access.BaseURL, access.APIKey)
 	if err != nil {
 		adminError(w, http.StatusBadRequest, "PROVIDER_MODELS_UNSUPPORTED", "models-cannot-be-fetched-automatically-for", nil)
 		return

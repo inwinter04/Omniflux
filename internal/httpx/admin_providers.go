@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,16 +26,11 @@ var allowedProviders = map[string]bool{
 	"vertex": true, "bedrock": true, "openai_compatible": true,
 }
 
-// v1PathProviders 标记 Bifrost 会在 base_url 后拼接 /v1/... 路径的 provider;
-// 这类 provider 的 base_url 以 /v1 结尾时会拼出 /v1/v1/... 必然 404。
-var v1PathProviders = map[string]bool{
-	"openai": true, "openai_compatible": true, "anthropic": true,
-}
-
 type providerAccountResponse struct {
 	// 综合主动可用性探测与近 24 小时被动健康统计。
 	ID                    string                       `json:"id"`
 	Provider              string                       `json:"provider"`
+	APIProtocol           string                       `json:"api_protocol"`
 	Name                  string                       `json:"name"`
 	Region                *string                      `json:"region"`
 	BaseURL               *string                      `json:"base_url"`
@@ -68,11 +62,16 @@ type providerAccountResponse struct {
 
 type createProviderAccountRequest struct {
 	Provider        string  `json:"provider"`
+	APIProtocol     string  `json:"api_protocol"`
 	Name            string  `json:"name"`
 	Region          *string `json:"region"`
 	BaseURL         *string `json:"base_url"`
 	BillingCurrency string  `json:"billing_currency"`
 	APIKey          string  `json:"api_key"`
+}
+
+func sharesEngineProviderConfig(provider string) bool {
+	return provider == "azure_openai" || provider == "vertex" || provider == "bedrock"
 }
 
 // ProviderAccounts 返回当前组织的 供应商账号列表(不含凭据)。
@@ -87,7 +86,7 @@ func (d ServerDeps) ProviderAccounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := d.Pool.Query(r.Context(), `
-		SELECT a.id, a.provider, a.name, a.region, a.base_url, a.billing_currency, a.status, a.created_at, a.updated_at,
+		SELECT a.id, a.provider, a.api_protocol, a.name, a.region, a.base_url, a.billing_currency, a.status, a.created_at, a.updated_at,
 		       COALESCE(hs.status, 'unknown'), COALESCE(hs.reason, ''), hs.http_status, hs.latency_ms,
 		       COALESCE(hs.error_detail, ''), hs.last_checked_at, hs.last_healthy_at
 		FROM provider_accounts a
@@ -105,7 +104,7 @@ func (d ServerDeps) ProviderAccounts(w http.ResponseWriter, r *http.Request) {
 		var item providerAccountResponse
 		var id uuid.UUID
 		if err := rows.Scan(
-			&id, &item.Provider, &item.Name, &item.Region, &item.BaseURL, &item.BillingCurrency, &item.Status, &item.CreatedAt, &item.UpdatedAt,
+			&id, &item.Provider, &item.APIProtocol, &item.Name, &item.Region, &item.BaseURL, &item.BillingCurrency, &item.Status, &item.CreatedAt, &item.UpdatedAt,
 			&item.ActiveCheckStatus, &item.ActiveCheckReason, &item.ActiveCheckStatusCode, &item.ActiveCheckLatencyMS,
 			&item.ActiveCheckError, &item.LastCheckedAt, &item.LastHealthyAt,
 		); err != nil {
@@ -700,6 +699,14 @@ func (d ServerDeps) CreateProviderAccount(w http.ResponseWriter, r *http.Request
 		adminError(w, http.StatusBadRequest, "PROVIDER_UNSUPPORTED", "unsupported-provider-type", nil)
 		return
 	}
+	body.APIProtocol = strings.TrimSpace(body.APIProtocol)
+	if body.APIProtocol == "" {
+		body.APIProtocol = bifrostx.DefaultProtocolForProvider(body.Provider)
+	}
+	if !bifrostx.IsProtocolAllowedForProvider(body.Provider, body.APIProtocol) {
+		adminError(w, http.StatusBadRequest, "PROVIDER_PROTOCOL_UNSUPPORTED", "provider-protocol-unsupported", nil)
+		return
+	}
 	// 厂商账号的接口地址由服务端目录内置;仅本地/自部署类厂商允许自定义 base_url。
 	if vendor := bifrostx.VendorByID(body.Provider); vendor != nil {
 		if body.BaseURL != nil && strings.TrimSpace(*body.BaseURL) != "" && !vendor.EditableURL {
@@ -716,14 +723,7 @@ func (d ServerDeps) CreateProviderAccount(w http.ResponseWriter, r *http.Request
 		adminError(w, http.StatusBadRequest, "PROVIDER_KEY_REQUIRED", "enter-an-api-key", nil)
 		return
 	}
-	// Bifrost 会在 base_url 后自动拼接 /v1/... 路径;以 /v1 结尾会拼出 /v1/v1/... 必然 404。
-	if v1PathProviders[body.Provider] && baseURLHasV1Suffix(body.BaseURL) {
-		adminError(w, http.StatusBadRequest, "PROVIDER_BASE_URL_INVALID",
-			"provider-base-url-v1-suffix", nil)
-		return
-	}
-	// 引擎要求同一 provider 的 base URL 不能冲突,创建前提前拦截并说明原因。
-	if body.BaseURL != nil && *body.BaseURL != "" {
+	if sharesEngineProviderConfig(body.Provider) && body.BaseURL != nil && *body.BaseURL != "" {
 		var count int
 		if err := d.Pool.QueryRow(r.Context(), `
 			SELECT count(*) FROM provider_accounts
@@ -751,9 +751,9 @@ func (d ServerDeps) CreateProviderAccount(w http.ResponseWriter, r *http.Request
 	accountID := uuid.New()
 	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(r.Context(), `
-			INSERT INTO provider_accounts(id, organization_id, provider, name, region, base_url, billing_currency)
-			VALUES ($1,$2,$3,$4,$5,$6,$7)
-		`, accountID, principal.OrganizationID, body.Provider, body.Name, body.Region, body.BaseURL, billingCurrency); err != nil {
+			INSERT INTO provider_accounts(id, organization_id, provider, api_protocol, name, region, base_url, billing_currency)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		`, accountID, principal.OrganizationID, body.Provider, body.APIProtocol, body.Name, body.Region, body.BaseURL, billingCurrency); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(r.Context(), `
@@ -765,7 +765,9 @@ func (d ServerDeps) CreateProviderAccount(w http.ResponseWriter, r *http.Request
 		_, err := tx.Exec(r.Context(), `
 			INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, after_state)
 			VALUES ($1,$2,'user','provider_account.created','provider_account',$3,$4)
-		`, principal.OrganizationID, principal.UserID, accountID.String(), auditJSON(map[string]any{"provider": body.Provider, "name": body.Name}))
+		`, principal.OrganizationID, principal.UserID, accountID.String(), auditJSON(map[string]any{
+			"provider": body.Provider, "api_protocol": body.APIProtocol, "name": body.Name,
+		}))
 		return err
 	})
 	if err != nil {
@@ -869,6 +871,7 @@ func auditJSON(value map[string]any) []byte {
 }
 
 type updateProviderAccountRequest struct {
+	APIProtocol     string  `json:"api_protocol"`
 	Name            string  `json:"name"`
 	Region          *string `json:"region"`
 	BaseURL         *string `json:"base_url"`
@@ -876,7 +879,7 @@ type updateProviderAccountRequest struct {
 	APIKey          string  `json:"api_key"`
 }
 
-// UpdateProviderAccount 更新账号名称、区域、Base URL 与结算币种;API Key 留空表示不更换。
+// UpdateProviderAccount 更新账号名称、接入协议、区域、Base URL 与结算币种;API Key 留空表示不更换。
 func (d ServerDeps) UpdateProviderAccount(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
 	if !ok || d.requirePermission(w, principal, auth.PermProviderManage) != nil {
@@ -896,14 +899,36 @@ func (d ServerDeps) UpdateProviderAccount(w http.ResponseWriter, r *http.Request
 		adminError(w, http.StatusBadRequest, "PROVIDER_NAME_REQUIRED", "enter-an-account-name", nil)
 		return
 	}
-	// base_url 更新沿用创建时的引擎约束:同 provider 下不允许出现不同 base URL。
-	if body.BaseURL != nil && *body.BaseURL != "" {
+	var oldName, provider, oldProtocol, oldBillingCurrency string
+	var oldRegion, oldBaseURL *string
+	err = d.Pool.QueryRow(r.Context(), `
+		SELECT name, provider, api_protocol, billing_currency, region, base_url
+		FROM provider_accounts
+		WHERE id = $1 AND organization_id = $2
+	`, accountID, principal.OrganizationID).Scan(&oldName, &provider, &oldProtocol, &oldBillingCurrency, &oldRegion, &oldBaseURL)
+	if errors.Is(err, pgx.ErrNoRows) {
+		adminError(w, http.StatusNotFound, "PROVIDER_NOT_FOUND", "provider-account-does-not-exist-or", nil)
+		return
+	}
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "PROVIDER_UPDATE_FAILED", "failed-to-update-the-provider-account", nil)
+		return
+	}
+	newProtocol := strings.TrimSpace(body.APIProtocol)
+	if newProtocol == "" {
+		newProtocol = oldProtocol
+	}
+	if !bifrostx.IsProtocolAllowedForProvider(provider, newProtocol) {
+		adminError(w, http.StatusBadRequest, "PROVIDER_PROTOCOL_UNSUPPORTED", "provider-protocol-unsupported", nil)
+		return
+	}
+	if sharesEngineProviderConfig(provider) && body.BaseURL != nil && *body.BaseURL != "" {
 		var count int
 		if err := d.Pool.QueryRow(r.Context(), `
 			SELECT count(*) FROM provider_accounts
-			WHERE organization_id = $1 AND provider = (SELECT provider FROM provider_accounts WHERE id = $2)
-			  AND id <> $2 AND base_url IS NOT NULL AND base_url <> $3
-		`, principal.OrganizationID, accountID, *body.BaseURL).Scan(&count); err != nil {
+			WHERE organization_id = $1 AND provider = $2
+			  AND id <> $3 AND base_url IS NOT NULL AND base_url <> $4
+		`, principal.OrganizationID, provider, accountID, *body.BaseURL).Scan(&count); err != nil {
 			adminError(w, http.StatusInternalServerError, "PROVIDER_UPDATE_FAILED", "failed-to-update-the-provider-account", nil)
 			return
 		}
@@ -913,32 +938,11 @@ func (d ServerDeps) UpdateProviderAccount(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
-	var oldName, provider, oldBillingCurrency string
-	var oldRegion, oldBaseURL *string
-	err = d.Pool.QueryRow(r.Context(), `
-		SELECT name, provider, billing_currency, region, base_url
-		FROM provider_accounts
-		WHERE id = $1 AND organization_id = $2
-	`, accountID, principal.OrganizationID).Scan(&oldName, &provider, &oldBillingCurrency, &oldRegion, &oldBaseURL)
-	if errors.Is(err, pgx.ErrNoRows) {
-		adminError(w, http.StatusNotFound, "PROVIDER_NOT_FOUND", "provider-account-does-not-exist-or", nil)
-		return
-	}
-	if err != nil {
-		adminError(w, http.StatusInternalServerError, "PROVIDER_UPDATE_FAILED", "failed-to-update-the-provider-account", nil)
-		return
-	}
 	// 厂商账号的接口地址由服务端目录内置,不可修改。
 	if vendor := bifrostx.VendorByID(provider); vendor != nil && !vendor.EditableURL &&
 		body.BaseURL != nil && strings.TrimSpace(*body.BaseURL) != "" {
 		adminError(w, http.StatusBadRequest, "PROVIDER_BASE_URL_NOT_ALLOWED",
 			"provider-base-url-not-editable", nil)
-		return
-	}
-	// base_url 更新沿用创建时的约束:openai/anthropic 类 provider 不允许 /v1 结尾。
-	if v1PathProviders[provider] && baseURLHasV1Suffix(body.BaseURL) {
-		adminError(w, http.StatusBadRequest, "PROVIDER_BASE_URL_INVALID",
-			"provider-base-url-v1-suffix", nil)
 		return
 	}
 	billingCurrency, err := normalizeCurrency(body.BillingCurrency)
@@ -958,9 +962,9 @@ func (d ServerDeps) UpdateProviderAccount(w http.ResponseWriter, r *http.Request
 	}
 	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(r.Context(), `
-			UPDATE provider_accounts SET name = $3, region = $4, base_url = COALESCE($5, base_url), billing_currency = $6, updated_at = now()
+			UPDATE provider_accounts SET name = $3, region = $4, base_url = COALESCE($5, base_url), billing_currency = $6, api_protocol = $7, updated_at = now()
 			WHERE id = $1 AND organization_id = $2
-		`, accountID, principal.OrganizationID, body.Name, body.Region, body.BaseURL, billingCurrency); err != nil {
+		`, accountID, principal.OrganizationID, body.Name, body.Region, body.BaseURL, billingCurrency, newProtocol); err != nil {
 			return err
 		}
 		if rotateCredential {
@@ -981,9 +985,9 @@ func (d ServerDeps) UpdateProviderAccount(w http.ResponseWriter, r *http.Request
 			INSERT INTO audit_events(organization_id, actor_user_id, actor_type, action, resource_type, resource_id, before_state, after_state)
 			VALUES ($1,$2,'user','provider_account.updated','provider_account',$3,$4,$5)
 		`, principal.OrganizationID, principal.UserID, accountID.String(),
-			auditJSON(map[string]any{"name": oldName, "region": oldRegion, "base_url": oldBaseURL,
+			auditJSON(map[string]any{"name": oldName, "api_protocol": oldProtocol, "region": oldRegion, "base_url": oldBaseURL,
 				"billing_currency": oldBillingCurrency, "credentials_rotated": false}),
-			auditJSON(map[string]any{"name": body.Name, "region": body.Region, "base_url": body.BaseURL,
+			auditJSON(map[string]any{"name": body.Name, "api_protocol": newProtocol, "region": body.Region, "base_url": body.BaseURL,
 				"billing_currency":    billingCurrency,
 				"credentials_rotated": rotateCredential}))
 		return err
@@ -1016,11 +1020,12 @@ type providerTestResult struct {
 }
 
 type providerAccess struct {
-	Provider  string
-	BaseURL   *string
-	APIKey    string
-	ProxyType string
-	ProxyURL  string
+	Provider    string
+	APIProtocol string
+	BaseURL     *string
+	APIKey      string
+	ProxyType   string
+	ProxyURL    string
 }
 
 func (d ServerDeps) loadProviderAccess(ctx context.Context, organizationID, accountID uuid.UUID) (providerAccess, error) {
@@ -1028,10 +1033,10 @@ func (d ServerDeps) loadProviderAccess(ctx context.Context, organizationID, acco
 	var ciphertext []byte
 	var keyID string
 	err := d.Pool.QueryRow(ctx, `
-		SELECT a.provider, a.base_url, c.ciphertext, c.key_id
+		SELECT a.provider, a.api_protocol, a.base_url, c.ciphertext, c.key_id
 		FROM provider_accounts a JOIN provider_credentials c ON c.provider_account_id = a.id
 		WHERE a.id = $1 AND a.organization_id = $2
-	`, accountID, organizationID).Scan(&access.Provider, &access.BaseURL, &ciphertext, &keyID)
+	`, accountID, organizationID).Scan(&access.Provider, &access.APIProtocol, &access.BaseURL, &ciphertext, &keyID)
 	if err != nil {
 		return access, err
 	}
@@ -1096,18 +1101,4 @@ func (d ServerDeps) TestProviderAccount(w http.ResponseWriter, r *http.Request) 
 		Detail:     res.Detail,
 		CheckedAt:  &checkedAt,
 	})
-}
-
-// baseURLHasV1Suffix 判断 base_url 的路径是否以 /v1 结尾。
-// Bifrost 会在 openai/anthropic 类 provider 的 base_url 后拼接 /v1/... 路径,
-// 以 /v1 结尾的地址会拼出 /v1/v1/... 必然 404;URL 解析失败时不判定,由实际调用暴露问题。
-func baseURLHasV1Suffix(baseURL *string) bool {
-	if baseURL == nil {
-		return false
-	}
-	parsed, err := url.Parse(strings.TrimRight(*baseURL, "/"))
-	if err != nil {
-		return false
-	}
-	return parsed.Path == "/v1" || strings.HasSuffix(parsed.Path, "/v1")
 }

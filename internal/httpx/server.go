@@ -98,7 +98,17 @@ func New(deps ServerDeps) http.Handler {
 		r.Get("/agents/{name}", plane.GetAgent)
 		r.Post("/agents/{name}/chat/completions", plane.ChatAgent)
 		r.Post("/chat/completions", plane.ChatCompletions)
+		r.Post("/responses", plane.Responses)
+		r.Post("/responses/compact", plane.ResponsesCompact)
+		r.Post("/messages", plane.AnthropicMessages)
+		r.Post("/messages/count_tokens", plane.AnthropicCountTokens)
 		r.Post("/embeddings", plane.Embeddings)
+	})
+	r.Route("/v1beta", func(r chi.Router) {
+		r.Use(plane.RequireAPIKey)
+		r.Use(plane.RateLimit)
+		r.Get("/models", plane.GeminiListModels)
+		r.Post("/models/*", plane.GeminiModelAction)
 	})
 
 	// 管理 API:服务端会话认证,组织隔离。
@@ -123,6 +133,7 @@ func New(deps ServerDeps) http.Handler {
 			r.Get("/dashboard", deps.Dashboard)
 			r.Get("/system/settings", deps.SystemSettings)
 			r.Patch("/system/settings", deps.UpdateSystemSettings)
+			r.Get("/system/gateway-info", deps.GatewayInfo)
 			r.Get("/system/email/settings", deps.EmailSettings)
 			r.Patch("/system/email/settings", deps.UpdateEmailSettings)
 			r.Post("/system/email/test", deps.TestEmailSettings)

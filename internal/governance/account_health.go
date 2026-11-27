@@ -209,14 +209,15 @@ func (m *Manager) ProbeAccount(ctx context.Context, organizationID, accountID uu
 
 func (m *Manager) probeAccountWithSettings(ctx context.Context, organizationID, accountID uuid.UUID, trigger string, settings ProviderHealthSettings) (AccountProbeResult, error) {
 	var provider string
+	var apiProtocol string
 	var baseURL *string
 	var ciphertext []byte
 	err := m.pool.QueryRow(ctx, `
-		SELECT a.provider, a.base_url, c.ciphertext
+		SELECT a.provider, a.api_protocol, a.base_url, c.ciphertext
 		FROM provider_accounts a
 		JOIN provider_credentials c ON c.provider_account_id = a.id
 		WHERE a.id = $1 AND a.organization_id = $2
-	`, accountID, organizationID).Scan(&provider, &baseURL, &ciphertext)
+	`, accountID, organizationID).Scan(&provider, &apiProtocol, &baseURL, &ciphertext)
 	if err != nil {
 		return AccountProbeResult{}, err
 	}
@@ -247,7 +248,7 @@ func (m *Manager) probeAccountWithSettings(ctx context.Context, organizationID, 
 	}
 
 	now := time.Now()
-	testURL, headers, probeReqErr := ProviderProbeRequest(provider, baseURL, apiKey)
+	testURL, headers, probeReqErr := ProviderProbeRequestForProtocol(provider, apiProtocol, baseURL, apiKey)
 	if probeReqErr != nil {
 		if err := m.persistUnsupportedAccountState(ctx, accountID, now); err != nil {
 			return AccountProbeResult{}, err

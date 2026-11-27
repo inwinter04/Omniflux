@@ -14,6 +14,7 @@ import {
 } from '@/service/api';
 import { $t } from '@/locales';
 import { usePermission } from '@/hooks/common/permission';
+import ClientSetupModal from './modules/client-setup-modal.vue';
 
 defineOptions({
   name: 'AccessApiKeys'
@@ -67,6 +68,36 @@ const formRules = computed<FormRules>(() => ({
 }));
 
 const createdKey = ref('');
+const createdKeyName = ref('');
+const showQuickConnect = ref(false);
+const quickConnectKey = ref('');
+const quickConnectKeyName = ref('');
+
+function openQuickConnect(plaintext = '', keyName = '') {
+  quickConnectKey.value = plaintext;
+  quickConnectKeyName.value = keyName;
+  showQuickConnect.value = true;
+}
+
+function handleQuickConnectShowChange(visible: boolean) {
+  showQuickConnect.value = visible;
+  if (!visible) {
+    quickConnectKey.value = '';
+    quickConnectKeyName.value = '';
+  }
+}
+
+function closeCreatedKeyModal() {
+  createdKey.value = '';
+  createdKeyName.value = '';
+}
+
+function openQuickConnectFromCreatedKey() {
+  const key = createdKey.value;
+  const keyName = createdKeyName.value;
+  closeCreatedKeyModal();
+  openQuickConnect(key, keyName);
+}
 
 const projectOptions = computed(() => projects.value.map(item => ({ label: item.name, value: item.id })));
 const applicationOptions = computed(() =>
@@ -212,12 +243,17 @@ const columns = computed<DataTableColumns<Api.Management.ApiKey>>(() => [
   {
     title: $t('business.actions'),
     key: 'actions',
-    width: 220,
+    width: 290,
     // 操作列固定在右侧:列多于一屏宽度时,行内操作不用横向滚动也能点到。
     fixed: 'right',
     render(row) {
-      // 详情对所有角色开放;限流、启停、删除只给可管理角色。
+      // 详情与接入配置对所有角色开放;限流、启停、删除只给可管理角色。
       const buttons: ReturnType<typeof h>[] = [
+        h(
+          NButton,
+          { size: 'small', quaternary: true, type: 'primary', onClick: () => openQuickConnect('', row.name) },
+          { default: () => $t('business.quick-connect') }
+        ),
         h(
           NButton,
           { size: 'small', quaternary: true, type: 'primary', onClick: () => openDetail(row) },
@@ -328,6 +364,7 @@ async function handleCreate() {
     });
     if (!error && data) {
       createdKey.value = data.key;
+      createdKeyName.value = formModel.name.trim();
       showCreate.value = false;
       await loadData();
     }
@@ -387,7 +424,7 @@ onMounted(async () => {
           </NButton>
         </NSpace>
       </template>
-      <NDataTable :columns="columns" :data="list" :loading="loading" :bordered="false" :scroll-x="1100" />
+      <NDataTable :columns="columns" :data="list" :loading="loading" :bordered="false" :scroll-x="1200" />
     </NCard>
 
     <NModal v-model:show="showCreate" preset="card" :title="$t('business.create-api-key')" class="w-520px">
@@ -449,11 +486,20 @@ onMounted(async () => {
       <NInput :value="createdKey" readonly type="textarea" :autosize="{ minRows: 3 }" />
       <template #footer>
         <NSpace justify="end">
+          <NButton secondary type="primary" @click="openQuickConnectFromCreatedKey">
+            {{ $t('business.quick-connect') }}
+          </NButton>
           <NButton @click="handleCopyKey">{{ $t('business.copy') }}</NButton>
-          <NButton type="primary" @click="createdKey = ''">{{ $t('business.i-have-saved-it') }}</NButton>
+          <NButton type="primary" @click="closeCreatedKeyModal">{{ $t('business.i-have-saved-it') }}</NButton>
         </NSpace>
       </template>
     </NModal>
+    <ClientSetupModal
+      :show="showQuickConnect"
+      :api-key="quickConnectKey"
+      :key-name="quickConnectKeyName"
+      @update:show="handleQuickConnectShowChange"
+    />
     <NModal v-model:show="showRateLimit" preset="card" :title="$t('business.adjust-rate-limit')" class="w-440px">
       <NForm ref="rateLimitFormRef" :model="rateLimitModel" label-placement="top">
         <NFormItem :label="$t('business.name')">

@@ -99,34 +99,57 @@ func ClassifyTransportError(err error, usedProxy bool) (reason string, detail st
 	return "network_error", detail
 }
 
-// ProviderProbeRequest builds a lightweight zero-token probe URL and headers for a provider account.
+// ProviderProbeRequest builds a lightweight zero-token probe URL and headers using the provider default protocol.
 func ProviderProbeRequest(provider string, baseURL *string, apiKey string) (string, map[string]string, error) {
-	switch provider {
-	case "openai", "openai_compatible":
-		base := "https://api.openai.com"
-		if baseURL != nil && *baseURL != "" {
-			base = strings.TrimRight(*baseURL, "/")
+	return ProviderProbeRequestForProtocol(provider, "", baseURL, apiKey)
+}
+
+// ProviderProbeRequestForProtocol builds a lightweight zero-token probe URL and headers
+// according to the provider account's effective upstream api_protocol and baseURL.
+func ProviderProbeRequestForProtocol(provider, apiProtocol string, baseURL *string, apiKey string) (string, map[string]string, error) {
+	effectiveProto := bifrostx.EffectiveProtocol(provider, apiProtocol)
+	switch effectiveProto {
+	case bifrostx.ProtocolAzureOpenAI, bifrostx.ProtocolBedrock, bifrostx.ProtocolVertex:
+		return "", nil, fmt.Errorf("provider %s does not support online probe", provider)
+	case bifrostx.ProtocolGeminiNative:
+		base := "https://generativelanguage.googleapis.com/v1beta"
+		if baseURL != nil && strings.TrimSpace(*baseURL) != "" {
+			base = strings.TrimRight(strings.TrimSpace(*baseURL), "/")
 		}
-		return base + "/v1/models", map[string]string{"Authorization": "Bearer " + apiKey}, nil
-	case "anthropic":
-		base := "https://api.anthropic.com"
-		if baseURL != nil && *baseURL != "" {
-			base = strings.TrimRight(*baseURL, "/")
-		}
-		return base + "/v1/models", map[string]string{
+		return base + "/models", map[string]string{"x-goog-api-key": apiKey}, nil
+	case bifrostx.ProtocolAnthropicMessages:
+		headers := map[string]string{
 			"x-api-key":         apiKey,
 			"anthropic-version": "2023-06-01",
-		}, nil
-	case "gemini":
-		return "https://generativelanguage.googleapis.com/v1beta/models", map[string]string{"x-goog-api-key": apiKey}, nil
-	default:
+		}
 		if vendor := bifrostx.VendorByID(provider); vendor != nil {
 			base := vendor.BaseURL
-			if baseURL != nil && *baseURL != "" {
-				base = strings.TrimRight(*baseURL, "/")
+			if baseURL != nil && strings.TrimSpace(*baseURL) != "" {
+				base = strings.TrimRight(strings.TrimSpace(*baseURL), "/")
+				return strings.TrimSuffix(base, "/v1") + "/v1/models", headers, nil
 			}
-			return base + vendor.ModelsPath(), map[string]string{"Authorization": "Bearer " + apiKey}, nil
+			return strings.TrimRight(base, "/") + vendor.ModelsPath(), headers, nil
 		}
+		base := "https://api.anthropic.com"
+		if baseURL != nil && strings.TrimSpace(*baseURL) != "" {
+			base = strings.TrimSuffix(strings.TrimRight(strings.TrimSpace(*baseURL), "/"), "/v1")
+		}
+		return base + "/v1/models", headers, nil
+	case bifrostx.ProtocolOpenAIChat, bifrostx.ProtocolOpenAIResponses:
+		headers := map[string]string{"Authorization": "Bearer " + apiKey}
+		if vendor := bifrostx.VendorByID(provider); vendor != nil {
+			base := vendor.BaseURL
+			if baseURL != nil && strings.TrimSpace(*baseURL) != "" {
+				base = strings.TrimRight(strings.TrimSpace(*baseURL), "/")
+			}
+			return strings.TrimRight(base, "/") + vendor.ModelsPath(), headers, nil
+		}
+		base := "https://api.openai.com"
+		if baseURL != nil && strings.TrimSpace(*baseURL) != "" {
+			base = strings.TrimSuffix(strings.TrimRight(strings.TrimSpace(*baseURL), "/"), "/v1")
+		}
+		return base + "/v1/models", headers, nil
+	default:
 		return "", nil, fmt.Errorf("provider %s does not support online probe", provider)
 	}
 }

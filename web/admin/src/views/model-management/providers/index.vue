@@ -30,6 +30,7 @@ import {
 import type { DataTableColumns, DropdownOption, FormInst, FormRules, SelectGroupOption } from 'naive-ui';
 import AvailabilityBar from '@/components/common/availability-bar.vue';
 import {
+  apiProtocolText,
   formatTime,
   healthStatusText,
   healthSummary,
@@ -112,6 +113,7 @@ const editFormRef = ref<FormInst | null>(null);
 const selectedFamilyID = ref('');
 const formModel = reactive({
   provider: '',
+  api_protocol: 'openai_chat',
   name: '',
   region: '',
   base_url: '',
@@ -121,6 +123,7 @@ const formModel = reactive({
 const editModel = reactive({
   id: '',
   provider: '',
+  api_protocol: 'openai_chat',
   name: '',
   region: '',
   base_url: '',
@@ -186,6 +189,31 @@ function formatAvail(val: number | null) {
 
 const selectedVendor = computed(() => findVendor(formModel.provider));
 const editVendor = computed(() => findVendor(editModel.provider));
+const officialProviderProtocols: Record<string, string[]> = {
+  openai: ['openai_responses', 'openai_chat'],
+  anthropic: ['anthropic_messages'],
+  gemini: ['gemini_native'],
+  azure_openai: ['azure_openai'],
+  bedrock: ['bedrock'],
+  vertex: ['vertex'],
+  openai_compatible: ['openai_chat', 'openai_responses', 'anthropic_messages', 'gemini_native']
+};
+
+function allowedProtocolsForProvider(provider: string) {
+  if (!provider) return ['openai_chat', 'openai_responses', 'anthropic_messages', 'gemini_native'];
+  return officialProviderProtocols[provider] ?? ['openai_chat', 'openai_responses', 'anthropic_messages', 'gemini_native'];
+}
+
+function protocolOptionsForProvider(provider: string) {
+  return allowedProtocolsForProvider(provider).map(proto => ({
+    label: apiProtocolText(proto),
+    value: proto
+  }));
+}
+
+const createProtocolOptions = computed(() => protocolOptionsForProvider(formModel.provider));
+const editProtocolOptions = computed(() => protocolOptionsForProvider(editModel.provider));
+
 const versionOptions = computed(() =>
   catalogEntries.value
     .filter(entry => (entry.family_id || entry.id) === selectedFamilyID.value)
@@ -208,6 +236,9 @@ function applyVendor(value: string, resetName = false) {
   const vendor = findVendor(value);
   if (!vendor) return;
   formModel.provider = value;
+  const allowed = allowedProtocolsForProvider(value);
+  formModel.api_protocol =
+    vendor.default_protocol && allowed.includes(vendor.default_protocol) ? vendor.default_protocol : (allowed[0] ?? 'openai_chat');
   selectedFamilyID.value = vendor.family_id || vendor.id;
   formModel.base_url = vendor.editable_url ? vendor.base_url : '';
   if (resetName || !formModel.name) formModel.name = providerFamilyLabel(vendor);
@@ -307,6 +338,12 @@ const columns = computed<DataTableColumns<Api.Management.ProviderAccount>>(() =>
         h('span', { class: 'font-medium' }, row.name),
         h('span', { class: 'text-12px text-#6b7280' }, providerLabel(row.provider))
       ])
+  },
+  {
+    title: $t('business.protocol'),
+    key: 'api_protocol',
+    width: 160,
+    render: row => h(NTag, { size: 'small', type: 'info', bordered: false }, { default: () => apiProtocolText(row.api_protocol) })
   },
   {
     title: $t('business.status-health'),
@@ -539,6 +576,7 @@ function openCreate() {
   selectedFamilyID.value = '';
   Object.assign(formModel, {
     provider: '',
+    api_protocol: 'openai_chat',
     name: '',
     region: '',
     base_url: '',
@@ -549,9 +587,11 @@ function openCreate() {
 }
 
 function openEdit(row: Api.Management.ProviderAccount) {
+  const allowed = allowedProtocolsForProvider(row.provider);
   Object.assign(editModel, {
     id: row.id,
     provider: row.provider,
+    api_protocol: row.api_protocol || allowed[0] || 'openai_chat',
     name: row.name,
     region: row.region ?? '',
     base_url: row.base_url ?? findVendor(row.provider)?.base_url ?? '',
@@ -567,6 +607,7 @@ async function handleCreate() {
   try {
     const { data, error } = await fetchCreateProviderAccount({
       provider: formModel.provider,
+      api_protocol: formModel.api_protocol,
       name: formModel.name.trim(),
       region: formModel.region.trim() || undefined,
       base_url: selectedVendor.value?.editable_url ? formModel.base_url.trim() || undefined : undefined,
@@ -590,6 +631,7 @@ async function handleUpdate() {
   try {
     const { error } = await fetchUpdateProviderAccount(editModel.id, {
       name: editModel.name.trim(),
+      api_protocol: editModel.api_protocol,
       region: editModel.region.trim() || undefined,
       base_url: editVendor.value?.editable_url ? editModel.base_url.trim() || undefined : undefined,
       billing_currency: editModel.billing_currency,
@@ -933,7 +975,7 @@ onMounted(async () => {
         :data="filteredAccounts"
         :loading="loading"
         :bordered="false"
-        :scroll-x="1400"
+        :scroll-x="1560"
         :row-key="row => row.id"
       />
     </NCard>
@@ -952,6 +994,16 @@ onMounted(async () => {
         </NFormItem>
         <NFormItem v-if="versionOptions.length > 1" :label="$t('business.service-version')">
           <NSelect :value="formModel.provider" :options="versionOptions" @update:value="value => applyVendor(value)" />
+        </NFormItem>
+        <NFormItem v-if="selectedVendor" :label="$t('business.api-protocol')">
+          <div class="w-full">
+            <NSelect
+              v-model:value="formModel.api_protocol"
+              :options="createProtocolOptions"
+              :disabled="createProtocolOptions.length <= 1"
+            />
+            <NText depth="3" class="mt-4px block text-12px">{{ $t('business.api-protocol-hint') }}</NText>
+          </div>
         </NFormItem>
         <NFormItem v-if="selectedVendor?.website_url" :label="$t('business.website')">
           <NButton text type="primary" @click="openWebsite(selectedVendor)">{{ selectedVendor.website_url }} ↗</NButton>
@@ -1014,6 +1066,16 @@ onMounted(async () => {
         </NFormItem>
         <NFormItem :label="$t('business.account-name')" path="name">
           <NInput v-model:value="editModel.name" />
+        </NFormItem>
+        <NFormItem :label="$t('business.api-protocol')">
+          <div class="w-full">
+            <NSelect
+              v-model:value="editModel.api_protocol"
+              :options="editProtocolOptions"
+              :disabled="editProtocolOptions.length <= 1"
+            />
+            <NText depth="3" class="mt-4px block text-12px">{{ $t('business.api-protocol-hint') }}</NText>
+          </div>
         </NFormItem>
         <NFormItem :label="$t('business.region')">
           <NInput v-model:value="editModel.region" :placeholder="$t('business.optional')" />

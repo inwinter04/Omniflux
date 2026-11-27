@@ -61,7 +61,7 @@ func (l *rateLimiter) middleware(next http.Handler) http.Handler {
 		w.Header().Set("X-RateLimit-Limit", strconv.Itoa(effective))
 		w.Header().Set("X-RateLimit-Remaining", strconv.FormatInt(max64(int64(effective)-count, 0), 10))
 		if count > int64(effective) {
-			apiError(w, http.StatusTooManyRequests, "rate_limit_exceeded",
+			writeProtocolError(w, r, http.StatusTooManyRequests, "rate_limit_exceeded",
 				fmt.Sprintf("Rate limit exceeded (%d requests per minute). Please retry later.", effective),
 				apiErrorOptions{Reason: "rate_limit_exceeded", Params: map[string]any{"limit": effective}})
 			return

@@ -23,7 +23,52 @@ func (d ServerDeps) ProviderCatalog(w http.ResponseWriter, r *http.Request) {
 		bifrostx.GroupThirdParty, bifrostx.GroupLocal,
 	}
 	entries := bifrostx.VendorCatalog()
-	byGroup := map[string][]bifrostx.VendorCatalogEntry{}
+	byGroup := map[string][]bifrostx.VendorCatalogEntry{
+		string(bifrostx.GroupGlobal): {
+			{
+				ID:              "openai",
+				Name:            "OpenAI",
+				Group:           string(bifrostx.GroupGlobal),
+				FamilyID:        "openai",
+				VersionKind:     "standard",
+				RegionKind:      "global",
+				DefaultProtocol: bifrostx.ProtocolOpenAIResponses,
+				BaseURL:         "https://api.openai.com",
+				APIBaseURL:      "https://api.openai.com/v1",
+				WebsiteURL:      "https://platform.openai.com",
+				APIKeyURL:       "https://platform.openai.com/api-keys",
+				EditableURL:     true,
+			},
+			{
+				ID:              "anthropic",
+				Name:            "Anthropic",
+				Group:           string(bifrostx.GroupGlobal),
+				FamilyID:        "anthropic",
+				VersionKind:     "standard",
+				RegionKind:      "global",
+				DefaultProtocol: bifrostx.ProtocolAnthropicMessages,
+				BaseURL:         "https://api.anthropic.com",
+				APIBaseURL:      "https://api.anthropic.com/v1",
+				WebsiteURL:      "https://console.anthropic.com",
+				APIKeyURL:       "https://console.anthropic.com/settings/keys",
+				EditableURL:     true,
+			},
+			{
+				ID:              "gemini",
+				Name:            "Google Gemini",
+				Group:           string(bifrostx.GroupGlobal),
+				FamilyID:        "gemini",
+				VersionKind:     "standard",
+				RegionKind:      "global",
+				DefaultProtocol: bifrostx.ProtocolGeminiNative,
+				BaseURL:         "https://generativelanguage.googleapis.com/v1beta",
+				APIBaseURL:      "https://generativelanguage.googleapis.com/v1beta",
+				WebsiteURL:      "https://ai.google.dev",
+				APIKeyURL:       "https://aistudio.google.com/apikey",
+				EditableURL:     true,
+			},
+		},
+	}
 	for _, e := range entries {
 		byGroup[e.Group] = append(byGroup[e.Group], e)
 	}
@@ -37,14 +82,16 @@ func (d ServerDeps) ProviderCatalog(w http.ResponseWriter, r *http.Request) {
 	}
 	// 自定义 OpenAI 兼容:沿用协议级 provider,允许任意 base_url。
 	groups = append(groups, catalogGroup{Group: string(bifrostx.GroupCustom), Entries: []bifrostx.VendorCatalogEntry{{
-		ID:          "openai_compatible",
-		Name:        "OpenAI Compatible",
-		Group:       string(bifrostx.GroupCustom),
-		WebsiteURL:  "",
-		APIKeyURL:   "",
-		EditableURL: true,
-		VersionKind: "custom",
-		RegionKind:  "custom",
+		ID:              "openai_compatible",
+		Name:            "OpenAI Compatible",
+		Group:           string(bifrostx.GroupCustom),
+		FamilyID:        "openai_compatible",
+		DefaultProtocol: bifrostx.ProtocolOpenAIChat,
+		WebsiteURL:      "",
+		APIKeyURL:       "",
+		EditableURL:     true,
+		VersionKind:     "custom",
+		RegionKind:      "custom",
 	}}})
 	adminOK(w, groups)
 }

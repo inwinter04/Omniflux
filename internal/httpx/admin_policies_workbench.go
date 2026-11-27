@@ -32,6 +32,7 @@ type simulateRoutePolicyRequest struct {
 	Rules                      json.RawMessage   `json:"rules"`
 	RetryPolicy                json.RawMessage   `json:"retry_policy"`
 	CircuitBreaker             json.RawMessage   `json:"circuit_breaker"`
+	SessionAffinity            json.RawMessage   `json:"session_affinity"`
 	BaselineCandidateID        *string           `json:"baseline_candidate_id"`
 	FallbackLimit              *int              `json:"fallback_limit"`
 	ProviderTimeoutMS          *int              `json:"provider_timeout_ms"`
@@ -121,6 +122,7 @@ func (d ServerDeps) SimulateRoutePolicy(w http.ResponseWriter, r *http.Request) 
 		FirstTokenTimeoutMS: 15000,
 		RetryPolicy:         dataplane.DefaultRetryPolicy(),
 		CircuitBreaker:      dataplane.DefaultCircuitBreakerPolicy(),
+		SessionAffinity:     dataplane.DefaultSessionAffinityPolicy(),
 	}
 	simPol.ApplyWeightsJSON(dataplane.MarshalPresetWeights(dataplane.StrategyBalanced))
 
@@ -131,13 +133,13 @@ func (d ServerDeps) SimulateRoutePolicy(w http.ResponseWriter, r *http.Request) 
 			adminError(w, http.StatusBadRequest, "POLICY_ID_INVALID", "invalid-route-policy-id", nil)
 			return
 		}
-		var dbWeights, dbConstraints, dbRules, dbRetry, dbCB []byte
+		var dbWeights, dbConstraints, dbRules, dbRetry, dbCB, dbAffinity []byte
 		err = d.Pool.QueryRow(r.Context(), `
-			SELECT version, strategy, compare_currency, weights, constraints, rules, retry_policy, circuit_breaker,
+			SELECT version, strategy, compare_currency, weights, constraints, rules, retry_policy, circuit_breaker, session_affinity,
 			       baseline_candidate_id, fallback_limit, provider_timeout_ms, first_token_timeout_ms
 			FROM route_policies WHERE id = $1 AND organization_id = $2
 		`, pid, principal.OrganizationID).Scan(&simPol.Version, &simPol.Strategy, &simPol.CompareCurrency,
-			&dbWeights, &dbConstraints, &dbRules, &dbRetry, &dbCB,
+			&dbWeights, &dbConstraints, &dbRules, &dbRetry, &dbCB, &dbAffinity,
 			&baselineID, &simPol.FallbackLimit, &simPol.ProviderTimeoutMS, &simPol.FirstTokenTimeoutMS)
 		if errors.Is(err, pgx.ErrNoRows) {
 			adminError(w, http.StatusNotFound, "POLICY_NOT_FOUND", "route-policy-does-not-exist-or", nil)
@@ -153,12 +155,13 @@ func (d ServerDeps) SimulateRoutePolicy(w http.ResponseWriter, r *http.Request) 
 		simPol.Rules = dataplane.ParseRules(dbRules)
 		simPol.RetryPolicy = dataplane.ParseRetryPolicy(dbRetry)
 		simPol.CircuitBreaker = dataplane.ParseCircuitBreakerPolicy(dbCB)
+		simPol.SessionAffinity = dataplane.ParseSessionAffinityPolicy(dbAffinity)
 	}
 
 	if !validateRoutePolicyLimits(w, body.FallbackLimit, body.ProviderTimeoutMS, body.FirstTokenTimeoutMS) {
 		return
 	}
-	if !validateRoutePolicyJSONFields(w, body.Weights, body.Constraints, body.Rules, body.RetryPolicy, body.CircuitBreaker) {
+	if !validateRoutePolicyJSONFields(w, body.Weights, body.Constraints, body.Rules, body.RetryPolicy, body.CircuitBreaker, body.SessionAffinity) {
 		return
 	}
 	if strings.TrimSpace(body.Strategy) != "" {
@@ -195,6 +198,9 @@ func (d ServerDeps) SimulateRoutePolicy(w http.ResponseWriter, r *http.Request) 
 	if len(body.CircuitBreaker) > 0 && string(body.CircuitBreaker) != "null" {
 		simPol.CircuitBreaker = dataplane.ParseCircuitBreakerPolicy(body.CircuitBreaker)
 	}
+	if len(body.SessionAffinity) > 0 && string(body.SessionAffinity) != "null" {
+		simPol.SessionAffinity = dataplane.ParseSessionAffinityPolicy(body.SessionAffinity)
+	}
 	if body.FallbackLimit != nil {
 		simPol.FallbackLimit = *body.FallbackLimit
 	}
@@ -225,9 +231,10 @@ func (d ServerDeps) SimulateRoutePolicy(w http.ResponseWriter, r *http.Request) 
 
 	// 2) 加载候选、7d 性能指标、账号探测状态与实时熔断状态。
 	candRows, err := d.Pool.Query(r.Context(), `
-		SELECT c.id, a.provider, a.id, a.name, c.upstream_model, c.priority, c.weight,
-		       c.input_cost_per_million::float8, c.output_cost_per_million::float8, c.cost_currency,
-		       c.quality_score::float8, c.context_window, c.capabilities, c.tags
+		SELECT c.id, a.provider, a.api_protocol, a.id, a.name, c.upstream_model, c.priority, c.weight,
+		       c.input_cost_per_million::float8, c.output_cost_per_million::float8,
+		       c.cache_read_cost_per_million::float8, c.cache_write_cost_per_million::float8,
+		       c.cost_currency, c.quality_score::float8, c.context_window, c.capabilities, c.tags
 		FROM model_candidates c
 		JOIN provider_accounts a ON a.id = c.provider_account_id
 		WHERE c.model_service_id = $1 AND c.retired_at IS NULL AND c.status = 'active' AND a.status = 'active'
@@ -246,9 +253,9 @@ func (d ServerDeps) SimulateRoutePolicy(w http.ResponseWriter, r *http.Request) 
 	for candRows.Next() {
 		var cid, aid uuid.UUID
 		var c dataplane.SimCandidate
-		if err := candRows.Scan(&cid, &c.Provider, &aid, &c.AccountName, &c.UpstreamModel, &c.Priority, &c.Weight,
-			&c.InputCostPerM, &c.OutputCostPerM, &c.CostCurrency, &c.Quality,
-			&c.ContextWindow, &c.Capabilities, &c.Tags); err != nil {
+		if err := candRows.Scan(&cid, &c.Provider, &c.APIProtocol, &aid, &c.AccountName, &c.UpstreamModel, &c.Priority, &c.Weight,
+			&c.InputCostPerM, &c.OutputCostPerM, &c.CacheReadCostPerM, &c.CacheWriteCostPerM,
+			&c.CostCurrency, &c.Quality, &c.ContextWindow, &c.Capabilities, &c.Tags); err != nil {
 			adminError(w, http.StatusInternalServerError, "POLICY_SIMULATE_FAILED", "failed-to-simulate-route-policy", nil, err.Error())
 			return
 		}

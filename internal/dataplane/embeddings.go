@@ -108,7 +108,7 @@ func (d Deps) Embeddings(w http.ResponseWriter, r *http.Request) {
 	primary := chain[0]
 	requestID := uuid.New()
 
-	provider, err := bifrostx.MapProvider(primary.Provider)
+	provider, err := bifrostx.EngineProviderKey(primary.AccountID, primary.Provider, primary.APIProtocol)
 	if err != nil {
 		apiError(w, http.StatusInternalServerError, "internal_error", "Candidate provider is not supported.", apiErrorOptions{Reason: "unsupported_provider", Params: map[string]any{"provider": primary.Provider}})
 		return
@@ -144,11 +144,11 @@ func (d Deps) Embeddings(w http.ResponseWriter, r *http.Request) {
 		statusCode, errCode, errType, errMsg := extractBifrostErrorInfo(bifrostErr)
 		action := ClassifyAttemptOutcome(statusCode, errCode, errType, svc.Policy.RetryPolicy)
 		d.Breaker().RecordFailure(r.Context(), primary.ID, statusCode, errCode, errType, svc.Policy.RetryPolicy, svc.Policy.CircuitBreaker)
-		d.recordChainFailure(r.Context(), &keyCtx, requestID, chain, []AttemptRecord{{
+		d.recordChainFailureWithProtocol(r.Context(), &keyCtx, requestID, chain, []AttemptRecord{{
 			CandidateID: primary.ID, Provider: primary.Provider, UpstreamModel: primary.UpstreamModel,
 			StatusCode: statusCode, ErrorClass: action.Class, ErrorType: errType, ErrorMessage: errMsg,
 			LatencyMS: int(time.Since(start).Milliseconds()), Outcome: "failed",
-		}}, bifrostErr, start, nil, usageSnapshot{})
+		}}, bifrostErr, start, nil, usageSnapshot{}, ClientProtocolOpenAIChat)
 		writeBifrostError(w, bifrostErr)
 		return
 	}
@@ -158,10 +158,13 @@ func (d Deps) Embeddings(w http.ResponseWriter, r *http.Request) {
 	served, lookupErr := chain.findCandidate(servedProvider, servedModel, resp.ExtraFields.RoutingInfo.Key)
 	if lookupErr == nil {
 		d.Breaker().RecordSuccess(r.Context(), served.ID)
+		servedProvider = logicalProviderName(served.Provider)
+	} else {
+		servedProvider = logicalProviderName(primary.Provider)
 	}
 
 	usage := usageFromBifrost(resp.Usage)
-	inputTokens, outputTokens, _, _ := usage.tokens()
+	inputTokens, outputTokens, cachedTokens, _ := usage.tokens()
 	cost := 0.0
 	usageSource := stringPtrNil("computed", usage.hasTokens())
 	if usage.hasTokens() {
@@ -199,6 +202,8 @@ func (d Deps) Embeddings(w http.ResponseWriter, r *http.Request) {
 		UpstreamModel: stringPtr(servedModel),
 		InputTokens:   inputTokens,
 		OutputTokens:  outputTokens,
+		CachedTokens:  cachedTokens,
+		Protocol:      ClientProtocolOpenAIChat,
 		Cost:          cost,
 		Currency:      currencyOf(served),
 		TotalMS:       total,

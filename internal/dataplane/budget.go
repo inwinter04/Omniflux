@@ -60,7 +60,7 @@ func (d Deps) checkBudgets(w http.ResponseWriter, r *http.Request, keyCtx apiKey
 	}
 	for _, win := range windows {
 		if spentExceeded(win.SpentAmount, win.LimitAmount) {
-			apiError(w, http.StatusTooManyRequests, "budget_exceeded",
+			writeProtocolError(w, r, http.StatusTooManyRequests, "budget_exceeded",
 				fmt.Sprintf("Budget exceeded for %s window (limit %s %s). Contact an administrator to adjust it.", win.ScopeType, win.LimitAmount, win.Currency),
 				apiErrorOptions{Reason: "budget_exceeded", Params: map[string]any{"scope_type": win.ScopeType, "limit": win.LimitAmount, "currency": win.Currency}})
 			return false

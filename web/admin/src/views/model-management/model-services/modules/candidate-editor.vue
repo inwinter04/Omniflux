@@ -13,6 +13,8 @@ interface CandidateDraft {
   weight: number;
   input_cost_per_million: number;
   output_cost_per_million: number;
+  cache_read_cost_per_million: number | null;
+  cache_write_cost_per_million: number | null;
   quality_score: number;
   cost_currency: string;
   context_window: number | null;
@@ -46,7 +48,10 @@ const capabilityOptions = computed(() => [
   { label: $t('business.cap-tools'), value: 'tools' },
   { label: $t('business.cap-reasoning'), value: 'reasoning' },
   { label: $t('business.cap-json-mode'), value: 'json_mode' },
-  { label: $t('business.cap-streaming'), value: 'streaming' }
+  { label: $t('business.cap-streaming'), value: 'streaming' },
+  { label: $t('business.cap-prompt-caching'), value: 'prompt_caching' },
+  { label: $t('business.cap-responses-api'), value: 'responses_api' },
+  { label: $t('business.cap-pdf-input'), value: 'pdf_input' }
 ]);
 
 const columns = computed<DataTableColumns<CandidateDraft>>(() => [
@@ -135,6 +140,34 @@ const columns = computed<DataTableColumns<CandidateDraft>>(() => [
         min: 0,
         size: 'small',
         'onUpdate:value': value => (row.output_cost_per_million = value ?? 0)
+      })
+  },
+  {
+    title: $t('business.cache-read-price-million'),
+    key: 'cache_read_cost_per_million',
+    width: 135,
+    render: row =>
+      h(NInputNumber, {
+        value: row.cache_read_cost_per_million,
+        min: 0,
+        clearable: true,
+        size: 'small',
+        placeholder: $t('business.cache-pricing-placeholder'),
+        'onUpdate:value': value => (row.cache_read_cost_per_million = value ?? null)
+      })
+  },
+  {
+    title: $t('business.cache-write-price-million'),
+    key: 'cache_write_cost_per_million',
+    width: 135,
+    render: row =>
+      h(NInputNumber, {
+        value: row.cache_write_cost_per_million,
+        min: 0,
+        clearable: true,
+        size: 'small',
+        placeholder: $t('business.cache-pricing-placeholder'),
+        'onUpdate:value': value => (row.cache_write_cost_per_million = value ?? null)
       })
   },
   {
@@ -258,6 +291,8 @@ function newCandidate(): CandidateDraft {
     weight: 1,
     input_cost_per_million: 0,
     output_cost_per_million: 0,
+    cache_read_cost_per_million: null,
+    cache_write_cost_per_million: null,
     quality_score: 0.5,
     cost_currency: props.accountOptions[0]?.currency ?? 'USD',
     context_window: null,
@@ -309,6 +344,8 @@ function selectModel(row: CandidateDraft, modelID: string) {
   row.upstream_model = modelID;
   row.input_cost_per_million = 0;
   row.output_cost_per_million = 0;
+  row.cache_read_cost_per_million = null;
+  row.cache_write_cost_per_million = null;
   const model = (modelCache[row.provider_account_id ?? ''] ?? []).find(item => item.id === modelID);
   if (
     row.cost_currency === 'USD' &&
@@ -348,7 +385,7 @@ function selectModel(row: CandidateDraft, modelID: string) {
     :data="props.candidates"
     size="small"
     :bordered="false"
-    :scroll-x="1720"
+    :scroll-x="2000"
     :max-height="420"
     :row-key="row => `${row.provider_account_id}-${row.upstream_model}-${props.candidates.indexOf(row)}`"
   />

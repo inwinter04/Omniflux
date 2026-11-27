@@ -24,12 +24,14 @@ type Deps struct {
 
 	rateLimiter *rateLimiter
 	breaker     *CandidateBreaker
+	affinity    *sessionAffinityStore
 }
 
-// SetRateLimit 配置基础限流与候选短期熔断共享的 Redis 客户端。
+// SetRateLimit 配置基础限流、候选短期熔断与粘性会话共享的 Redis 客户端。
 func (d *Deps) SetRateLimit(client *redis.Client, limit int) {
 	d.rateLimiter = newRateLimiter(client, limit)
 	d.breaker = NewCandidateBreaker(client)
+	d.affinity = newSessionAffinityStore(client)
 }
 
 // RateLimit 提供与 SetRateLimit 配套的 API Key 基础限流中间件。
@@ -45,6 +47,13 @@ func (d *Deps) Breaker() *CandidateBreaker {
 		d.breaker = NewCandidateBreaker(nil)
 	}
 	return d.breaker
+}
+
+func (d *Deps) Affinity() *sessionAffinityStore {
+	if d.affinity == nil {
+		d.affinity = newSessionAffinityStore(nil)
+	}
+	return d.affinity
 }
 
 func (d *Deps) fxRatesSnapshot() map[string]float64 {

@@ -59,7 +59,8 @@ func (d Deps) DebugConversation(ctx context.Context, organizationID, serviceID u
 	usage := usageFromBifrost(response.Usage)
 	result.InputTokens, result.OutputTokens, result.CachedTokens, result.ReasoningTokens = usage.tokens()
 	if served, err := chain.findCandidate(result.Provider, result.UpstreamModel, response.ExtraFields.RoutingInfo.Key); err == nil {
-		result.Cost = served.costUSD(result.InputTokens, result.OutputTokens)
+		result.Provider = logicalProviderName(served.Provider)
+		result.Cost = served.costForUsage(usageSnapshot(usage))
 		result.Currency = currencyOf(served)
 	}
 	return result, nil
@@ -127,7 +128,8 @@ func (d Deps) DebugConversationStream(ctx context.Context, organizationID, servi
 		result.TotalMS = int(time.Since(start).Milliseconds())
 		result.InputTokens, result.OutputTokens, result.CachedTokens, result.ReasoningTokens = snapshot.InputTokens, snapshot.OutputTokens, snapshot.CachedTokens, snapshot.ReasoningTokens
 		if served, err := chain.findCandidate(result.Provider, result.UpstreamModel, servedAccountID); err == nil {
-			result.Cost = served.costUSD(result.InputTokens, result.OutputTokens)
+			result.Provider = logicalProviderName(served.Provider)
+			result.Cost = served.costForUsage(snapshot)
 			result.Currency = currencyOf(served)
 		}
 		sendDebugStreamEvent(ctx, events, DebugStreamEvent{Result: &result})
@@ -159,7 +161,7 @@ func (d Deps) prepareConversationRequest(ctx context.Context, organizationID, se
 		return nil, nil, nil, time.Time{}, fmt.Errorf("Model service has no eligible candidates.")
 	}
 	primary := chain[0]
-	provider, err := bifrostx.MapProvider(primary.Provider)
+	provider, err := bifrostx.EngineProviderKey(primary.AccountID, primary.Provider, primary.APIProtocol)
 	if err != nil {
 		return nil, nil, nil, time.Time{}, err
 	}

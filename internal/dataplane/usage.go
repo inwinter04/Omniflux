@@ -32,23 +32,25 @@ type pendingUsage struct {
 
 // finalUsage 是请求结束后对 usage_records 与 policy_decisions 的定稿更新。
 type finalUsage struct {
-	State           string // success / failed / interrupted
-	StatusCode      *int
-	CandidateID     *uuid.UUID
-	Provider        *string
-	UpstreamModel   *string
-	InputTokens     int64
-	OutputTokens    int64
-	CachedTokens    int64
-	ReasoningTokens int64
-	Cost            float64
-	Currency        string
-	FirstTokenMS    *int
-	TotalMS         int
-	UsageSource     *string
-	ErrorType       *string
-	ErrorMessage    *string
-	AttemptTrail    []byte
+	State               string // success / failed / interrupted
+	StatusCode          *int
+	CandidateID         *uuid.UUID
+	Provider            *string
+	UpstreamModel       *string
+	InputTokens         int64
+	OutputTokens        int64
+	CachedTokens        int64
+	CacheCreationTokens int64
+	ReasoningTokens     int64
+	Protocol            string
+	Cost                float64
+	Currency            string
+	FirstTokenMS        *int
+	TotalMS             int
+	UsageSource         *string
+	ErrorType           *string
+	ErrorMessage        *string
+	AttemptTrail        []byte
 }
 
 type usageStore struct {
@@ -102,13 +104,15 @@ func (s usageStore) finalize(ctx context.Context, requestID uuid.UUID, f finalUs
 				provider = $5, upstream_model = $6,
 				input_tokens = $7, output_tokens = $8, cached_tokens = $9, reasoning_tokens = $10,
 				cost = $11, first_token_ms = $12, total_ms = $13, usage_source = $14,
-				error_type = $15, error_message = $16, cost_currency = COALESCE($17, cost_currency), finalized_at = now()
+				error_type = $15, error_message = $16, cost_currency = COALESCE($17, cost_currency),
+				cache_creation_tokens = $18, protocol = COALESCE($19, protocol), finalized_at = now()
 			WHERE request_id = $1 AND state = 'pending'
 		`, requestID, f.State, nullableInt(f.StatusCode), nullableUUID(f.CandidateID),
 			nullableString(f.Provider), nullableString(f.UpstreamModel),
 			f.InputTokens, f.OutputTokens, f.CachedTokens, f.ReasoningTokens,
 			f.Cost, nullableInt(f.FirstTokenMS), f.TotalMS, nullableString(f.UsageSource),
-			nullableString(f.ErrorType), nullableString(f.ErrorMessage), nullableString(&currency)); err != nil {
+			nullableString(f.ErrorType), nullableString(f.ErrorMessage), nullableString(&currency),
+			f.CacheCreationTokens, nullableStringValue(f.Protocol)); err != nil {
 			return err
 		}
 		_, err := tx.Exec(ctx, `

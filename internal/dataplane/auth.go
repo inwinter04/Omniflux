@@ -29,19 +29,36 @@ func keyFromContext(ctx context.Context) (apiKeyContext, bool) {
 	return value, ok
 }
 
-// RequireAPIKey 校验 Authorization: Bearer <api key>。
-// Key 是 keyed hash 存储,直接按 hash 等值查询;命中后检查 Key 的状态与有效期,
-// 以及 Key 所属项目、应用是否停用,通过后更新 last_used_at。
+func extractAPIKey(r *http.Request) (string, bool) {
+	if header := strings.TrimSpace(r.Header.Get("Authorization")); len(header) > 7 && strings.EqualFold(header[:7], "Bearer ") {
+		if val := strings.TrimSpace(header[7:]); val != "" {
+			return val, true
+		}
+	}
+	if val := strings.TrimSpace(r.Header.Get("x-api-key")); val != "" {
+		return val, true
+	}
+	if val := strings.TrimSpace(r.Header.Get("x-goog-api-key")); val != "" {
+		return val, true
+	}
+	if val := strings.TrimSpace(r.URL.Query().Get("key")); val != "" {
+		return val, true
+	}
+	return "", false
+}
+
+// RequireAPIKey validates caller credentials from Bearer token, x-api-key, x-goog-api-key, or ?key= query param,
+// injects the detected inbound client protocol + key metadata into the context, and updates last_used_at.
 func (d Deps) RequireAPIKey(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		header := r.Header.Get("Authorization")
-		if !strings.HasPrefix(header, "Bearer ") {
-			apiError(w, http.StatusUnauthorized, "missing_api_key", "Missing API key. Provide Authorization: Bearer <key>.")
+		r = r.WithContext(withClientProtocol(r.Context(), protocolForPath(r.URL.Path)))
+		full, hasKey := extractAPIKey(r)
+		if !hasKey {
+			writeProtocolError(w, r, http.StatusUnauthorized, "missing_api_key", "Missing API key. Provide Authorization: Bearer <key>.")
 			return
 		}
-		full := strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
 		if !apikeys.ValidFormat(full) {
-			apiError(w, http.StatusUnauthorized, "invalid_api_key", "Invalid API key format.", apiErrorOptions{Reason: "invalid_api_key_format"})
+			writeProtocolError(w, r, http.StatusUnauthorized, "invalid_api_key", "Invalid API key format.", apiErrorOptions{Reason: "invalid_api_key_format"})
 			return
 		}
 		hash := apikeys.Hash(d.APIKeyPepper, full)
@@ -58,28 +75,28 @@ func (d Deps) RequireAPIKey(next http.Handler) http.Handler {
 		`, hash).Scan(&ctxValue.KeyID, &ctxValue.OrganizationID, &ctxValue.ProjectID, &ctxValue.ApplicationID,
 			&ctxValue.RateLimitPerMin, &status, &expiresAt, &projectStatus, &applicationStatus)
 		if errors.Is(err, pgx.ErrNoRows) {
-			apiError(w, http.StatusUnauthorized, "invalid_api_key", "API key does not exist or has expired.")
+			writeProtocolError(w, r, http.StatusUnauthorized, "invalid_api_key", "API key does not exist or has expired.")
 			return
 		}
 		if err != nil {
-			apiError(w, http.StatusInternalServerError, "internal_error", "Authentication service is temporarily unavailable.")
+			writeProtocolError(w, r, http.StatusInternalServerError, "internal_error", "Authentication service is temporarily unavailable.")
 			return
 		}
 		if status != "active" {
-			apiError(w, http.StatusUnauthorized, "invalid_api_key", "API key is disabled.", apiErrorOptions{Reason: "api_key_disabled"})
+			writeProtocolError(w, r, http.StatusUnauthorized, "invalid_api_key", "API key is disabled.", apiErrorOptions{Reason: "api_key_disabled"})
 			return
 		}
 		if expiresAt != nil && !expiresAt.After(time.Now()) {
-			apiError(w, http.StatusUnauthorized, "invalid_api_key", "API key has expired.", apiErrorOptions{Reason: "api_key_expired"})
+			writeProtocolError(w, r, http.StatusUnauthorized, "invalid_api_key", "API key has expired.", apiErrorOptions{Reason: "api_key_expired"})
 			return
 		}
 		// 项目或应用被停用后,名下 Key 一并停止调用,重新启用即恢复;在更新 last_used_at 之前拦截。
 		if projectStatus != "active" {
-			apiError(w, http.StatusForbidden, "project_disabled", "The project that owns this API key is disabled.", apiErrorOptions{Reason: "project_disabled"})
+			writeProtocolError(w, r, http.StatusForbidden, "project_disabled", "The project that owns this API key is disabled.", apiErrorOptions{Reason: "project_disabled"})
 			return
 		}
 		if applicationStatus != "active" {
-			apiError(w, http.StatusForbidden, "application_disabled", "The application that owns this API key is disabled.", apiErrorOptions{Reason: "application_disabled"})
+			writeProtocolError(w, r, http.StatusForbidden, "application_disabled", "The application that owns this API key is disabled.", apiErrorOptions{Reason: "application_disabled"})
 			return
 		}
 		if _, err := d.Pool.Exec(r.Context(), `UPDATE api_keys SET last_used_at = now() WHERE id = $1`, ctxValue.KeyID); err != nil {

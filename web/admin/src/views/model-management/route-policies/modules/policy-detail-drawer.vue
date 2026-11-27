@@ -377,6 +377,9 @@ const decisionColumns = computed<DataTableColumns<Api.Management.RoutePolicyDeci
           <NTag v-if="policy" size="small" type="info" round>
             {{ policy.compare_currency }}
           </NTag>
+          <NTag v-if="policy?.session_affinity?.enabled" size="small" type="success" round>
+            {{ $t('business.session-affinity-tag', { ttl: policy.session_affinity.ttl_seconds }) }}
+          </NTag>
         </div>
       </template>
 

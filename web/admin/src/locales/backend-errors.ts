@@ -87,6 +87,7 @@ export const zhCNBackendErrors: Record<string, string> = {
   'invalid-from-name': '发件名称不能包含换行',
   'invalid-from-address': '发件邮箱格式不正确',
   'invalid-public-base-url': '公开访问地址必须是合法的 HTTP(S) 地址',
+  'invalid-gateway-base-url': '网关访问地址必须是合法的 HTTP(S) 地址',
   'enabled-email-settings-require': '启用邮件服务必须填写 SMTP 主机、发件邮箱和公开访问地址',
   'smtp-authentication-requires-tls': 'SMTP 认证需要 STARTTLS 或 SSL/TLS',
   'smtp-password-is-required': '填写 SMTP 账号时必须填写 SMTP 密码',
@@ -422,6 +423,9 @@ export const zhCNBackendErrors: Record<string, string> = {
   'failed-to-sync-fx-rates': '拉取第三方权威汇率失败: {detail}',
   'invalid-candidate-context-window': '候选模型上下文窗口大小必须大于 0',
   'invalid-candidate-capabilities': '候选模型能力标签包含不支持的能力项',
+  'invalid-candidate-cache-pricing': '候选模型缓存读取/写入单价不能为负数',
+  'invalid-route-policy-session-affinity': '会话亲和性配置不合法（TTL 必须在 30 到 86400 秒之间，策略支持 auto/user_id/header_only）',
+  'provider-protocol-unsupported': '该供应商不支持所选上游协议 api_protocol',
   'provider-base-url-not-allowed': '该厂商的接口地址由系统内置,无需填写 base_url',
   agentEmptyResponse: '模型未返回内容',
   promptRunFinalizeFailed: '运行结果保存失败'
@@ -514,6 +518,7 @@ export const enUSBackendErrors: Record<string, string> = {
   'invalid-from-name': 'Sender name cannot contain line breaks',
   'invalid-from-address': 'Invalid sender email address',
   'invalid-public-base-url': 'Public base URL must be a valid HTTP(S) URL',
+  'invalid-gateway-base-url': 'Gateway base URL must be a valid HTTP(S) URL',
   'enabled-email-settings-require': 'Enabled email service requires SMTP host, sender address, and public base URL',
   'smtp-authentication-requires-tls': 'SMTP authentication requires STARTTLS or SSL/TLS',
   'smtp-password-is-required': 'SMTP password is required when an SMTP username is set',
@@ -867,6 +872,10 @@ export const enUSBackendErrors: Record<string, string> = {
   'failed-to-sync-fx-rates': 'Failed to sync rates from external FX sources: {detail}',
   'invalid-candidate-context-window': 'Candidate context window must be greater than zero',
   'invalid-candidate-capabilities': 'Candidate capabilities contain unsupported capability items',
+  'invalid-candidate-cache-pricing': 'Candidate cache read/write prices cannot be negative',
+  'invalid-route-policy-session-affinity':
+    'Invalid session affinity configuration (TTL must be 30-86400 seconds; strategy must be auto, user_id, or header_only)',
+  'provider-protocol-unsupported': 'Selected upstream api_protocol is not supported for this provider',
   'provider-base-url-not-allowed': 'This provider’s API endpoint is managed by the system; base_url is not required.',
   agentEmptyResponse: 'The model returned no content',
   promptRunFinalizeFailed: 'Failed to save the run result'

@@ -18,20 +18,22 @@ import (
 )
 
 type candidateResponse struct {
-	ID                   string   `json:"id"`
-	ProviderAccountID    string   `json:"provider_account_id"`
-	Provider             string   `json:"provider"`
-	UpstreamModel        string   `json:"upstream_model"`
-	Priority             int      `json:"priority"`
-	Weight               float64  `json:"weight"`
-	InputCostPerMillion  float64  `json:"input_cost_per_million"`
-	OutputCostPerMillion float64  `json:"output_cost_per_million"`
-	QualityScore         float64  `json:"quality_score"`
-	CostCurrency         string   `json:"cost_currency"`
-	ContextWindow        *int     `json:"context_window"`
-	Capabilities         []string `json:"capabilities"`
-	Tags                 []string `json:"tags"`
-	Status               string   `json:"status"`
+	ID                       string   `json:"id"`
+	ProviderAccountID        string   `json:"provider_account_id"`
+	Provider                 string   `json:"provider"`
+	UpstreamModel            string   `json:"upstream_model"`
+	Priority                 int      `json:"priority"`
+	Weight                   float64  `json:"weight"`
+	InputCostPerMillion      float64  `json:"input_cost_per_million"`
+	OutputCostPerMillion     float64  `json:"output_cost_per_million"`
+	CacheReadCostPerMillion  *float64 `json:"cache_read_cost_per_million"`
+	CacheWriteCostPerMillion *float64 `json:"cache_write_cost_per_million"`
+	QualityScore             float64  `json:"quality_score"`
+	CostCurrency             string   `json:"cost_currency"`
+	ContextWindow            *int     `json:"context_window"`
+	Capabilities             []string `json:"capabilities"`
+	Tags                     []string `json:"tags"`
+	Status                   string   `json:"status"`
 }
 
 type modelServiceResponse struct {
@@ -51,18 +53,20 @@ type modelServiceResponse struct {
 }
 
 type createCandidateRequest struct {
-	ProviderAccountID    string   `json:"provider_account_id"`
-	UpstreamModel        string   `json:"upstream_model"`
-	Priority             int      `json:"priority"`
-	Weight               float64  `json:"weight"`
-	InputCostPerMillion  float64  `json:"input_cost_per_million"`
-	OutputCostPerMillion float64  `json:"output_cost_per_million"`
-	QualityScore         *float64 `json:"quality_score"`
-	CostCurrency         string   `json:"cost_currency"`
-	ContextWindow        *int     `json:"context_window"`
-	Capabilities         []string `json:"capabilities"`
-	Tags                 []string `json:"tags"`
-	Status               string   `json:"status"`
+	ProviderAccountID        string   `json:"provider_account_id"`
+	UpstreamModel            string   `json:"upstream_model"`
+	Priority                 int      `json:"priority"`
+	Weight                   float64  `json:"weight"`
+	InputCostPerMillion      float64  `json:"input_cost_per_million"`
+	OutputCostPerMillion     float64  `json:"output_cost_per_million"`
+	CacheReadCostPerMillion  *float64 `json:"cache_read_cost_per_million"`
+	CacheWriteCostPerMillion *float64 `json:"cache_write_cost_per_million"`
+	QualityScore             *float64 `json:"quality_score"`
+	CostCurrency             string   `json:"cost_currency"`
+	ContextWindow            *int     `json:"context_window"`
+	Capabilities             []string `json:"capabilities"`
+	Tags                     []string `json:"tags"`
+	Status                   string   `json:"status"`
 }
 
 type createModelServiceRequest struct {
@@ -115,7 +119,8 @@ func (d ServerDeps) ModelServices(w http.ResponseWriter, r *http.Request) {
 	}
 	candRows, err := d.Pool.Query(r.Context(), `
 		SELECT c.id, c.model_service_id, c.provider_account_id, a.provider, c.upstream_model, c.priority, c.weight,
-		       c.input_cost_per_million, c.output_cost_per_million, c.quality_score, c.cost_currency, c.status,
+		       c.input_cost_per_million, c.output_cost_per_million, c.cache_read_cost_per_million, c.cache_write_cost_per_million,
+		       c.quality_score, c.cost_currency, c.status,
 		       c.context_window, c.capabilities, c.tags
 		FROM model_candidates c
 		JOIN provider_accounts a ON a.id = c.provider_account_id
@@ -131,7 +136,8 @@ func (d ServerDeps) ModelServices(w http.ResponseWriter, r *http.Request) {
 		var candID, svcID, accountID uuid.UUID
 		var c candidateResponse
 		if err := candRows.Scan(&candID, &svcID, &accountID, &c.Provider, &c.UpstreamModel, &c.Priority, &c.Weight,
-			&c.InputCostPerMillion, &c.OutputCostPerMillion, &c.QualityScore, &c.CostCurrency, &c.Status,
+			&c.InputCostPerMillion, &c.OutputCostPerMillion, &c.CacheReadCostPerMillion, &c.CacheWriteCostPerMillion,
+			&c.QualityScore, &c.CostCurrency, &c.Status,
 			&c.ContextWindow, &c.Capabilities, &c.Tags); err != nil {
 			adminError(w, http.StatusInternalServerError, "SERVICE_LIST_FAILED", "failed-to-query-model-candidates", nil)
 			return
@@ -295,10 +301,12 @@ func (d ServerDeps) CreateModelService(w http.ResponseWriter, r *http.Request) {
 			if _, err := tx.Exec(r.Context(), `
 				INSERT INTO model_candidates(model_service_id, provider_account_id, upstream_model,
 				                             priority, weight, input_cost_per_million, output_cost_per_million,
+				                             cache_read_cost_per_million, cache_write_cost_per_million,
 				                             quality_score, cost_currency, status, context_window, capabilities, tags)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 			`, serviceID, accountID, strings.TrimSpace(c.UpstreamModel), priority, weight,
-				c.InputCostPerMillion, c.OutputCostPerMillion, candidateQuality(c), c.CostCurrency, candidateStatus(c),
+				c.InputCostPerMillion, c.OutputCostPerMillion, c.CacheReadCostPerMillion, c.CacheWriteCostPerMillion,
+				candidateQuality(c), c.CostCurrency, candidateStatus(c),
 				nullableIntPtr(c.ContextWindow), nonNilStringSlice(c.Capabilities), nonNilStringSlice(c.Tags)); err != nil {
 				return err
 			}
@@ -515,7 +523,8 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 		afterCandidates = append(afterCandidates, candidateAuditState{
 			ProviderAccountID: c.ProviderAccountID, UpstreamModel: strings.TrimSpace(c.UpstreamModel),
 			Priority: priority, Weight: weight, InputCostPerMillion: c.InputCostPerMillion,
-			OutputCostPerMillion: c.OutputCostPerMillion, QualityScore: candidateQuality(c),
+			OutputCostPerMillion: c.OutputCostPerMillion, CacheReadCostPerMillion: c.CacheReadCostPerMillion,
+			CacheWriteCostPerMillion: c.CacheWriteCostPerMillion, QualityScore: candidateQuality(c),
 			CostCurrency: c.CostCurrency, ContextWindow: c.ContextWindow,
 			Capabilities: nonNilStringSlice(c.Capabilities), Tags: nonNilStringSlice(c.Tags), Status: candidateStatus(c),
 		})
@@ -550,13 +559,16 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 			if _, err := tx.Exec(r.Context(), `
 				INSERT INTO model_candidates(model_service_id, provider_account_id, upstream_model,
 				                             priority, weight, input_cost_per_million, output_cost_per_million,
+				                             cache_read_cost_per_million, cache_write_cost_per_million,
 				                             quality_score, cost_currency, status, context_window, capabilities, tags, retired_at)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NULL)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NULL)
 				ON CONFLICT (model_service_id, provider_account_id, upstream_model) DO UPDATE SET
 					priority = EXCLUDED.priority,
 					weight = EXCLUDED.weight,
 					input_cost_per_million = EXCLUDED.input_cost_per_million,
 					output_cost_per_million = EXCLUDED.output_cost_per_million,
+					cache_read_cost_per_million = EXCLUDED.cache_read_cost_per_million,
+					cache_write_cost_per_million = EXCLUDED.cache_write_cost_per_million,
 					quality_score = EXCLUDED.quality_score,
 					cost_currency = EXCLUDED.cost_currency,
 					status = EXCLUDED.status,
@@ -566,7 +578,8 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 					retired_at = NULL,
 					updated_at = now()
 			`, serviceID, accountID, strings.TrimSpace(c.UpstreamModel), priority, weight,
-				c.InputCostPerMillion, c.OutputCostPerMillion, candidateQuality(c), c.CostCurrency, candidateStatus(c),
+				c.InputCostPerMillion, c.OutputCostPerMillion, c.CacheReadCostPerMillion, c.CacheWriteCostPerMillion,
+				candidateQuality(c), c.CostCurrency, candidateStatus(c),
 				nullableIntPtr(c.ContextWindow), nonNilStringSlice(c.Capabilities), nonNilStringSlice(c.Tags)); err != nil {
 				return err
 			}
@@ -609,18 +622,20 @@ func (d ServerDeps) UpdateModelService(w http.ResponseWriter, r *http.Request) {
 }
 
 type candidateAuditState struct {
-	ProviderAccountID    string   `json:"provider_account_id"`
-	UpstreamModel        string   `json:"upstream_model"`
-	Priority             int      `json:"priority"`
-	Weight               float64  `json:"weight"`
-	InputCostPerMillion  float64  `json:"input_cost_per_million"`
-	OutputCostPerMillion float64  `json:"output_cost_per_million"`
-	QualityScore         float64  `json:"quality_score"`
-	CostCurrency         string   `json:"cost_currency"`
-	ContextWindow        *int     `json:"context_window,omitempty"`
-	Capabilities         []string `json:"capabilities,omitempty"`
-	Tags                 []string `json:"tags,omitempty"`
-	Status               string   `json:"status"`
+	ProviderAccountID        string   `json:"provider_account_id"`
+	UpstreamModel            string   `json:"upstream_model"`
+	Priority                 int      `json:"priority"`
+	Weight                   float64  `json:"weight"`
+	InputCostPerMillion      float64  `json:"input_cost_per_million"`
+	OutputCostPerMillion     float64  `json:"output_cost_per_million"`
+	CacheReadCostPerMillion  *float64 `json:"cache_read_cost_per_million,omitempty"`
+	CacheWriteCostPerMillion *float64 `json:"cache_write_cost_per_million,omitempty"`
+	QualityScore             float64  `json:"quality_score"`
+	CostCurrency             string   `json:"cost_currency"`
+	ContextWindow            *int     `json:"context_window,omitempty"`
+	Capabilities             []string `json:"capabilities,omitempty"`
+	Tags                     []string `json:"tags,omitempty"`
+	Status                   string   `json:"status"`
 }
 
 func validateAndNormalizeCandidates(w http.ResponseWriter, candidates []createCandidateRequest) ([]uuid.UUID, map[string]bool, bool) {
@@ -630,6 +645,11 @@ func validateAndNormalizeCandidates(w http.ResponseWriter, candidates []createCa
 		c := candidates[i]
 		if strings.TrimSpace(c.UpstreamModel) == "" {
 			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "candidate-is-missing-upstream-model", nil)
+			return nil, nil, false
+		}
+		if (c.CacheReadCostPerMillion != nil && *c.CacheReadCostPerMillion < 0) ||
+			(c.CacheWriteCostPerMillion != nil && *c.CacheWriteCostPerMillion < 0) {
+			adminError(w, http.StatusBadRequest, "SERVICE_CANDIDATE_INVALID", "invalid-candidate-cache-pricing", nil)
 			return nil, nil, false
 		}
 		if c.QualityScore != nil && (*c.QualityScore < 0 || *c.QualityScore > 1) {
@@ -673,7 +693,8 @@ func nonNilStringSlice(items []string) []string {
 func loadCandidateAuditStates(ctx context.Context, q rowQuerier, serviceID uuid.UUID) ([]candidateAuditState, error) {
 	rows, err := q.Query(ctx, `
 		SELECT provider_account_id, upstream_model, priority, weight, input_cost_per_million,
-		       output_cost_per_million, quality_score, cost_currency, status, context_window, capabilities, tags
+		       output_cost_per_million, cache_read_cost_per_million, cache_write_cost_per_million,
+		       quality_score, cost_currency, status, context_window, capabilities, tags
 		FROM model_candidates
 		WHERE model_service_id = $1 AND retired_at IS NULL
 		ORDER BY priority ASC, upstream_model ASC
@@ -687,8 +708,8 @@ func loadCandidateAuditStates(ctx context.Context, q rowQuerier, serviceID uuid.
 		var item candidateAuditState
 		var accountID uuid.UUID
 		if err := rows.Scan(&accountID, &item.UpstreamModel, &item.Priority, &item.Weight,
-			&item.InputCostPerMillion, &item.OutputCostPerMillion, &item.QualityScore,
-			&item.CostCurrency, &item.Status, &item.ContextWindow, &item.Capabilities, &item.Tags); err != nil {
+			&item.InputCostPerMillion, &item.OutputCostPerMillion, &item.CacheReadCostPerMillion, &item.CacheWriteCostPerMillion,
+			&item.QualityScore, &item.CostCurrency, &item.Status, &item.ContextWindow, &item.Capabilities, &item.Tags); err != nil {
 			return nil, err
 		}
 		item.ProviderAccountID = accountID.String()

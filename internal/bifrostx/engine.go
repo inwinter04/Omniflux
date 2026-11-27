@@ -12,6 +12,7 @@ import (
 
 type ProviderSpec struct {
 	Provider       string
+	APIProtocol    string
 	AccountID      string
 	Name           string
 	APIKey         string
@@ -24,9 +25,20 @@ type ProviderSpec struct {
 	MaxRetries     int
 }
 
+// EffectiveProtocol returns the spec's resolved upstream api_protocol.
+func (s ProviderSpec) EffectiveProtocol() string {
+	return EffectiveProtocol(s.Provider, s.APIProtocol)
+}
+
+// EngineKey returns the Bifrost provider key isolating this account's endpoint and protocol.
+func (s ProviderSpec) EngineKey() (schemas.ModelProvider, error) {
+	return EngineProviderKey(s.AccountID, s.Provider, s.APIProtocol)
+}
+
 type Account struct {
-	mu    sync.RWMutex
-	specs map[schemas.ModelProvider][]ProviderSpec
+	mu          sync.RWMutex
+	specs       map[schemas.ModelProvider][]ProviderSpec
+	logicalKeys map[schemas.ModelProvider][]schemas.ModelProvider
 }
 
 // MapProvider 把数据库中的 provider 标识转换为 Bifrost 的 ModelProvider。
@@ -64,56 +76,188 @@ func resolveProviderKey(provider string) (schemas.ModelProvider, error) {
 	return MapProvider(provider)
 }
 
-// providerBaseURL 计算某 provider key 的上游根地址:
-// 优先用账号自带 base_url(本地/自部署或存量数据),否则回落厂商目录预置。
-func providerBaseURL(key schemas.ModelProvider, specs []ProviderSpec) string {
-	for _, spec := range specs {
-		if spec.BaseURL != "" {
-			return spec.BaseURL
-		}
-	}
-	if vendor := VendorByID(string(key)); vendor != nil && vendor.BaseURL != "" {
-		return vendor.BaseURL
-	}
-	return ""
-}
-
 func NewAccount(specs []ProviderSpec) (*Account, error) {
-	byProvider := make(map[schemas.ModelProvider][]ProviderSpec)
+	byEngineKey := make(map[schemas.ModelProvider][]ProviderSpec)
+	logicalKeys := make(map[schemas.ModelProvider][]schemas.ModelProvider)
+	seenLogical := make(map[schemas.ModelProvider]map[schemas.ModelProvider]bool)
 	baseURLs := make(map[schemas.ModelProvider]string)
 	blankBaseURLs := make(map[schemas.ModelProvider]bool)
 	proxySignatures := make(map[schemas.ModelProvider]string)
 	for _, spec := range specs {
-		provider, err := resolveProviderKey(spec.Provider)
+		logicalProvider, err := resolveProviderKey(spec.Provider)
 		if err != nil {
 			return nil, err
 		}
-		if spec.APIKey == "" && provider != schemas.Bedrock {
+		proto := spec.EffectiveProtocol()
+		if !IsValidAPIProtocol(proto) {
+			return nil, fmt.Errorf("provider account %q has unsupported api_protocol %q", spec.Name, proto)
+		}
+		spec.APIProtocol = proto
+		baseType, err := BaseProviderTypeForProtocol(proto)
+		if err != nil {
+			return nil, err
+		}
+		engineKey, err := EngineProviderKey(spec.AccountID, spec.Provider, proto)
+		if err != nil {
+			return nil, err
+		}
+		if spec.APIKey == "" && baseType != schemas.Bedrock {
 			return nil, fmt.Errorf("provider account %q has no credential", spec.Name)
 		}
 		proxySignature, err := ProxySignature(spec.ProxyType, spec.ProxyURL)
 		if err != nil {
 			return nil, fmt.Errorf("provider account %q: %w", spec.Name, err)
 		}
-		if previous, exists := proxySignatures[provider]; exists && previous != proxySignature {
-			return nil, fmt.Errorf("provider %s has conflicting proxy configurations; set the same proxy for every account", provider)
+		if previous, exists := proxySignatures[engineKey]; exists && previous != proxySignature {
+			return nil, fmt.Errorf("provider %s has conflicting proxy configurations; set the same proxy for every account", engineKey)
 		}
-		proxySignatures[provider] = proxySignature
+		proxySignatures[engineKey] = proxySignature
 		if spec.BaseURL == "" {
-			blankBaseURLs[provider] = true
+			blankBaseURLs[engineKey] = true
 		} else {
-			previous, exists := baseURLs[provider]
+			previous, exists := baseURLs[engineKey]
 			if exists && previous != spec.BaseURL {
-				return nil, fmt.Errorf("provider %s has conflicting base URLs %q and %q; separate custom providers are required", provider, previous, spec.BaseURL)
+				return nil, fmt.Errorf("provider %s has conflicting base URLs %q and %q; separate custom providers are required", engineKey, previous, spec.BaseURL)
 			}
-			baseURLs[provider] = spec.BaseURL
+			baseURLs[engineKey] = spec.BaseURL
 		}
-		byProvider[provider] = append(byProvider[provider], spec)
-		if blankBaseURLs[provider] && baseURLs[provider] != "" {
-			return nil, fmt.Errorf("provider %s mixes default and custom base URLs; set the same effective endpoint for every account", provider)
+		byEngineKey[engineKey] = append(byEngineKey[engineKey], spec)
+		if blankBaseURLs[engineKey] && baseURLs[engineKey] != "" {
+			return nil, fmt.Errorf("provider %s mixes default and custom base URLs; set the same effective endpoint for every account", engineKey)
+		}
+		if seenLogical[logicalProvider] == nil {
+			seenLogical[logicalProvider] = make(map[schemas.ModelProvider]bool)
+		}
+		if !seenLogical[logicalProvider][engineKey] {
+			seenLogical[logicalProvider][engineKey] = true
+			logicalKeys[logicalProvider] = append(logicalKeys[logicalProvider], engineKey)
 		}
 	}
-	return &Account{specs: byProvider}, nil
+	return &Account{specs: byEngineKey, logicalKeys: logicalKeys}, nil
+}
+
+// EngineKeysForLogical resolves all active engine keys belonging to a logical provider key
+// (e.g. schemas.OpenAI or vendor ID) or returns the target itself if it is already an engine key.
+func (a *Account) EngineKeysForLogical(key schemas.ModelProvider) []schemas.ModelProvider {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if keys := a.logicalKeys[key]; len(keys) > 0 {
+		return append([]schemas.ModelProvider(nil), keys...)
+	}
+	if _, ok := a.specs[key]; ok {
+		return []schemas.ModelProvider{key}
+	}
+	return nil
+}
+
+func allowedRequestsForProtocol(proto string) *schemas.AllowedRequests {
+	switch proto {
+	case ProtocolOpenAIChat:
+		return &schemas.AllowedRequests{
+			ListModels:           true,
+			ModelRetrieve:        true,
+			ChatCompletion:       true,
+			ChatCompletionStream: true,
+			Embedding:            true,
+		}
+	case ProtocolOpenAIResponses:
+		return &schemas.AllowedRequests{
+			ListModels:           true,
+			ModelRetrieve:        true,
+			ChatCompletion:       true,
+			ChatCompletionStream: true,
+			Responses:            true,
+			ResponsesStream:      true,
+			Compaction:           true,
+			CountTokens:          true,
+			Embedding:            true,
+		}
+	case ProtocolAnthropicMessages:
+		return &schemas.AllowedRequests{
+			ListModels:           true,
+			ModelRetrieve:        true,
+			ChatCompletion:       true,
+			ChatCompletionStream: true,
+			Responses:            true,
+			ResponsesStream:      true,
+			CountTokens:          true,
+		}
+	case ProtocolGeminiNative:
+		return &schemas.AllowedRequests{
+			ListModels:           true,
+			ModelRetrieve:        true,
+			ChatCompletion:       true,
+			ChatCompletionStream: true,
+			Responses:            true,
+			ResponsesStream:      true,
+			CountTokens:          true,
+			Embedding:            true,
+		}
+	default:
+		return nil
+	}
+}
+
+func resolveSpecBaseURLAndOverrides(spec ProviderSpec, proto string, baseType schemas.ModelProvider) (string, map[schemas.RequestType]string) {
+	vendor := VendorByID(spec.Provider)
+	baseURL := strings.TrimRight(strings.TrimSpace(spec.BaseURL), "/")
+	if baseURL == "" {
+		if vendor != nil && vendor.BaseURL != "" {
+			baseURL = strings.TrimRight(vendor.BaseURL, "/")
+		} else {
+			switch proto {
+			case ProtocolAnthropicMessages:
+				baseURL = "https://api.anthropic.com"
+			case ProtocolGeminiNative:
+				baseURL = "https://generativelanguage.googleapis.com/v1beta"
+			case ProtocolOpenAIChat, ProtocolOpenAIResponses:
+				baseURL = "https://api.openai.com"
+			}
+		}
+	} else {
+		if vendor != nil && vendor.URLPath != "" && strings.HasSuffix(baseURL, vendor.URLPath) {
+			baseURL = strings.TrimSuffix(baseURL, vendor.URLPath)
+		} else if vendor == nil && (baseType == schemas.OpenAI || baseType == schemas.Anthropic) && strings.HasSuffix(baseURL, "/v1") {
+			baseURL = strings.TrimSuffix(baseURL, "/v1")
+		}
+	}
+
+	if vendor == nil {
+		return baseURL, nil
+	}
+
+	switch proto {
+	case ProtocolOpenAIChat:
+		return baseURL, map[schemas.RequestType]string{
+			schemas.ChatCompletionRequest:       vendor.ChatPath(),
+			schemas.ChatCompletionStreamRequest: vendor.ChatPath(),
+			schemas.EmbeddingRequest:            vendor.EmbeddingsPath(),
+			schemas.ListModelsRequest:           vendor.ModelsPath(),
+		}
+	case ProtocolOpenAIResponses:
+		return baseURL, map[schemas.RequestType]string{
+			schemas.ChatCompletionRequest:       vendor.ChatPath(),
+			schemas.ChatCompletionStreamRequest: vendor.ChatPath(),
+			schemas.ResponsesRequest:            vendor.ResponsesPath(),
+			schemas.ResponsesStreamRequest:      vendor.ResponsesPath(),
+			schemas.CompactionRequest:           vendor.CompactionPath(),
+			schemas.CountTokensRequest:          strings.TrimSuffix(vendor.URLPath, "/") + "/responses/input_tokens",
+			schemas.EmbeddingRequest:            vendor.EmbeddingsPath(),
+			schemas.ListModelsRequest:           vendor.ModelsPath(),
+		}
+	case ProtocolAnthropicMessages:
+		if strings.TrimSpace(spec.BaseURL) == "" && vendor.URLPath != "" {
+			return baseURL, map[schemas.RequestType]string{
+				schemas.ChatCompletionRequest:       vendor.MessagesPath(),
+				schemas.ChatCompletionStreamRequest: vendor.MessagesPath(),
+				schemas.ResponsesRequest:            vendor.MessagesPath(),
+				schemas.ResponsesStreamRequest:      vendor.MessagesPath(),
+				schemas.CountTokensRequest:          strings.TrimSuffix(vendor.URLPath, "/") + "/messages/count_tokens",
+				schemas.ListModelsRequest:           vendor.ModelsPath(),
+			}
+		}
+	}
+	return baseURL, nil
 }
 
 func (a *Account) GetConfiguredProviders() ([]schemas.ModelProvider, error) {
@@ -153,18 +297,22 @@ func (a *Account) GetConfigForProvider(provider schemas.ModelProvider) (*schemas
 	if len(specs) == 0 {
 		return nil, fmt.Errorf("provider %q is not configured", provider)
 	}
-	// 厂商目录条目委托给 openai 协议实现,并按厂商预置覆盖请求路径;
-	// 这样同一协议下可以并存多个厂商,各自持有独立 endpoint 与密钥。
-	baseURL := providerBaseURL(provider, specs)
+	spec := specs[0]
+	proto := spec.EffectiveProtocol()
+	baseType, err := BaseProviderTypeForProtocol(proto)
+	if err != nil {
+		return nil, fmt.Errorf("provider %q: %w", provider, err)
+	}
+	baseURL, overrides := resolveSpecBaseURLAndOverrides(spec, proto, baseType)
 	timeout := 60
 	retries := 1
-	if specs[0].TimeoutSeconds > 0 {
-		timeout = specs[0].TimeoutSeconds
+	if spec.TimeoutSeconds > 0 {
+		timeout = spec.TimeoutSeconds
 	}
-	if specs[0].MaxRetries >= 0 {
-		retries = specs[0].MaxRetries
+	if spec.MaxRetries >= 0 {
+		retries = spec.MaxRetries
 	}
-	proxyConfig, err := BuildProxyConfig(specs[0].ProxyType, specs[0].ProxyURL)
+	proxyConfig, err := BuildProxyConfig(spec.ProxyType, spec.ProxyURL)
 	if err != nil {
 		return nil, fmt.Errorf("provider %q: %w", provider, err)
 	}
@@ -173,26 +321,16 @@ func (a *Account) GetConfigForProvider(provider schemas.ModelProvider) (*schemas
 			BaseURL:                        baseURL,
 			DefaultRequestTimeoutInSeconds: timeout,
 			MaxRetries:                     retries,
-			AllowPrivateNetwork:            strings.Contains(baseURL, "localhost") || strings.Contains(baseURL, "127.0.0.1"),
+			AllowPrivateNetwork:            strings.Contains(baseURL, "localhost") || strings.Contains(baseURL, "127.0.0.1") || strings.Contains(baseURL, "[::1]"),
 		},
 		ConcurrencyAndBufferSize: schemas.DefaultConcurrencyAndBufferSize,
 		ProxyConfig:              proxyConfig,
 	}
-	if vendor := VendorByID(string(provider)); vendor != nil {
-		vendorBaseURL := vendor.BaseURL
-		if baseURL != "" {
-			vendorBaseURL = baseURL
-		}
-		config.NetworkConfig.BaseURL = vendorBaseURL
-		config.NetworkConfig.AllowPrivateNetwork = strings.Contains(vendorBaseURL, "localhost") || strings.Contains(vendorBaseURL, "127.0.0.1")
+	if supportsPerAccountCustomProvider(baseType) {
 		config.CustomProviderConfig = &schemas.CustomProviderConfig{
-			BaseProviderType: schemas.OpenAI,
-			RequestPathOverrides: map[schemas.RequestType]string{
-				schemas.ChatCompletionRequest:       vendor.ChatPath(),
-				schemas.ChatCompletionStreamRequest: vendor.ChatPath(),
-				schemas.EmbeddingRequest:            vendor.EmbeddingsPath(),
-				schemas.ListModelsRequest:           vendor.ModelsPath(),
-			},
+			BaseProviderType:     baseType,
+			AllowedRequests:      allowedRequestsForProtocol(proto),
+			RequestPathOverrides: overrides,
 		}
 	}
 	return config, nil
@@ -296,7 +434,8 @@ func (e *Engine) Reload(ctx context.Context, specs []ProviderSpec) error {
 	return nil
 }
 
-// UpdateProviderProxy hot-swaps the proxy settings of a single provider without rebuilding other providers.
+// UpdateProviderProxy hot-swaps the proxy settings for a logical provider (all its accounts)
+// or a specific engine provider key without rebuilding unrelated providers.
 func (e *Engine) UpdateProviderProxy(provider schemas.ModelProvider, proxyType, proxyURL string) error {
 	e.updateMu.Lock()
 	defer e.updateMu.Unlock()
@@ -307,14 +446,20 @@ func (e *Engine) UpdateProviderProxy(provider schemas.ModelProvider, proxyType, 
 	if client == nil || account == nil {
 		return nil
 	}
-	changed, exists, err := account.SetProviderProxy(provider, proxyType, proxyURL)
-	if err != nil {
-		return err
+	targets := account.EngineKeysForLogical(provider)
+	for _, target := range targets {
+		changed, exists, err := account.SetProviderProxy(target, proxyType, proxyURL)
+		if err != nil {
+			return err
+		}
+		if !exists || !changed {
+			continue
+		}
+		if err := client.UpdateProvider(target); err != nil {
+			return err
+		}
 	}
-	if !exists || !changed {
-		return nil
-	}
-	return client.UpdateProvider(provider)
+	return nil
 }
 
 func (e *Engine) Close() {

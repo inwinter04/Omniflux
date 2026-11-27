@@ -169,7 +169,7 @@ func loadProviderSpecs(ctx context.Context, pool *pgxpool.Pool, masterKey []byte
 	}
 
 	rows, err := pool.Query(ctx, `
-  SELECT a.id, a.provider, a.name, a.base_url, c.ciphertext
+  SELECT a.id, a.provider, a.api_protocol, a.name, a.base_url, c.ciphertext
   FROM provider_accounts a
   JOIN provider_credentials c ON c.provider_account_id = a.id
   WHERE a.status = 'active'
@@ -181,10 +181,10 @@ func loadProviderSpecs(ctx context.Context, pool *pgxpool.Pool, masterKey []byte
 	specs := []bifrostx.ProviderSpec{}
 	for rows.Next() {
 		var id uuid.UUID
-		var provider, name string
+		var provider, apiProtocol, name string
 		var baseURL *string
 		var ciphertext []byte
-		if err := rows.Scan(&id, &provider, &name, &baseURL, &ciphertext); err != nil {
+		if err := rows.Scan(&id, &provider, &apiProtocol, &name, &baseURL, &ciphertext); err != nil {
 			return nil, err
 		}
 		plaintext, err := vault.Decrypt(masterKey, ciphertext)
@@ -197,12 +197,13 @@ func loadProviderSpecs(ctx context.Context, pool *pgxpool.Pool, masterKey []byte
 		}
 		proxy := proxies[string(providerKey)]
 		spec := bifrostx.ProviderSpec{
-			Provider:  provider,
-			AccountID: id.String(),
-			Name:      name,
-			APIKey:    string(plaintext),
-			ProxyType: proxy.Type,
-			ProxyURL:  proxy.URL,
+			Provider:    provider,
+			APIProtocol: apiProtocol,
+			AccountID:   id.String(),
+			Name:        name,
+			APIKey:      string(plaintext),
+			ProxyType:   proxy.Type,
+			ProxyURL:    proxy.URL,
 		}
 		if baseURL != nil {
 			spec.BaseURL = *baseURL

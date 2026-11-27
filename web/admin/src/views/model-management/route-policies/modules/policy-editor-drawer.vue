@@ -66,6 +66,12 @@ const streamConditionOptions = computed(() => [
   { label: $t('business.rule-non-stream-only'), value: 'non_stream' }
 ]);
 
+const sessionAffinityStrategyOptions = computed(() => [
+  { label: $t('business.session-affinity-strategy-auto'), value: 'auto' },
+  { label: $t('business.session-affinity-strategy-user-id'), value: 'user_id' },
+  { label: $t('business.session-affinity-strategy-header-only'), value: 'header_only' }
+]);
+
 watch(
   () => [props.show, props.mode, props.policy],
   () => {
@@ -470,6 +476,33 @@ async function handleSave() {
                 />
               </NFormItemGi>
             </NGrid>
+
+            <NDivider title-placement="left">{{ $t('business.session-affinity') }}</NDivider>
+            <NGrid :cols="3" :x-gap="16">
+              <NFormItemGi :label="$t('business.session-affinity-enabled')">
+                <NSwitch v-model:value="draft.session_affinity.enabled" />
+              </NFormItemGi>
+              <NFormItemGi :label="$t('business.session-affinity-ttl')">
+                <NInputNumber
+                  v-model:value="draft.session_affinity.ttl_seconds"
+                  :min="30"
+                  :max="86400"
+                  :step="60"
+                  :disabled="!draft.session_affinity.enabled"
+                  class="w-full"
+                />
+              </NFormItemGi>
+              <NFormItemGi :label="$t('business.session-affinity-strategy')">
+                <NSelect
+                  v-model:value="draft.session_affinity.key_strategy"
+                  :options="sessionAffinityStrategyOptions"
+                  :disabled="!draft.session_affinity.enabled"
+                />
+              </NFormItemGi>
+            </NGrid>
+            <NAlert type="info" :bordered="false" class="mt-4px">
+              {{ $t('business.session-affinity-hint') }}
+            </NAlert>
           </NTabPane>
         </NTabs>
       </NForm>

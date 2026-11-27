@@ -31,6 +31,7 @@ declare namespace Api {
       registration_organization_id: string | null;
       registration_role: 'pending' | 'developer' | 'viewer';
       email_verification_required: boolean;
+      gateway_base_url: string;
       updated_by: string | null;
       updated_at: string;
     }
@@ -40,6 +41,12 @@ declare namespace Api {
       registration_organization_id: string | null;
       email_verification_required: boolean;
       registration_role: 'pending' | 'developer' | 'viewer';
+      gateway_base_url: string;
+    }
+
+    interface GatewayInfo {
+      gateway_base_url: string;
+      configured: boolean;
     }
 
     interface Project {
@@ -68,6 +75,14 @@ declare namespace Api {
 
     type ProviderProxyType = 'none' | 'http' | 'socks5';
     type PlatformProxyType = 'http' | 'socks5';
+    type ApiProtocol =
+      | 'openai_chat'
+      | 'openai_responses'
+      | 'anthropic_messages'
+      | 'gemini_native'
+      | 'azure_openai'
+      | 'bedrock'
+      | 'vertex';
 
     interface HeartbeatBucket {
       bucket_start: string;
@@ -226,6 +241,7 @@ declare namespace Api {
     interface ProviderAccount {
       id: string;
       provider: string;
+      api_protocol: string;
       name: string;
       region: string | null;
       base_url: string | null;
@@ -369,6 +385,7 @@ declare namespace Api {
       family_id: string;
       version_kind: string;
       region_kind: string;
+      default_protocol?: string;
       base_url: string;
       api_base_url: string;
       website_url: string;
@@ -401,6 +418,7 @@ declare namespace Api {
 
     interface CreateProviderAccountParams {
       provider: string;
+      api_protocol?: string;
       name: string;
       region?: string;
       base_url?: string;
@@ -472,6 +490,12 @@ declare namespace Api {
       half_open_max_calls: number;
     }
 
+    interface RouteSessionAffinityPolicy {
+      enabled: boolean;
+      ttl_seconds: number;
+      key_strategy: 'auto' | 'user_id' | 'header_only';
+    }
+
     interface BoundModelServiceSummary {
       id: string;
       name: string;
@@ -490,6 +514,7 @@ declare namespace Api {
       rules: RouteRule[];
       retry_policy: RouteRetryPolicy;
       circuit_breaker: RouteCircuitBreakerPolicy;
+      session_affinity?: RouteSessionAffinityPolicy;
       baseline_candidate_id: string | null;
       fallback_limit: number;
       provider_timeout_ms: number;
@@ -513,6 +538,7 @@ declare namespace Api {
       rules?: RouteRule[];
       retry_policy?: RouteRetryPolicy;
       circuit_breaker?: RouteCircuitBreakerPolicy;
+      session_affinity?: RouteSessionAffinityPolicy;
       baseline_candidate_id?: string | null;
       fallback_limit?: number;
       provider_timeout_ms?: number;
@@ -529,6 +555,8 @@ declare namespace Api {
       weight: number;
       input_cost_per_million: number;
       output_cost_per_million: number;
+      cache_read_cost_per_million: number | null;
+      cache_write_cost_per_million: number | null;
       quality_score: number;
       cost_currency: string;
       context_window: number | null;
@@ -560,8 +588,8 @@ declare namespace Api {
       weight: number;
       input_cost_per_million: number;
       output_cost_per_million: number;
-      quality_score: number;
-      cost_currency?: string;
+      cache_read_cost_per_million?: number | null;
+      cache_write_cost_per_million?: number | null;
       context_window?: number | null;
       capabilities?: string[];
       tags?: string[];
@@ -631,6 +659,7 @@ declare namespace Api {
 
     interface UpdateProviderAccountParams {
       name: string;
+      api_protocol?: string;
       region?: string;
       base_url?: string;
       billing_currency?: string;
@@ -925,6 +954,7 @@ declare namespace Api {
       failed_requests: number;
       total_input_tokens: number;
       total_output_tokens: number;
+      total_cache_creation_tokens?: number;
       total_cost: string;
       cost_currency: string;
       by_model: UsageModelSummary[];
@@ -936,6 +966,7 @@ declare namespace Api {
       by_state: UsageScopeSummary[];
       by_source: UsageScopeSummary[];
       by_provider: UsageScopeSummary[];
+      by_protocol?: UsageScopeSummary[];
       by_route_policy: UsageScopeSummary[];
       by_error_type: UsageScopeSummary[];
       by_day: UsageDaySummary[];
@@ -957,7 +988,9 @@ declare namespace Api {
       input_tokens: number;
       output_tokens: number;
       cached_tokens: number;
+      cache_creation_tokens?: number;
       reasoning_tokens: number;
+      protocol?: string;
       first_token_ms: number | null;
       total_ms: number | null;
       cost: string;
@@ -974,6 +1007,7 @@ declare namespace Api {
       model_service_id?: string;
       state?: string;
       source?: string;
+      protocol?: string;
       start_time?: string;
       end_time?: string;
     }
@@ -1280,6 +1314,7 @@ declare namespace Api {
       rules?: RouteRule[];
       retry_policy?: RouteRetryPolicy;
       circuit_breaker?: RouteCircuitBreakerPolicy;
+      session_affinity?: RouteSessionAffinityPolicy;
       baseline_candidate_id?: string | null;
       fallback_limit?: number;
       provider_timeout_ms?: number;

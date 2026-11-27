@@ -205,14 +205,14 @@ func (d Deps) loadCandidateHealthWithBreaker(ctx context.Context, orgID uuid.UUI
 func (d Deps) loadPolicyByID(ctx context.Context, orgID, policyID uuid.UUID) (routePolicy, bool, error) {
 	var p routePolicy
 	var pid uuid.UUID
-	var weightsRaw, constraintsRaw, rulesRaw, retryRaw, cbRaw []byte
+	var weightsRaw, constraintsRaw, rulesRaw, retryRaw, cbRaw, affinityRaw []byte
 	err := d.Pool.QueryRow(ctx, `
 		SELECT id, version, strategy, compare_currency, fallback_limit, provider_timeout_ms, first_token_timeout_ms,
-		       weights, constraints, rules, retry_policy, circuit_breaker
+		       weights, constraints, rules, retry_policy, circuit_breaker, session_affinity
 		FROM route_policies
 		WHERE id = $1 AND organization_id = $2 AND status = 'active'
 	`, policyID, orgID).Scan(&pid, &p.Version, &p.Strategy, &p.CompareCurrency, &p.FallbackLimit,
-		&p.ProviderTimeoutMS, &p.FirstTokenTimeoutMS, &weightsRaw, &constraintsRaw, &rulesRaw, &retryRaw, &cbRaw)
+		&p.ProviderTimeoutMS, &p.FirstTokenTimeoutMS, &weightsRaw, &constraintsRaw, &rulesRaw, &retryRaw, &cbRaw, &affinityRaw)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return defaultPolicy, false, nil
 	}
@@ -225,6 +225,7 @@ func (d Deps) loadPolicyByID(ctx context.Context, orgID, policyID uuid.UUID) (ro
 	p.Rules = ParseRules(rulesRaw)
 	p.RetryPolicy = ParseRetryPolicy(retryRaw)
 	p.CircuitBreaker = ParseCircuitBreakerPolicy(cbRaw)
+	p.SessionAffinity = ParseSessionAffinityPolicy(affinityRaw)
 	if p.ProviderTimeoutMS <= 0 {
 		p.ProviderTimeoutMS = defaultPolicy.ProviderTimeoutMS
 	}
@@ -273,8 +274,9 @@ func (d Deps) loadServiceWithPolicyOverride(ctx context.Context, orgID uuid.UUID
 		svc.Policy = defaultPolicy
 	}
 	rows, err := d.Pool.Query(ctx, `
-		SELECT c.id, a.provider, a.id, a.name, c.upstream_model, c.priority, c.weight,
-		       c.input_cost_per_million, c.output_cost_per_million, c.cost_currency, c.quality_score,
+		SELECT c.id, a.provider, a.api_protocol, a.id, a.name, c.upstream_model, c.priority, c.weight,
+		       c.input_cost_per_million, c.output_cost_per_million, c.cache_read_cost_per_million, c.cache_write_cost_per_million,
+		       c.cost_currency, c.quality_score,
 		       c.context_window, c.capabilities, c.tags
 		FROM model_candidates c
 		JOIN provider_accounts a ON a.id = c.provider_account_id
@@ -287,8 +289,9 @@ func (d Deps) loadServiceWithPolicyOverride(ctx context.Context, orgID uuid.UUID
 	defer rows.Close()
 	for rows.Next() {
 		var c candidate
-		if err := rows.Scan(&c.ID, &c.Provider, &c.AccountID, &c.AccountName, &c.UpstreamModel,
-			&c.Priority, &c.Weight, &c.InputCostPerM, &c.OutputCostPerM, &c.CostCurrency, &c.Quality,
+		if err := rows.Scan(&c.ID, &c.Provider, &c.APIProtocol, &c.AccountID, &c.AccountName, &c.UpstreamModel,
+			&c.Priority, &c.Weight, &c.InputCostPerM, &c.OutputCostPerM, &c.CacheReadCostPerM, &c.CacheWriteCostPerM,
+			&c.CostCurrency, &c.Quality,
 			&c.ContextWindow, &c.Capabilities, &c.Tags); err != nil {
 			return svc, false, err
 		}
@@ -298,6 +301,24 @@ func (d Deps) loadServiceWithPolicyOverride(ctx context.Context, orgID uuid.UUID
 		return svc, false, err
 	}
 	return svc, len(svc.Candidates) > 0, nil
+}
+
+func deriveChatSessionKey(r *http.Request, meta chatRequestMeta, strategy string) string {
+	var promptCacheKey, metadataUserID string
+	if meta.Params != nil {
+		if meta.Params.PromptCacheKey != nil {
+			promptCacheKey = *meta.Params.PromptCacheKey
+		}
+		if meta.Params.Metadata != nil {
+			if uid, ok := (*meta.Params.Metadata)["user_id"]; ok {
+				metadataUserID = strings.TrimSpace(fmt.Sprint(uid))
+			}
+		}
+		if metadataUserID == "" && meta.Params.User != nil {
+			metadataUserID = *meta.Params.User
+		}
+	}
+	return DeriveSessionKey(r, promptCacheKey, "", metadataUserID, strategy)
 }
 
 // ChatCompletions 处理 POST /v1/chat/completions。
@@ -337,12 +358,19 @@ func (d Deps) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	reqCtx := ExtractChatRouteContext(meta, keyCtx, r.Header)
+	sessionKey := deriveChatSessionKey(r, meta, svc.Policy.SessionAffinity.KeyStrategy)
+	reqCtx.SessionKey = sessionKey
+	if svc.Policy.SessionAffinity.Enabled && sessionKey != "" {
+		reqCtx.PreferredCandidateID = d.Affinity().Get(r.Context(), svc.ID.String(), sessionKey)
+	}
 	scores := d.loadCandidateHealthWithBreaker(r.Context(), keyCtx.OrganizationID, svc.Candidates, svc.Policy.CircuitBreaker)
 	var rr uint64
 	if svc.Policy.Strategy == StrategyRoundRobin {
 		rr = d.Breaker().NextRoundRobin(r.Context(), svc.ID.String())
 	}
 	decision := EvaluateRoute(svc.Candidates, svc.Policy, reqCtx, scores, d.fxRatesSnapshot(), rr)
+	decision.SessionKey = sessionKey
+	decision.Protocol = ClientProtocolOpenAIChat
 	if len(decision.Chain) == 0 {
 		apiError(w, http.StatusNotFound, "no_eligible_candidates", "No upstream model candidate matches the route policy constraints or request requirements.",
 			apiErrorOptions{Reason: "no_eligible_candidates", Param: "model", Params: map[string]any{"model": meta.Model}})
@@ -471,7 +499,7 @@ func (d Deps) executeNonStreamChain(ctx context.Context, svc resolvedService, ch
 			})
 			continue
 		}
-		provider, err := bifrostx.MapProvider(cand.Provider)
+		provider, err := bifrostx.EngineProviderKey(cand.AccountID, cand.Provider, cand.APIProtocol)
 		if err != nil {
 			attempts = append(attempts, AttemptRecord{
 				CandidateID: cand.ID, Provider: cand.Provider, UpstreamModel: cand.UpstreamModel,
@@ -508,7 +536,7 @@ func (d Deps) executeNonStreamChain(ctx context.Context, svc resolvedService, ch
 			lastErr = bifrostErr
 			statusCode, errCode, errType, errMsg := extractBifrostErrorInfo(bifrostErr)
 			if d.OnTransportError != nil && statusCode == 0 {
-				d.OnTransportError(string(provider))
+				d.OnTransportError(logicalProviderName(cand.Provider))
 			}
 			action := ClassifyAttemptOutcome(statusCode, errCode, errType, rp)
 			d.Breaker().RecordFailure(ctx, cand.ID, statusCode, errCode, errType, rp, cb)
@@ -555,7 +583,7 @@ func (d Deps) handleNonStreamChain(r *http.Request, w http.ResponseWriter, reque
 	params *schemas.ChatParameters, start time.Time, observer *completionObserver) {
 	served, resp, attempts, bifrostErr := d.executeNonStreamChain(r.Context(), svc, decision.Chain, input, params)
 	if bifrostErr != nil {
-		d.recordChainFailure(r.Context(), keyCtx, requestID, decision.Chain, attempts, bifrostErr, start, nil, usageSnapshot{})
+		d.recordChainFailureWithProtocol(r.Context(), keyCtx, requestID, decision.Chain, attempts, bifrostErr, start, nil, usageSnapshot{}, stringOrDefault(decision.Protocol, ClientProtocolOpenAIChat))
 		if observer != nil {
 			observer.onComplete("failed", DebugResult{TotalMS: int(time.Since(start).Milliseconds())}, errors.New(errorMessageOf(bifrostErr)))
 		}
@@ -565,25 +593,22 @@ func (d Deps) handleNonStreamChain(r *http.Request, w http.ResponseWriter, reque
 
 	total := int(time.Since(start).Milliseconds())
 	usage := usageFromBifrost(resp.Usage)
-	servedProvider := string(resp.ExtraFields.RoutingInfo.Provider)
-	servedModel := resp.ExtraFields.RoutingInfo.Model
+	servedProvider := logicalProviderName(served.Provider)
 	if servedProvider == "" {
-		if mapped, err := bifrostx.MapProvider(served.Provider); err == nil {
-			servedProvider = string(mapped)
-		} else {
-			servedProvider = served.Provider
-		}
+		servedProvider = logicalProviderName(string(resp.ExtraFields.RoutingInfo.Provider))
 	}
+	servedModel := resp.ExtraFields.RoutingInfo.Model
 	if servedModel == "" {
 		servedModel = served.UpstreamModel
 	}
 
 	candidateID := uuidPtr(served.ID, served.ID != "")
+	snap := usageSnapshot(usage)
 	inputTokens, outputTokens, cachedTokens, reasoningTokens := usage.tokens()
 	cost := 0.0
 	usageSource := stringPtrNil("computed", usage.hasTokens())
 	if usage.hasTokens() {
-		cost = served.costUSD(inputTokens, outputTokens)
+		cost = served.costForUsage(snap)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -592,22 +617,29 @@ func (d Deps) handleNonStreamChain(r *http.Request, w http.ResponseWriter, reque
 		d.Logger.Warn("write chat completion response failed", "request_id", requestID, "error", err)
 	}
 
+	if svc.Policy.SessionAffinity.Enabled && decision.SessionKey != "" && served.ID != "" {
+		d.Affinity().Set(context.WithoutCancel(r.Context()), svc.ID.String(), decision.SessionKey, served.ID,
+			time.Duration(svc.Policy.SessionAffinity.TTLSeconds)*time.Second)
+	}
+
 	store := usageStore{pool: d.Pool, fxRates: d.fxRatesSnapshot()}
 	finalizeErr := store.finalize(context.WithoutCancel(r.Context()), requestID, finalUsage{
-		State:           "success",
-		StatusCode:      intPtr(http.StatusOK),
-		CandidateID:     candidateID,
-		Provider:        stringPtr(servedProvider),
-		UpstreamModel:   stringPtr(servedModel),
-		InputTokens:     inputTokens,
-		OutputTokens:    outputTokens,
-		CachedTokens:    cachedTokens,
-		ReasoningTokens: reasoningTokens,
-		Cost:            cost,
-		Currency:        currencyOf(served),
-		TotalMS:         total,
-		UsageSource:     usageSource,
-		AttemptTrail:    attemptTrailFromRecords(attempts),
+		State:               "success",
+		StatusCode:          intPtr(http.StatusOK),
+		CandidateID:         candidateID,
+		Provider:            stringPtr(servedProvider),
+		UpstreamModel:       stringPtr(servedModel),
+		InputTokens:         inputTokens,
+		OutputTokens:        outputTokens,
+		CachedTokens:        cachedTokens,
+		CacheCreationTokens: snap.CacheCreationTokens,
+		ReasoningTokens:     reasoningTokens,
+		Protocol:            stringOrDefault(decision.Protocol, ClientProtocolOpenAIChat),
+		Cost:                cost,
+		Currency:            currencyOf(served),
+		TotalMS:             total,
+		UsageSource:         usageSource,
+		AttemptTrail:        attemptTrailFromRecords(attempts),
 	})
 	if finalizeErr != nil {
 		d.Logger.Warn("finalize usage failed", "request_id", requestID, "error", finalizeErr)
@@ -654,6 +686,11 @@ func extractBifrostErrorInfo(err *schemas.BifrostError) (statusCode int, errCode
 
 func (d Deps) recordChainFailure(ctx context.Context, keyCtx *apiKeyContext, requestID uuid.UUID, chain routeChain,
 	attempts []AttemptRecord, bifrostErr *schemas.BifrostError, start time.Time, firstTokenMS *int, partial usageSnapshot) {
+	d.recordChainFailureWithProtocol(ctx, keyCtx, requestID, chain, attempts, bifrostErr, start, firstTokenMS, partial, "")
+}
+
+func (d Deps) recordChainFailureWithProtocol(ctx context.Context, keyCtx *apiKeyContext, requestID uuid.UUID, chain routeChain,
+	attempts []AttemptRecord, bifrostErr *schemas.BifrostError, start time.Time, firstTokenMS *int, partial usageSnapshot, protocol string) {
 	total := int(time.Since(start).Milliseconds())
 	statusCode := http.StatusBadGateway
 	if bifrostErr != nil && bifrostErr.StatusCode != nil && *bifrostErr.StatusCode >= 400 && *bifrostErr.StatusCode < 600 {
@@ -676,10 +713,8 @@ func (d Deps) recordChainFailure(ctx context.Context, keyCtx *apiKeyContext, req
 	}
 
 	var attemptedProvider *string
-	if mapped, err := bifrostx.MapProvider(lastCandidate.Provider); err == nil {
-		attemptedProvider = stringPtr(string(mapped))
-	} else if lastCandidate.Provider != "" {
-		attemptedProvider = stringPtr(lastCandidate.Provider)
+	if lastCandidate.Provider != "" {
+		attemptedProvider = stringPtr(logicalProviderName(lastCandidate.Provider))
 	}
 	var attemptedModel *string
 	if lastCandidate.UpstreamModel != "" {
@@ -689,27 +724,29 @@ func (d Deps) recordChainFailure(ctx context.Context, keyCtx *apiKeyContext, req
 	cost := 0.0
 	currency := currencyOf(lastCandidate)
 	if partial.hasTokens() && lastCandidate.ID != "" {
-		cost = lastCandidate.costUSD(partial.InputTokens, partial.OutputTokens)
+		cost = lastCandidate.costForUsage(partial)
 	}
 	store := usageStore{pool: d.Pool, fxRates: d.fxRatesSnapshot()}
 	if err := store.finalize(context.WithoutCancel(ctx), requestID, finalUsage{
-		State:           "failed",
-		StatusCode:      intPtr(statusCode),
-		CandidateID:     uuidPtr(lastCandidate.ID, lastCandidate.ID != ""),
-		Provider:        attemptedProvider,
-		UpstreamModel:   attemptedModel,
-		InputTokens:     partial.InputTokens,
-		OutputTokens:    partial.OutputTokens,
-		CachedTokens:    partial.CachedTokens,
-		ReasoningTokens: partial.ReasoningTokens,
-		Cost:            cost,
-		Currency:        currency,
-		FirstTokenMS:    firstTokenMS,
-		TotalMS:         total,
-		UsageSource:     usageSource,
-		ErrorType:       stringPtr(errType),
-		ErrorMessage:    stringPtr(message),
-		AttemptTrail:    attemptTrailFromRecords(attempts),
+		State:               "failed",
+		StatusCode:          intPtr(statusCode),
+		CandidateID:         uuidPtr(lastCandidate.ID, lastCandidate.ID != ""),
+		Provider:            attemptedProvider,
+		UpstreamModel:       attemptedModel,
+		InputTokens:         partial.InputTokens,
+		OutputTokens:        partial.OutputTokens,
+		CachedTokens:        partial.CachedTokens,
+		CacheCreationTokens: partial.CacheCreationTokens,
+		ReasoningTokens:     partial.ReasoningTokens,
+		Protocol:            protocol,
+		Cost:                cost,
+		Currency:            currency,
+		FirstTokenMS:        firstTokenMS,
+		TotalMS:             total,
+		UsageSource:         usageSource,
+		ErrorType:           stringPtr(errType),
+		ErrorMessage:        stringPtr(message),
+		AttemptTrail:        attemptTrailFromRecords(attempts),
 	}); err != nil {
 		d.Logger.Warn("finalize failed usage error", "request_id", requestID, "error", err)
 	}
@@ -804,35 +841,38 @@ func (d Deps) ExecutePlayground(ctx context.Context, orgID, userID, serviceID uu
 
 	total := int(time.Since(start).Milliseconds())
 	usage := usageFromBifrost(resp.Usage)
-	servedProvider := string(resp.ExtraFields.RoutingInfo.Provider)
+	servedProvider := logicalProviderName(served.Provider)
 	if servedProvider == "" {
-		servedProvider = served.Provider
+		servedProvider = logicalProviderName(string(resp.ExtraFields.RoutingInfo.Provider))
 	}
 	servedModel := resp.ExtraFields.RoutingInfo.Model
 	if servedModel == "" {
 		servedModel = served.UpstreamModel
 	}
+	snap := usageSnapshot(usage)
 	inTok, outTok, cachedTok, reasonTok := usage.tokens()
 	cost := 0.0
 	if usage.hasTokens() {
-		cost = served.costUSD(inTok, outTok)
+		cost = served.costForUsage(snap)
 	}
 	store := usageStore{pool: d.Pool, fxRates: d.fxRatesSnapshot()}
 	if err := store.finalize(context.WithoutCancel(ctx), requestID, finalUsage{
-		State:           "success",
-		StatusCode:      intPtr(http.StatusOK),
-		CandidateID:     uuidPtr(served.ID, served.ID != ""),
-		Provider:        stringPtr(servedProvider),
-		UpstreamModel:   stringPtr(servedModel),
-		InputTokens:     inTok,
-		OutputTokens:    outTok,
-		CachedTokens:    cachedTok,
-		ReasoningTokens: reasonTok,
-		Cost:            cost,
-		Currency:        currencyOf(served),
-		TotalMS:         total,
-		UsageSource:     stringPtrNil("computed", usage.hasTokens()),
-		AttemptTrail:    attemptTrailFromRecords(attempts),
+		State:               "success",
+		StatusCode:          intPtr(http.StatusOK),
+		CandidateID:         uuidPtr(served.ID, served.ID != ""),
+		Provider:            stringPtr(servedProvider),
+		UpstreamModel:       stringPtr(servedModel),
+		InputTokens:         inTok,
+		OutputTokens:        outTok,
+		CachedTokens:        cachedTok,
+		CacheCreationTokens: snap.CacheCreationTokens,
+		ReasoningTokens:     reasonTok,
+		Protocol:            ClientProtocolOpenAIChat,
+		Cost:                cost,
+		Currency:            currencyOf(served),
+		TotalMS:             total,
+		UsageSource:         stringPtrNil("computed", usage.hasTokens()),
+		AttemptTrail:        attemptTrailFromRecords(attempts),
 	}); err != nil {
 		return PlaygroundResult{}, fmt.Errorf("finalize playground usage: %w", err)
 	}

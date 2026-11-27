@@ -33,6 +33,14 @@ export function defaultCircuitBreaker(): Api.Management.RouteCircuitBreakerPolic
   };
 }
 
+export function defaultSessionAffinity(): Api.Management.RouteSessionAffinityPolicy {
+  return {
+    enabled: false,
+    ttl_seconds: 1800,
+    key_strategy: 'auto'
+  };
+}
+
 export const ALL_STRATEGIES = [
   'balanced',
   'cost_first',
@@ -74,7 +82,10 @@ export function useCapabilityOptions() {
     { label: $t('business.cap-tools'), value: 'tools' },
     { label: $t('business.cap-reasoning'), value: 'reasoning' },
     { label: $t('business.cap-json-mode'), value: 'json_mode' },
-    { label: $t('business.cap-streaming'), value: 'streaming' }
+    { label: $t('business.cap-streaming'), value: 'streaming' },
+    { label: $t('business.cap-prompt-caching'), value: 'prompt_caching' },
+    { label: $t('business.cap-responses-api'), value: 'responses_api' },
+    { label: $t('business.cap-pdf-input'), value: 'pdf_input' }
   ]);
 }
 
@@ -109,6 +120,7 @@ export interface PolicyDraftModel {
   rules: Api.Management.RouteRule[];
   retry_policy: Api.Management.RouteRetryPolicy;
   circuit_breaker: Api.Management.RouteCircuitBreakerPolicy;
+  session_affinity: Api.Management.RouteSessionAffinityPolicy;
 }
 
 export function createEmptyPolicyDraft(): PolicyDraftModel {
@@ -131,7 +143,8 @@ export function createEmptyPolicyDraft(): PolicyDraftModel {
     },
     rules: [],
     retry_policy: defaultRetryPolicy(),
-    circuit_breaker: defaultCircuitBreaker()
+    circuit_breaker: defaultCircuitBreaker(),
+    session_affinity: defaultSessionAffinity()
   };
 }
 
@@ -185,7 +198,8 @@ export function draftFromPolicy(row: Api.Management.RoutePolicy): PolicyDraftMod
       }
     })),
     retry_policy: { ...defaultRetryPolicy(), ...(row.retry_policy ?? {}) },
-    circuit_breaker: { ...defaultCircuitBreaker(), ...(row.circuit_breaker ?? {}) }
+    circuit_breaker: { ...defaultCircuitBreaker(), ...(row.circuit_breaker ?? {}) },
+    session_affinity: { ...defaultSessionAffinity(), ...(row.session_affinity ?? {}) }
   };
 }
 
@@ -248,6 +262,7 @@ export function buildPolicyPayload(draft: PolicyDraftModel): Api.Management.Crea
     constraints,
     rules: sanitizedRules,
     retry_policy: { ...draft.retry_policy },
-    circuit_breaker: { ...draft.circuit_breaker }
+    circuit_breaker: { ...draft.circuit_breaker },
+    session_affinity: { ...draft.session_affinity }
   };
 }

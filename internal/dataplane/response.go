@@ -35,14 +35,15 @@ func attemptTrailFromRecords(records []AttemptRecord) []byte {
 
 // usageSnapshot 是流式过程中累积的 token 用量。
 type usageSnapshot struct {
-	InputTokens     int64
-	OutputTokens    int64
-	CachedTokens    int64
-	ReasoningTokens int64
+	InputTokens         int64
+	OutputTokens        int64
+	CachedTokens        int64
+	CacheCreationTokens int64
+	ReasoningTokens     int64
 }
 
 func (u usageSnapshot) hasTokens() bool {
-	return u.InputTokens > 0 || u.OutputTokens > 0 || u.CachedTokens > 0 || u.ReasoningTokens > 0
+	return u.InputTokens > 0 || u.OutputTokens > 0 || u.CachedTokens > 0 || u.CacheCreationTokens > 0 || u.ReasoningTokens > 0
 }
 
 type usageInfo usageSnapshot
@@ -58,8 +59,27 @@ func usageFromBifrost(u *schemas.BifrostLLMUsage) usageInfo {
 	}
 	if u.PromptTokensDetails != nil {
 		info.CachedTokens = int64(u.PromptTokensDetails.CachedReadTokens)
+		info.CacheCreationTokens = int64(u.PromptTokensDetails.CachedWriteTokens)
 	}
 	return info
+}
+
+func usageFromResponses(u *schemas.ResponsesResponseUsage) usageSnapshot {
+	if u == nil {
+		return usageSnapshot{}
+	}
+	snap := usageSnapshot{
+		InputTokens:  int64(u.InputTokens),
+		OutputTokens: int64(u.OutputTokens),
+	}
+	if u.InputTokensDetails != nil {
+		snap.CachedTokens = int64(u.InputTokensDetails.CachedReadTokens)
+		snap.CacheCreationTokens = int64(u.InputTokensDetails.CachedWriteTokens)
+	}
+	if u.OutputTokensDetails != nil {
+		snap.ReasoningTokens = int64(u.OutputTokensDetails.ReasoningTokens)
+	}
+	return snap
 }
 
 func (u usageInfo) tokens() (input, output, cached, reasoning int64) {

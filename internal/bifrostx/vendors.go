@@ -18,15 +18,16 @@ const (
 // 换算成 Omniflux 数据面的 OpenAI Chat Completions 口径:BaseURL 为 API 根地址,
 // URLPath 为其下的接口路径前缀(拼接 /chat/completions 等得到完整路径)。
 type vendorEntry struct {
-	ID          string
-	Name        string
-	Group       VendorGroup
-	BaseURL     string
-	URLPath     string
-	WebsiteURL  string
-	APIKeyURL   string
-	BalanceKind string
-	EditableURL bool
+	ID              string
+	Name            string
+	Group           VendorGroup
+	DefaultProtocol string
+	BaseURL         string
+	URLPath         string
+	WebsiteURL      string
+	APIKeyURL       string
+	BalanceKind     string
+	EditableURL     bool
 }
 
 // vendorCatalog 厂商预置目录,顺序即管理台展示顺序。
@@ -157,18 +158,19 @@ func VendorByID(id string) *vendorEntry {
 
 // VendorCatalogEntry 是下发给管理台的目录条目;不含密钥等敏感信息。
 type VendorCatalogEntry struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Group       string `json:"group"`
-	FamilyID    string `json:"family_id"`
-	VersionKind string `json:"version_kind"`
-	RegionKind  string `json:"region_kind"`
-	BaseURL     string `json:"base_url"`
-	APIBaseURL  string `json:"api_base_url"`
-	WebsiteURL  string `json:"website_url"`
-	APIKeyURL   string `json:"api_key_url"`
-	BalanceKind string `json:"balance_kind"`
-	EditableURL bool   `json:"editable_url"`
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Group           string `json:"group"`
+	FamilyID        string `json:"family_id"`
+	VersionKind     string `json:"version_kind"`
+	RegionKind      string `json:"region_kind"`
+	DefaultProtocol string `json:"default_protocol"`
+	BaseURL         string `json:"base_url"`
+	APIBaseURL      string `json:"api_base_url"`
+	WebsiteURL      string `json:"website_url"`
+	APIKeyURL       string `json:"api_key_url"`
+	BalanceKind     string `json:"balance_kind"`
+	EditableURL     bool   `json:"editable_url"`
 }
 
 // VendorCatalog 返回完整厂商目录。
@@ -176,19 +178,24 @@ func VendorCatalog() []VendorCatalogEntry {
 	list := make([]VendorCatalogEntry, 0, len(vendorCatalog))
 	for _, v := range vendorCatalog {
 		presentation := vendorPresentation(v)
+		defaultProto := v.DefaultProtocol
+		if defaultProto == "" {
+			defaultProto = ProtocolOpenAIChat
+		}
 		list = append(list, VendorCatalogEntry{
-			ID:          v.ID,
-			Name:        v.Name,
-			Group:       string(v.Group),
-			FamilyID:    presentation.familyID,
-			VersionKind: presentation.versionKind,
-			RegionKind:  presentation.regionKind,
-			BaseURL:     v.BaseURL,
-			APIBaseURL:  strings.TrimSuffix(v.BaseURL, "/") + v.URLPath,
-			WebsiteURL:  v.WebsiteURL,
-			APIKeyURL:   v.APIKeyURL,
-			BalanceKind: v.BalanceKind,
-			EditableURL: v.EditableURL,
+			ID:              v.ID,
+			Name:            v.Name,
+			Group:           string(v.Group),
+			FamilyID:        presentation.familyID,
+			VersionKind:     presentation.versionKind,
+			RegionKind:      presentation.regionKind,
+			DefaultProtocol: defaultProto,
+			BaseURL:         v.BaseURL,
+			APIBaseURL:      strings.TrimSuffix(v.BaseURL, "/") + v.URLPath,
+			WebsiteURL:      v.WebsiteURL,
+			APIKeyURL:       v.APIKeyURL,
+			BalanceKind:     v.BalanceKind,
+			EditableURL:     v.EditableURL,
 		})
 	}
 	return list
@@ -259,17 +266,40 @@ func vendorPresentation(v vendorEntry) vendorPresentationInfo {
 	return vendorPresentationInfo{familyID: familyID, versionKind: versionKind, regionKind: regionKind}
 }
 
-// vendorChatPath 返回厂商的 Chat Completions 完整路径。
+// ChatPath 返回厂商的 Chat Completions 完整路径。
 func (v *vendorEntry) ChatPath() string {
 	return strings.TrimSuffix(v.URLPath, "/") + "/chat/completions"
 }
 
-// vendorModelsPath 返回厂商的模型列表路径。
+// ResponsesPath 返回厂商的 Responses API 完整路径。
+func (v *vendorEntry) ResponsesPath() string {
+	return strings.TrimSuffix(v.URLPath, "/") + "/responses"
+}
+
+// CompactionPath 返回厂商的 Responses Compaction 完整路径。
+func (v *vendorEntry) CompactionPath() string {
+	return strings.TrimSuffix(v.URLPath, "/") + "/responses/compact"
+}
+
+// CountTokensPath 返回厂商的 CountTokens 完整路径。
+func (v *vendorEntry) CountTokensPath() string {
+	if v.DefaultProtocol == ProtocolAnthropicMessages {
+		return strings.TrimSuffix(v.URLPath, "/") + "/messages/count_tokens"
+	}
+	return strings.TrimSuffix(v.URLPath, "/") + "/responses/input_tokens"
+}
+
+// MessagesPath 返回厂商的 Anthropic Messages 完整路径。
+func (v *vendorEntry) MessagesPath() string {
+	return strings.TrimSuffix(v.URLPath, "/") + "/messages"
+}
+
+// ModelsPath 返回厂商的模型列表路径。
 func (v *vendorEntry) ModelsPath() string {
 	return strings.TrimSuffix(v.URLPath, "/") + "/models"
 }
 
-// vendorEmbeddingsPath 返回厂商的 Embeddings 路径。
+// EmbeddingsPath 返回厂商的 Embeddings 路径。
 func (v *vendorEntry) EmbeddingsPath() string {
 	return strings.TrimSuffix(v.URLPath, "/") + "/embeddings"
 }

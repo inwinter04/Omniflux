@@ -45,6 +45,7 @@ type routePolicyResponse struct {
 	Rules               json.RawMessage            `json:"rules"`
 	RetryPolicy         json.RawMessage            `json:"retry_policy"`
 	CircuitBreaker      json.RawMessage            `json:"circuit_breaker"`
+	SessionAffinity     json.RawMessage            `json:"session_affinity"`
 	BaselineCandidateID *string                    `json:"baseline_candidate_id"`
 	FallbackLimit       int                        `json:"fallback_limit"`
 	ProviderTimeoutMS   int                        `json:"provider_timeout_ms"`
@@ -69,6 +70,7 @@ type createRoutePolicyRequest struct {
 	Rules               json.RawMessage `json:"rules"`
 	RetryPolicy         json.RawMessage `json:"retry_policy"`
 	CircuitBreaker      json.RawMessage `json:"circuit_breaker"`
+	SessionAffinity     json.RawMessage `json:"session_affinity"`
 	BaselineCandidateID *string         `json:"baseline_candidate_id"`
 	FallbackLimit       *int            `json:"fallback_limit"`
 	ProviderTimeoutMS   *int            `json:"provider_timeout_ms"`
@@ -123,7 +125,7 @@ func (d ServerDeps) validateBaselineCandidate(ctx context.Context, orgID uuid.UU
 	return &parsed, nil
 }
 
-func validateRoutePolicyJSONFields(w http.ResponseWriter, weights, constraints, rules, retryPolicy, circuitBreaker json.RawMessage) bool {
+func validateRoutePolicyJSONFields(w http.ResponseWriter, weights, constraints, rules, retryPolicy, circuitBreaker, sessionAffinity json.RawMessage) bool {
 	if len(weights) > 0 && string(weights) != "null" {
 		if _, err := dataplane.ValidateWeightsJSON(weights); err != nil {
 			adminError(w, http.StatusBadRequest, "POLICY_WEIGHTS_INVALID", "invalid-route-policy-weights", nil, err.Error())
@@ -151,6 +153,12 @@ func validateRoutePolicyJSONFields(w http.ResponseWriter, weights, constraints, 
 	if len(circuitBreaker) > 0 && string(circuitBreaker) != "null" {
 		if err := dataplane.ValidateCircuitBreakerJSON(circuitBreaker); err != nil {
 			adminError(w, http.StatusBadRequest, "POLICY_BREAKER_INVALID", "invalid-route-policy-circuit-breaker", nil, err.Error())
+			return false
+		}
+	}
+	if len(sessionAffinity) > 0 && string(sessionAffinity) != "null" {
+		if err := dataplane.ValidateSessionAffinityJSON(sessionAffinity); err != nil {
+			adminError(w, http.StatusBadRequest, "POLICY_SESSION_AFFINITY_INVALID", "invalid-route-policy-session-affinity", nil, err.Error())
 			return false
 		}
 	}
@@ -187,7 +195,7 @@ func (d ServerDeps) RoutePolicies(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := d.Pool.Query(r.Context(), `
 		SELECT id, name, version, strategy, compare_currency, constraints, weights,
-		       rules, retry_policy, circuit_breaker, baseline_candidate_id,
+		       rules, retry_policy, circuit_breaker, session_affinity, baseline_candidate_id,
 		       fallback_limit, provider_timeout_ms, first_token_timeout_ms,
 		       status, created_at, updated_at
 		FROM route_policies
@@ -207,7 +215,7 @@ func (d ServerDeps) RoutePolicies(w http.ResponseWriter, r *http.Request) {
 		var id uuid.UUID
 		var baselineID *uuid.UUID
 		if err := rows.Scan(&id, &item.Name, &item.Version, &item.Strategy, &item.CompareCurrency,
-			&item.Constraints, &item.Weights, &item.Rules, &item.RetryPolicy, &item.CircuitBreaker, &baselineID,
+			&item.Constraints, &item.Weights, &item.Rules, &item.RetryPolicy, &item.CircuitBreaker, &item.SessionAffinity, &baselineID,
 			&item.FallbackLimit, &item.ProviderTimeoutMS, &item.FirstTokenTimeoutMS,
 			&item.Status, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			adminError(w, http.StatusInternalServerError, "POLICY_LIST_FAILED", "failed-to-query-route-policies", nil, err.Error())
@@ -320,7 +328,7 @@ func (d ServerDeps) CreateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 	if !validateRoutePolicyLimits(w, body.FallbackLimit, body.ProviderTimeoutMS, body.FirstTokenTimeoutMS) {
 		return
 	}
-	if !validateRoutePolicyJSONFields(w, body.Weights, body.Constraints, body.Rules, body.RetryPolicy, body.CircuitBreaker) {
+	if !validateRoutePolicyJSONFields(w, body.Weights, body.Constraints, body.Rules, body.RetryPolicy, body.CircuitBreaker, body.SessionAffinity) {
 		return
 	}
 	baselineUUID, err := d.validateBaselineCandidate(r.Context(), principal.OrganizationID, body.BaselineCandidateID)
@@ -358,17 +366,22 @@ func (d ServerDeps) CreateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 		b, _ := json.Marshal(dataplane.DefaultCircuitBreakerPolicy())
 		circuitBreaker = b
 	}
+	sessionAffinity := body.SessionAffinity
+	if len(sessionAffinity) == 0 || string(sessionAffinity) == "null" {
+		b, _ := json.Marshal(dataplane.DefaultSessionAffinityPolicy())
+		sessionAffinity = b
+	}
 
 	policyID := uuid.New()
 	err = pgx.BeginFunc(r.Context(), d.Pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(r.Context(), `
 			INSERT INTO route_policies(
 				id, organization_id, name, strategy, compare_currency,
-				constraints, weights, rules, retry_policy, circuit_breaker,
+				constraints, weights, rules, retry_policy, circuit_breaker, session_affinity,
 				baseline_candidate_id, fallback_limit, provider_timeout_ms, first_token_timeout_ms
-			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 		`, policyID, principal.OrganizationID, body.Name, body.Strategy, compareCurrency,
-			constraints, weights, rules, retryPolicy, circuitBreaker,
+			constraints, weights, rules, retryPolicy, circuitBreaker, sessionAffinity,
 			nullablePolicyID(baselineUUID), fallbackLimit, providerTimeout, firstTokenTimeout); err != nil {
 			return err
 		}
@@ -377,7 +390,7 @@ func (d ServerDeps) CreateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 				"name": body.Name, "strategy": body.Strategy, "compare_currency": compareCurrency,
 				"weights": json.RawMessage(weights), "constraints": json.RawMessage(constraints),
 				"rules": json.RawMessage(rules), "retry_policy": json.RawMessage(retryPolicy),
-				"circuit_breaker": json.RawMessage(circuitBreaker),
+				"circuit_breaker": json.RawMessage(circuitBreaker), "session_affinity": json.RawMessage(sessionAffinity),
 			})
 	})
 	if err != nil {
@@ -474,20 +487,20 @@ func (d ServerDeps) UpdateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 	if !validateRoutePolicyLimits(w, body.FallbackLimit, body.ProviderTimeoutMS, body.FirstTokenTimeoutMS) {
 		return
 	}
-	if !validateRoutePolicyJSONFields(w, body.Weights, body.Constraints, body.Rules, body.RetryPolicy, body.CircuitBreaker) {
+	if !validateRoutePolicyJSONFields(w, body.Weights, body.Constraints, body.Rules, body.RetryPolicy, body.CircuitBreaker, body.SessionAffinity) {
 		return
 	}
 
 	var oldName, oldStrategy, oldCurrency string
-	var oldConstraints, oldWeights, oldRules, oldRetry, oldBreaker []byte
+	var oldConstraints, oldWeights, oldRules, oldRetry, oldBreaker, oldAffinity []byte
 	var oldBaselineID *uuid.UUID
 	var oldFallbackLimit, oldProviderTimeout, oldFirstTokenTimeout int
 	err = d.Pool.QueryRow(r.Context(), `
-		SELECT name, strategy, compare_currency, constraints, weights, rules, retry_policy, circuit_breaker,
+		SELECT name, strategy, compare_currency, constraints, weights, rules, retry_policy, circuit_breaker, session_affinity,
 		       baseline_candidate_id, fallback_limit, provider_timeout_ms, first_token_timeout_ms
 		FROM route_policies WHERE id = $1 AND organization_id = $2
 	`, policyID, principal.OrganizationID).Scan(&oldName, &oldStrategy, &oldCurrency,
-		&oldConstraints, &oldWeights, &oldRules, &oldRetry, &oldBreaker,
+		&oldConstraints, &oldWeights, &oldRules, &oldRetry, &oldBreaker, &oldAffinity,
 		&oldBaselineID, &oldFallbackLimit, &oldProviderTimeout, &oldFirstTokenTimeout)
 	if errors.Is(err, pgx.ErrNoRows) {
 		adminError(w, http.StatusNotFound, "POLICY_NOT_FOUND", "route-policy-does-not-exist-or", nil)
@@ -539,6 +552,10 @@ func (d ServerDeps) UpdateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 	if len(body.CircuitBreaker) > 0 && string(body.CircuitBreaker) != "null" {
 		newBreaker = body.CircuitBreaker
 	}
+	newAffinity := oldAffinity
+	if len(body.SessionAffinity) > 0 && string(body.SessionAffinity) != "null" {
+		newAffinity = body.SessionAffinity
+	}
 
 	newBaseline := oldBaselineID
 	if body.BaselineCandidateID != nil {
@@ -570,13 +587,15 @@ func (d ServerDeps) UpdateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 				name = $3, strategy = $4, compare_currency = $5,
 				weights = $6::jsonb, constraints = $7::jsonb,
 				rules = $8::jsonb, retry_policy = $9::jsonb, circuit_breaker = $10::jsonb,
-				baseline_candidate_id = $11,
-				fallback_limit = $12, provider_timeout_ms = $13, first_token_timeout_ms = $14,
+				session_affinity = $11::jsonb,
+				baseline_candidate_id = $12,
+				fallback_limit = $13, provider_timeout_ms = $14, first_token_timeout_ms = $15,
 				version = version + 1, updated_at = now()
 			WHERE id = $1 AND organization_id = $2
 		`, policyID, principal.OrganizationID, body.Name, newStrategy, newCurrency,
 			json.RawMessage(newWeights), json.RawMessage(newConstraints),
 			json.RawMessage(newRules), json.RawMessage(newRetry), json.RawMessage(newBreaker),
+			json.RawMessage(newAffinity),
 			nullablePolicyID(newBaseline), newFallbackLimit, newProviderTimeout, newFirstTokenTimeout)
 		if err != nil {
 			return err
@@ -592,14 +611,16 @@ func (d ServerDeps) UpdateRoutePolicy(w http.ResponseWriter, r *http.Request) {
 				"name": oldName, "strategy": oldStrategy, "compare_currency": oldCurrency,
 				"weights": rawJSONOrEmpty(oldWeights), "constraints": rawJSONOrEmpty(oldConstraints),
 				"rules": rawJSONOrEmpty(oldRules), "retry_policy": rawJSONOrEmpty(oldRetry),
-				"circuit_breaker": rawJSONOrEmpty(oldBreaker), "baseline_candidate_id": uuidPtrString(oldBaselineID),
+				"circuit_breaker": rawJSONOrEmpty(oldBreaker), "session_affinity": rawJSONOrEmpty(oldAffinity),
+				"baseline_candidate_id": uuidPtrString(oldBaselineID),
 				"fallback_limit": oldFallbackLimit, "provider_timeout_ms": oldProviderTimeout, "first_token_timeout_ms": oldFirstTokenTimeout,
 			}),
 			auditJSON(map[string]any{
 				"name": body.Name, "strategy": newStrategy, "compare_currency": newCurrency,
 				"weights": rawJSONOrEmpty(newWeights), "constraints": rawJSONOrEmpty(newConstraints),
 				"rules": rawJSONOrEmpty(newRules), "retry_policy": rawJSONOrEmpty(newRetry),
-				"circuit_breaker": rawJSONOrEmpty(newBreaker), "baseline_candidate_id": uuidPtrString(newBaseline),
+				"circuit_breaker": rawJSONOrEmpty(newBreaker), "session_affinity": rawJSONOrEmpty(newAffinity),
+				"baseline_candidate_id": uuidPtrString(newBaseline),
 				"fallback_limit": newFallbackLimit, "provider_timeout_ms": newProviderTimeout, "first_token_timeout_ms": newFirstTokenTimeout,
 			}))
 		return err
@@ -640,15 +661,15 @@ func (d ServerDeps) CloneRoutePolicy(w http.ResponseWriter, r *http.Request) {
 	customName := strings.TrimSpace(body.Name)
 
 	var srcName, strategy, compareCurrency string
-	var constraints, weights, rules, retryPolicy, circuitBreaker []byte
+	var constraints, weights, rules, retryPolicy, circuitBreaker, sessionAffinity []byte
 	var baselineID *uuid.UUID
 	var fallbackLimit, providerTimeout, firstTokenTimeout int
 	err = d.Pool.QueryRow(r.Context(), `
-		SELECT name, strategy, compare_currency, constraints, weights, rules, retry_policy, circuit_breaker,
+		SELECT name, strategy, compare_currency, constraints, weights, rules, retry_policy, circuit_breaker, session_affinity,
 		       baseline_candidate_id, fallback_limit, provider_timeout_ms, first_token_timeout_ms
 		FROM route_policies WHERE id = $1 AND organization_id = $2
 	`, sourceID, principal.OrganizationID).Scan(&srcName, &strategy, &compareCurrency,
-		&constraints, &weights, &rules, &retryPolicy, &circuitBreaker,
+		&constraints, &weights, &rules, &retryPolicy, &circuitBreaker, &sessionAffinity,
 		&baselineID, &fallbackLimit, &providerTimeout, &firstTokenTimeout)
 	if errors.Is(err, pgx.ErrNoRows) {
 		adminError(w, http.StatusNotFound, "POLICY_NOT_FOUND", "route-policy-does-not-exist-or", nil)
@@ -679,11 +700,11 @@ func (d ServerDeps) CloneRoutePolicy(w http.ResponseWriter, r *http.Request) {
 		if _, err := tx.Exec(r.Context(), `
 			INSERT INTO route_policies(
 				id, organization_id, name, strategy, compare_currency,
-				constraints, weights, rules, retry_policy, circuit_breaker,
+				constraints, weights, rules, retry_policy, circuit_breaker, session_affinity,
 				baseline_candidate_id, fallback_limit, provider_timeout_ms, first_token_timeout_ms
-			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 		`, clonedID, principal.OrganizationID, targetName, strategy, compareCurrency,
-			constraints, weights, rules, retryPolicy, circuitBreaker,
+			constraints, weights, rules, retryPolicy, circuitBreaker, sessionAffinity,
 			nullablePolicyID(baselineID), fallbackLimit, providerTimeout, firstTokenTimeout); err != nil {
 			return err
 		}

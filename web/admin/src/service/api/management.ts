@@ -882,6 +882,11 @@ export function fetchUpdateSystemSettings(params: Api.Management.UpdateSystemSet
   });
 }
 
+/** Get unified gateway base URL configured in system settings (empty means auto-detect) */
+export function fetchGatewayInfo() {
+  return request<Api.Management.GatewayInfo>({ url: '/system/gateway-info' });
+}
+
 /** Get SMTP and email-link settings; the password is never returned */
 export function fetchEmailSettings() {
   return request<Api.Management.EmailSettings>({ url: '/system/email/settings' });

@@ -2,7 +2,7 @@
 import { computed, h, onMounted, reactive, ref } from 'vue';
 import { NButton, NTag, useMessage } from 'naive-ui';
 import type { DataTableColumns, FormInst, FormRules, SelectOption } from 'naive-ui';
-import { formatTime } from '@/utils/admin-status';
+import { formatTime, resolveAutoGatewayOrigin } from '@/utils/admin-status';
 import {
   fetchEmailSettings,
   fetchFXRates,
@@ -77,9 +77,11 @@ const settings = reactive<Api.Management.SystemSettings>({
   registration_organization_id: null,
   registration_role: 'pending',
   email_verification_required: false,
+  gateway_base_url: '',
   updated_by: null,
   updated_at: ''
 });
+const autoGatewayOrigin = resolveAutoGatewayOrigin();
 
 const roleOptions = computed(() => [
   { label: $t('business.pending-role-recommended'), value: 'pending' },
@@ -283,7 +285,8 @@ async function handleSave() {
     public_registration_enabled: settings.public_registration_enabled,
     registration_organization_id: settings.registration_organization_id,
     email_verification_required: settings.email_verification_required,
-    registration_role: settings.registration_role
+    registration_role: settings.registration_role,
+    gateway_base_url: settings.gateway_base_url.trim()
   });
   submitting.value = false;
 
@@ -378,6 +381,18 @@ onMounted(loadSettings);
           </NFormItem>
           <NFormItem :label="$t('business.require-email-verification')" path="email_verification_required">
             <NSwitch v-model:value="settings.email_verification_required" :disabled="!emailSettings.enabled" />
+          </NFormItem>
+          <NFormItem :label="$t('business.gateway-base-url')" path="gateway_base_url">
+            <div class="w-full">
+              <NInput
+                v-model:value="settings.gateway_base_url"
+                clearable
+                :placeholder="$t('business.gateway-base-url-placeholder', { origin: autoGatewayOrigin })"
+              />
+              <NText depth="3" class="mt-4px block text-12px">
+                {{ $t('business.gateway-base-url-hint') }}
+              </NText>
+            </div>
           </NFormItem>
           <div class="flex justify-end">
             <NButton type="primary" :loading="submitting" :disabled="!settingsLoaded" @click="handleSave">

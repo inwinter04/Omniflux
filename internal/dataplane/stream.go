@@ -130,7 +130,7 @@ candidateLoop:
 			})
 			continue
 		}
-		provider, err := bifrostx.MapProvider(cand.Provider)
+		provider, err := bifrostx.EngineProviderKey(cand.AccountID, cand.Provider, cand.APIProtocol)
 		if err != nil {
 			attempts = append(attempts, AttemptRecord{
 				CandidateID: cand.ID, Provider: cand.Provider, UpstreamModel: cand.UpstreamModel,
@@ -161,7 +161,7 @@ candidateLoop:
 				attemptMS := int(time.Since(attemptStart).Milliseconds())
 				statusCode, errCode, errType, errMsg := extractBifrostErrorInfo(bifrostErr)
 				if d.OnTransportError != nil && statusCode == 0 {
-					d.OnTransportError(string(provider))
+					d.OnTransportError(logicalProviderName(cand.Provider))
 				}
 				action := ClassifyAttemptOutcome(statusCode, errCode, errType, rp)
 				d.Breaker().RecordFailure(r.Context(), cand.ID, statusCode, errCode, errType, rp, cb)
@@ -234,7 +234,7 @@ candidateLoop:
 				lastErr = preErr
 				statusCode, errCode, errType, errMsg := extractBifrostErrorInfo(preErr)
 				if d.OnTransportError != nil && statusCode == 0 {
-					d.OnTransportError(string(provider))
+					d.OnTransportError(logicalProviderName(cand.Provider))
 				}
 				action := ClassifyAttemptOutcome(statusCode, errCode, errType, rp)
 				d.Breaker().RecordFailure(r.Context(), cand.ID, statusCode, errCode, errType, rp, cb)
@@ -297,7 +297,7 @@ candidateLoop:
 			}
 		}
 		if lastTTFT {
-			d.recordChainFailure(r.Context(), keyCtx, requestID, decision.Chain, attempts, lastErr, start, nil, usageSnapshot{})
+			d.recordChainFailureWithProtocol(r.Context(), keyCtx, requestID, decision.Chain, attempts, lastErr, start, nil, usageSnapshot{}, stringOrDefault(decision.Protocol, ClientProtocolOpenAIChat))
 			if observer != nil {
 				observer.onComplete("failed", DebugResult{TotalMS: int(time.Since(start).Milliseconds())}, context.DeadlineExceeded)
 			}
@@ -306,7 +306,7 @@ candidateLoop:
 				apiErrorOptions{Reason: "first_token_timeout"})
 			return
 		}
-		d.recordChainFailure(r.Context(), keyCtx, requestID, decision.Chain, attempts, lastErr, start, nil, usageSnapshot{})
+		d.recordChainFailureWithProtocol(r.Context(), keyCtx, requestID, decision.Chain, attempts, lastErr, start, nil, usageSnapshot{}, stringOrDefault(decision.Protocol, ClientProtocolOpenAIChat))
 		if observer != nil {
 			observer.onComplete("failed", DebugResult{TotalMS: int(time.Since(start).Milliseconds())}, errors.New(errorMessageOf(lastErr)))
 		}
@@ -328,6 +328,8 @@ candidateLoop:
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
+	// Clear connection write deadline once SSE headers are committed so long responses are not cut at http.Server.WriteTimeout.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 	flusher.Flush()
 
 	writeEvent := func(payload []byte) bool {
@@ -343,13 +345,9 @@ candidateLoop:
 	snapshot := initSnapshot
 	chunkID := firstResp.ID
 	chunkCreated := firstResp.Created
-	servedProvider := string(firstResp.ExtraFields.RoutingInfo.Provider)
+	servedProvider := logicalProviderName(winningCand.Provider)
 	if servedProvider == "" {
-		if mapped, err := bifrostx.MapProvider(winningCand.Provider); err == nil {
-			servedProvider = string(mapped)
-		} else {
-			servedProvider = winningCand.Provider
-		}
+		servedProvider = logicalProviderName(string(firstResp.ExtraFields.RoutingInfo.Provider))
 	}
 	servedModel := firstResp.ExtraFields.RoutingInfo.Model
 	if servedModel == "" {
@@ -443,11 +441,11 @@ candidateLoop:
 		_ = writeEvent(errorPayload)
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 		flusher.Flush()
-		d.recordChainFailure(r.Context(), keyCtx, requestID, decision.Chain, attempts, streamErr, start, firstTokenMS, snapshot)
+		d.recordChainFailureWithProtocol(r.Context(), keyCtx, requestID, decision.Chain, attempts, streamErr, start, firstTokenMS, snapshot, stringOrDefault(decision.Protocol, ClientProtocolOpenAIChat))
 		if observer != nil {
 			cost := 0.0
 			if winningCand.ID != "" {
-				cost = winningCand.costUSD(snapshot.InputTokens, snapshot.OutputTokens)
+				cost = winningCand.costForUsage(snapshot)
 			}
 			observer.onComplete("failed", DebugResult{
 				Response: content.String(), Provider: servedProvider, UpstreamModel: servedModel,
@@ -461,6 +459,10 @@ candidateLoop:
 	}
 
 	d.Breaker().RecordSuccess(r.Context(), winningCand.ID)
+	if svc.Policy.SessionAffinity.Enabled && decision.SessionKey != "" && winningCand.ID != "" {
+		d.Affinity().Set(context.WithoutCancel(r.Context()), svc.ID.String(), decision.SessionKey, winningCand.ID,
+			time.Duration(svc.Policy.SessionAffinity.TTLSeconds)*time.Second)
+	}
 	attempts = append(attempts, AttemptRecord{
 		CandidateID: winningCand.ID, Provider: winningCand.Provider, UpstreamModel: winningCand.UpstreamModel,
 		StatusCode: http.StatusOK, LatencyMS: int(time.Since(start).Milliseconds()), Outcome: "success",
@@ -485,24 +487,26 @@ candidateLoop:
 	flusher.Flush()
 
 	total := int(time.Since(start).Milliseconds())
-	cost := winningCand.costUSD(snapshot.InputTokens, snapshot.OutputTokens)
+	cost := winningCand.costForUsage(snapshot)
 	store := usageStore{pool: d.Pool, fxRates: d.fxRatesSnapshot()}
 	if err := store.finalize(context.WithoutCancel(r.Context()), requestID, finalUsage{
-		State:           "success",
-		StatusCode:      intPtr(http.StatusOK),
-		CandidateID:     uuidPtr(winningCand.ID, winningCand.ID != ""),
-		Provider:        stringPtr(servedProvider),
-		UpstreamModel:   stringPtr(servedModel),
-		InputTokens:     snapshot.InputTokens,
-		OutputTokens:    snapshot.OutputTokens,
-		CachedTokens:    snapshot.CachedTokens,
-		ReasoningTokens: snapshot.ReasoningTokens,
-		Cost:            cost,
-		Currency:        currencyOf(winningCand),
-		FirstTokenMS:    firstTokenMS,
-		TotalMS:         total,
-		UsageSource:     stringPtrNil("computed", snapshot.hasTokens()),
-		AttemptTrail:    attemptTrailFromRecords(attempts),
+		State:               "success",
+		StatusCode:          intPtr(http.StatusOK),
+		CandidateID:         uuidPtr(winningCand.ID, winningCand.ID != ""),
+		Provider:            stringPtr(servedProvider),
+		UpstreamModel:       stringPtr(servedModel),
+		InputTokens:         snapshot.InputTokens,
+		OutputTokens:        snapshot.OutputTokens,
+		CachedTokens:        snapshot.CachedTokens,
+		CacheCreationTokens: snapshot.CacheCreationTokens,
+		ReasoningTokens:     snapshot.ReasoningTokens,
+		Protocol:            stringOrDefault(decision.Protocol, ClientProtocolOpenAIChat),
+		Cost:                cost,
+		Currency:            currencyOf(winningCand),
+		FirstTokenMS:        firstTokenMS,
+		TotalMS:             total,
+		UsageSource:         stringPtrNil("computed", snapshot.hasTokens()),
+		AttemptTrail:        attemptTrailFromRecords(attempts),
 	}); err != nil {
 		d.Logger.Warn("finalize stream usage failed", "request_id", requestID, "error", err)
 	}
@@ -524,17 +528,20 @@ func (d Deps) recordStreamInterrupted(ctx context.Context, requestID uuid.UUID, 
 	total := int(time.Since(start).Milliseconds())
 	store := usageStore{pool: d.Pool, fxRates: d.fxRatesSnapshot()}
 	if err := store.finalize(context.WithoutCancel(ctx), requestID, finalUsage{
-		State:           "interrupted",
-		CandidateID:     uuidPtr(winningCand.ID, winningCand.ID != ""),
-		FirstTokenMS:    firstTokenMS,
-		TotalMS:         total,
-		InputTokens:     snapshot.InputTokens,
-		OutputTokens:    snapshot.OutputTokens,
-		CachedTokens:    snapshot.CachedTokens,
-		ReasoningTokens: snapshot.ReasoningTokens,
-		Currency:        currencyOf(winningCand),
-		UsageSource:     stringPtrNil("computed", snapshot.hasTokens()),
-		AttemptTrail:    attemptTrailFromRecords(attempts),
+		State:               "interrupted",
+		CandidateID:         uuidPtr(winningCand.ID, winningCand.ID != ""),
+		Provider:            stringPtrNil(logicalProviderName(winningCand.Provider), winningCand.Provider != ""),
+		UpstreamModel:       stringPtrNil(winningCand.UpstreamModel, winningCand.UpstreamModel != ""),
+		FirstTokenMS:        firstTokenMS,
+		TotalMS:             total,
+		InputTokens:         snapshot.InputTokens,
+		OutputTokens:        snapshot.OutputTokens,
+		CachedTokens:        snapshot.CachedTokens,
+		CacheCreationTokens: snapshot.CacheCreationTokens,
+		ReasoningTokens:     snapshot.ReasoningTokens,
+		Currency:            currencyOf(winningCand),
+		UsageSource:         stringPtrNil("computed", snapshot.hasTokens()),
+		AttemptTrail:        attemptTrailFromRecords(attempts),
 	}); err != nil {
 		d.Logger.Warn("finalize interrupted usage failed", "request_id", requestID, "error", err)
 	}
