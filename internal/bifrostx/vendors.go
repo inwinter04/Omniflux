@@ -34,8 +34,8 @@ type vendorEntry struct {
 var vendorCatalog = []vendorEntry{
 	{ID: "kimi", Name: "Kimi", Group: GroupCN, BaseURL: "https://api.moonshot.cn", URLPath: "/v1", WebsiteURL: "https://platform.kimi.com", APIKeyURL: "https://platform.kimi.com/console/api-keys", BalanceKind: "", EditableURL: false},
 	{ID: "kimi-global", Name: "Kimi Global", Group: GroupCN, BaseURL: "https://api.moonshot.ai", URLPath: "/v1", WebsiteURL: "https://platform.kimi.ai", APIKeyURL: "https://platform.kimi.ai/console/api-keys", BalanceKind: "", EditableURL: false},
-	{ID: "kimi-for-coding", Name: "Kimi For Coding", Group: GroupCN, BaseURL: "https://api.kimi.com", URLPath: "/coding/v1", WebsiteURL: "https://www.kimi.com/code/", APIKeyURL: "https://www.kimi.com/code/", BalanceKind: "", EditableURL: false},
-	{ID: "kimi-for-coding-global", Name: "Kimi For Coding Global", Group: GroupCN, BaseURL: "https://api.kimi.ai", URLPath: "/coding/v1", WebsiteURL: "https://www.kimi.ai/code", APIKeyURL: "https://www.kimi.ai/code", BalanceKind: "", EditableURL: false},
+	{ID: "kimi-for-coding", Name: "Kimi For Coding", Group: GroupCN, BaseURL: "https://api.kimi.com", URLPath: "/coding/v1", WebsiteURL: "https://www.kimi.com/code/", APIKeyURL: "https://www.kimi.com/code/", BalanceKind: "kimi_plan", EditableURL: false},
+	{ID: "kimi-for-coding-global", Name: "Kimi For Coding Global", Group: GroupCN, BaseURL: "https://api.kimi.ai", URLPath: "/coding/v1", WebsiteURL: "https://www.kimi.ai/code", APIKeyURL: "https://www.kimi.ai/code", BalanceKind: "kimi_plan", EditableURL: false},
 	{ID: "packycode", Name: "PackyCode", Group: GroupThirdParty, BaseURL: "https://www.packyapi.ai", URLPath: "/v1", WebsiteURL: "https://www.packyapi.ai", APIKeyURL: "https://www.packyapi.ai/register", BalanceKind: "", EditableURL: false},
 	{ID: "patewayai", Name: "PatewayAI", Group: GroupThirdParty, BaseURL: "https://api.pateway.ai", URLPath: "/v1", WebsiteURL: "https://pateway.ai", APIKeyURL: "https://pateway.ai/?ch=etzpm8&aff=WB6M6F67#/", BalanceKind: "", EditableURL: false},
 	{ID: "modelflare", Name: "Modelflare", Group: GroupAggregator, BaseURL: "https://modelflare.dev", URLPath: "/v1", WebsiteURL: "https://modelflare.dev", APIKeyURL: "https://modelflare.dev/sign-up", BalanceKind: "", EditableURL: false},
@@ -171,32 +171,80 @@ type VendorCatalogEntry struct {
 	APIKeyURL       string `json:"api_key_url"`
 	BalanceKind     string `json:"balance_kind"`
 	EditableURL     bool   `json:"editable_url"`
+	PricingKind     string `json:"pricing_kind"`
+	PlanKind        string `json:"plan_kind"`
+	QuotaKind       string `json:"quota_kind"`
+	QuotaSupport    string `json:"quota_support"`
+	CredentialKind  string `json:"credential_kind"`
+	QuotaDocsURL    string `json:"quota_docs_url"`
+}
+
+// VendorCatalogEntryByID 返回厂商的稳定展示与额度能力元数据。
+func VendorCatalogEntryByID(id string) (VendorCatalogEntry, bool) {
+	vendor := VendorByID(id)
+	if vendor == nil {
+		return VendorCatalogEntry{}, false
+	}
+	return vendorCatalogEntry(vendor), true
+}
+
+// vendorCatalogEntry 将内部厂商配置转换为下发目录,并归一化计费/额度能力字段。
+func vendorCatalogEntry(v *vendorEntry) VendorCatalogEntry {
+	presentation := vendorPresentation(*v)
+	defaultProto := v.DefaultProtocol
+	if defaultProto == "" {
+		defaultProto = ProtocolOpenAIChat
+	}
+	pricingKind := "payg"
+	planKind := ""
+	if IsPlanPriceProvider(v.ID) {
+		pricingKind = "plan"
+		planKind = presentation.versionKind
+	}
+	quotaKind := "none"
+	quotaSupport := "unsupported"
+	if v.BalanceKind != "" {
+		quotaSupport = "supported"
+		quotaKind = "balance"
+		if pricingKind == "plan" {
+			quotaKind = "balance_and_plan"
+		}
+	} else if pricingKind == "plan" {
+		quotaKind = "plan_usage"
+		quotaSupport = "unconfirmed"
+	}
+	credentialKind := "inference_api_key"
+	if pricingKind == "plan" && quotaSupport != "supported" {
+		credentialKind = "console_only"
+	}
+	return VendorCatalogEntry{
+		ID:              v.ID,
+		Name:            v.Name,
+		Group:           string(v.Group),
+		FamilyID:        presentation.familyID,
+		VersionKind:     presentation.versionKind,
+		RegionKind:      presentation.regionKind,
+		DefaultProtocol: defaultProto,
+		BaseURL:         v.BaseURL,
+		APIBaseURL:      strings.TrimSuffix(v.BaseURL, "/") + v.URLPath,
+		WebsiteURL:      v.WebsiteURL,
+		APIKeyURL:       v.APIKeyURL,
+		BalanceKind:     v.BalanceKind,
+		EditableURL:     v.EditableURL,
+		PricingKind:     pricingKind,
+		PlanKind:        planKind,
+		QuotaKind:       quotaKind,
+		QuotaSupport:    quotaSupport,
+		CredentialKind:  credentialKind,
+		QuotaDocsURL:    v.APIKeyURL,
+	}
 }
 
 // VendorCatalog 返回完整厂商目录。
 func VendorCatalog() []VendorCatalogEntry {
 	list := make([]VendorCatalogEntry, 0, len(vendorCatalog))
-	for _, v := range vendorCatalog {
-		presentation := vendorPresentation(v)
-		defaultProto := v.DefaultProtocol
-		if defaultProto == "" {
-			defaultProto = ProtocolOpenAIChat
-		}
-		list = append(list, VendorCatalogEntry{
-			ID:              v.ID,
-			Name:            v.Name,
-			Group:           string(v.Group),
-			FamilyID:        presentation.familyID,
-			VersionKind:     presentation.versionKind,
-			RegionKind:      presentation.regionKind,
-			DefaultProtocol: defaultProto,
-			BaseURL:         v.BaseURL,
-			APIBaseURL:      strings.TrimSuffix(v.BaseURL, "/") + v.URLPath,
-			WebsiteURL:      v.WebsiteURL,
-			APIKeyURL:       v.APIKeyURL,
-			BalanceKind:     v.BalanceKind,
-			EditableURL:     v.EditableURL,
-		})
+	for i := range vendorCatalog {
+		list = append(list, vendorCatalogEntry(&vendorCatalog[i]))
 	}
 	return list
 }

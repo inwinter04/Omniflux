@@ -225,8 +225,14 @@ export function fetchProviderCatalog() {
 }
 
 export function fetchProviderBalance(id: string) {
-  return request<{ balances: Api.Management.ProviderBalanceEntry[] }>({
+  return request<Api.Management.ProviderBalanceResponse>({
     url: `/provider-accounts/${id}/balance`
+  });
+}
+
+export function fetchProviderUsageSummaries() {
+  return request<Api.Management.ProviderUsageSummariesResponse>({
+    url: '/provider-accounts/usage-summaries'
   });
 }
 
@@ -785,10 +791,7 @@ export async function streamAgentChat(
 }
 
 export function fetchProviderModels(id: string) {
-  return request<{
-    models: Api.Management.ProviderModel[];
-    pricing_source: string;
-  }>({
+  return request<Api.Management.ProviderModelsResponse>({
     url: `/provider-accounts/${id}/models`
   });
 }

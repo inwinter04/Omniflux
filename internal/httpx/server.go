@@ -178,6 +178,7 @@ func New(deps ServerDeps) http.Handler {
 			r.Post("/proxies/{id}/test", deps.TestPlatformProxy)
 			r.Get("/provider-accounts", deps.ProviderAccounts)
 			r.Get("/provider-accounts/availability", deps.ProviderAccountsAvailability)
+			r.Get("/provider-accounts/usage-summaries", deps.ProviderUsageSummaries)
 			r.Post("/provider-accounts/test-all", deps.TestAllProviderAccounts)
 			r.Post("/provider-accounts", deps.CreateProviderAccount)
 			r.Patch("/provider-accounts/{id}", deps.UpdateProviderAccount)

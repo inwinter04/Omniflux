@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, h, onMounted, reactive, ref, watch } from 'vue';
+import { computed, h, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
   NAlert,
@@ -50,6 +50,7 @@ import {
   fetchProviderBalance,
   fetchProviderCatalog,
   fetchProviderModels,
+  fetchProviderUsageSummaries,
   fetchTestAllProviderAccounts,
   fetchTestProviderAccount,
   fetchUpdateProviderAccount,
@@ -102,6 +103,9 @@ const vendorOptions = computed<SelectGroupOption[]>(() =>
 const loading = ref(true);
 const testingAll = ref(false);
 const list = ref<Api.Management.ProviderAccount[]>([]);
+const usageSummaries = ref<Record<string, Api.Management.ProviderUsageSummary>>({});
+const usageSummariesLoading = ref(false);
+let usageSummariesTimer: number | null = null;
 const availabilityOverview = ref<Api.Management.ProviderAvailabilityOverview | null>(null);
 const selectedProviderFilter = ref<string | null>(null);
 
@@ -279,9 +283,7 @@ function rowMoreOptions(row: Api.Management.ProviderAccount): DropdownOption[] {
     { label: $t('business.test'), key: 'test' },
     { label: $t('business.availability-details'), key: 'availability' }
   ];
-  if (findVendor(row.provider)?.balance_kind) {
-    options.push({ label: $t('business.query-balance'), key: 'balance' });
-  }
+  options.push({ label: $t('business.query-balance-or-usage'), key: 'balance' });
   options.push(
     { type: 'divider', key: 'divider-lifecycle' },
     { label: row.status === 'active' ? $t('business.disabled') : $t('business.enable'), key: 'toggle-status' },
@@ -300,7 +302,7 @@ function handleRowMoreAction(key: string | number, row: Api.Management.ProviderA
     return;
   }
   if (key === 'balance') {
-    void handleBalance(row);
+    void handleQuota(row);
     return;
   }
   if (key === 'toggle-status') {
@@ -369,41 +371,87 @@ const columns = computed<DataTableColumns<Api.Management.ProviderAccount>>(() =>
       ])
   },
   {
-    title: $t('business.availability-24h'),
-    key: 'availability_24h',
-    width: 240,
-    render: row =>
-      h(
-        'div',
-        { class: 'flex cursor-pointer flex-col gap-4px', onClick: () => openHealthHistory(row.id) },
-        [
-          h('div', { class: 'flex items-center gap-6px text-12px' }, [
-            h('span', { class: 'font-medium' }, formatAvail(row.availability_24h)),
-            row.active_check_latency_ms !== null && row.active_check_latency_ms !== undefined
-              ? h('span', { class: 'text-#6b7280' }, $t('business.latencyMs', { value: row.active_check_latency_ms }))
-              : null,
-            row.active_check_reason && row.active_check_reason !== 'connected'
-              ? h('span', { class: 'text-#d03050 truncate max-w-120px' }, probeReasonText(row.active_check_reason))
-              : null
-          ]),
-          h(AvailabilityBar, { buckets: row.heartbeat_24h, compact: true }),
-          h(
-            'span',
-            { class: 'text-11px text-#9ca3af' },
-            row.last_checked_at ? `${$t('business.last-checked-at')}: ${formatTime(row.last_checked_at)}` : $t('business.not-verified')
-          )
+    title: $t('business.balance-or-usage'),
+    key: 'usage_summary',
+    width: 250,
+    render: row => {
+      const vendor = findVendor(row.provider);
+      const summary = usageSummaries.value[row.id];
+      if ((vendor?.quota_support ?? 'unsupported') !== 'supported') {
+        return h(
+          NTag,
+          { size: 'small', round: true, type: 'warning' },
+          { default: () => $t('business.quota-auto-unsupported') }
+        );
+      }
+      if (usageSummariesLoading.value && !summary) {
+        return h('span', { class: 'text-12px text-#6b7280' }, $t('business.usage-list-loading'));
+      }
+      if (!summary || summary.quota_status === 'query_failed') {
+        return h('span', { class: 'text-12px text-#d03050' }, $t('business.quota-query-failed-short'));
+      }
+      const lines: ReturnType<typeof h>[] = [];
+      for (const quota of summary.plan_quotas) {
+        const used = quota.used_percent ?? 0;
+        const remaining = quota.remaining_percent ?? Math.max(0, 100 - used);
+        const title = [
+          `${$t('business.used')} ${formatQuotaPercent(used)}`,
+          `${$t('business.remaining-short')} ${formatQuotaPercent(remaining)}`,
+          quota.reset_at ? `${$t('business.next-reset')}${formatQuotaReset(quota.reset_at)}` : ''
         ]
-      )
+          .filter(Boolean)
+          .join(' · ');
+        lines.push(
+          h('div', { class: 'min-w-0', title }, [
+            h('div', { class: 'flex items-center justify-between gap-8px text-12px' }, [
+              h('span', { class: 'truncate text-#374151 dark:text-#d1d5db' }, usageWindowLabel(quota.label_key)),
+              h('span', { class: 'shrink-0 tabular-nums text-#6b7280' }, `${$t('business.remaining-short')} ${formatQuotaPercent(remaining)}`)
+            ]),
+            h(NProgress, {
+              type: 'line',
+              percentage: Math.min(100, Math.max(0, used)),
+              showIndicator: false,
+              height: 5,
+              borderRadius: 3,
+              status: used >= 90 ? 'error' : used >= 70 ? 'warning' : 'success'
+            })
+          ])
+        );
+      }
+      for (const balance of summary.balances) {
+        lines.push(
+          h('div', { class: 'flex items-center justify-between gap-8px text-12px' }, [
+            h('span', { class: 'truncate text-#374151 dark:text-#d1d5db' }, balanceLabel(balance)),
+            h('span', { class: 'shrink-0 tabular-nums font-medium' }, formatUnitAmount(balance.remaining, balance.unit))
+          ])
+        );
+      }
+      if (!lines.length) {
+        return h('span', { class: 'text-12px text-#6b7280' }, $t('business.no-balance-or-limit-data'));
+      }
+      return h('div', { class: 'flex flex-col gap-8px' }, lines);
+    }
   },
   {
     title: $t('business.version-region'),
     key: 'version',
     width: 150,
-    render: row =>
-      h('div', { class: 'flex flex-col gap-2px' }, [
-        h('span', {}, providerVersionLabel(findVendor(row.provider))),
-        h('span', { class: 'text-12px text-#6b7280' }, row.region ?? '-')
-      ])
+    render: row => {
+      const vendor = findVendor(row.provider);
+      return h('div', { class: 'flex flex-col gap-4px' }, [
+        h('div', { class: 'flex items-center gap-4px' }, [
+          h('span', {}, providerVersionLabel(vendor)),
+          vendor?.pricing_kind === 'plan'
+            ? h(
+                NTag,
+                { size: 'tiny', round: true, type: 'info' },
+                { default: () => $t('business.pricing-plan') }
+              )
+            : null
+        ]),
+        row.region ? h('span', { class: 'text-12px text-#6b7280' }, row.region) : null
+      ]);
+    }
   },
   {
     title: $t('business.settlement-currency'),
@@ -572,6 +620,25 @@ async function loadData() {
   }
 }
 
+async function loadUsageSummaries() {
+  usageSummariesLoading.value = true;
+  try {
+    const { data, error } = await fetchProviderUsageSummaries();
+    if (!error && data) {
+      usageSummaries.value = Object.fromEntries((data.items ?? []).map(item => [item.account_id, item]));
+    }
+  } finally {
+    usageSummariesLoading.value = false;
+  }
+}
+
+function stopUsageSummaryRefresh() {
+  if (usageSummariesTimer !== null) {
+    window.clearInterval(usageSummariesTimer);
+    usageSummariesTimer = null;
+  }
+}
+
 function openCreate() {
   selectedFamilyID.value = '';
   Object.assign(formModel, {
@@ -618,7 +685,7 @@ async function handleCreate() {
       window.$message?.success($t('business.account-created-available-models-are'));
       showCreate.value = false;
       await loadData();
-      await openModels({ id: data.id, name: formModel.name.trim() });
+      await openModels({ id: data.id, name: formModel.name.trim(), provider: formModel.provider });
     }
   } finally {
     submitting.value = false;
@@ -718,6 +785,8 @@ async function handleSaveHealthSettings() {
 const showModels = ref(false);
 const modelLoading = ref(false);
 const modelRows = ref<Api.Management.ProviderModel[]>([]);
+const modelPricingKind = ref<Api.Management.ProviderModelsResponse['pricing_kind']>('unknown');
+const modelQuotaSupport = ref<Api.Management.ProviderModelsResponse['quota_support']>('unsupported');
 const modelTitle = ref('');
 const modelAccountID = ref('');
 let modelRequestGeneration = 0;
@@ -733,28 +802,42 @@ const modelColumns = computed<DataTableColumns<Api.Management.ProviderModel>>(()
     key: 'input_cost_per_million',
     width: 150,
     render: row =>
-      row.input_cost_per_million === null ? $t('business.no-data') : formatCostUSD(row.input_cost_per_million)
+      modelPricingKind.value === 'plan'
+        ? $t('business.in-plan')
+        : row.input_cost_per_million === null
+          ? $t('business.no-data')
+          : formatCostUSD(row.input_cost_per_million)
   },
   {
     title: $t('business.output-price-usd-per-million-72p7y2'),
     key: 'output_cost_per_million',
     width: 150,
     render: row =>
-      row.output_cost_per_million === null ? $t('business.no-data') : formatCostUSD(row.output_cost_per_million)
+      modelPricingKind.value === 'plan'
+        ? $t('business.in-plan')
+        : row.output_cost_per_million === null
+          ? $t('business.no-data')
+          : formatCostUSD(row.output_cost_per_million)
   }
 ]);
 
-async function openModels(row: Pick<Api.Management.ProviderAccount, 'id' | 'name'>) {
+async function openModels(row: Pick<Api.Management.ProviderAccount, 'id' | 'name' | 'provider'>) {
   const generation = ++modelRequestGeneration;
   showModels.value = true;
   modelLoading.value = true;
   modelRows.value = [];
   selectedModelKeys.value = [];
   modelAccountID.value = row.id;
+  modelPricingKind.value = findVendor(row.provider)?.pricing_kind ?? 'unknown';
+  modelQuotaSupport.value = findVendor(row.provider)?.quota_support ?? 'unsupported';
   modelTitle.value = $t('business.accountAvailableModels', { name: row.name });
   try {
     const { data, error } = await fetchProviderModels(row.id);
-    if (generation === modelRequestGeneration && !error && data) modelRows.value = data.models;
+    if (generation === modelRequestGeneration && !error && data) {
+      modelRows.value = data.models;
+      modelPricingKind.value = data.pricing_kind;
+      modelQuotaSupport.value = data.quota_support;
+    }
   } finally {
     if (generation === modelRequestGeneration) modelLoading.value = false;
   }
@@ -774,7 +857,13 @@ async function addModelsToService() {
 const showBalance = ref(false);
 const balanceLoading = ref(false);
 const balanceRows = ref<Api.Management.ProviderBalanceEntry[]>([]);
+const planQuotaRows = ref<Api.Management.ProviderPlanQuotaEntry[]>([]);
 const balanceTitle = ref('');
+const quotaUnsupported = ref(false);
+const quotaError = ref(false);
+const quotaLastQueriedAt = ref('');
+const currentQuotaAccount = ref<Api.Management.ProviderAccount | null>(null);
+let quotaRefreshTimer: number | null = null;
 const balanceLabelKeys: Record<string, App.I18n.I18nKey> = {
   wallet_cny: 'business.balanceWalletCNY',
   wallet_usd: 'business.balanceWalletUSD',
@@ -787,7 +876,10 @@ const balanceLabelKeys: Record<string, App.I18n.I18nKey> = {
   provider_openrouter: 'business.balanceProviderOpenRouter',
   provider_novita: 'business.balanceProviderNovita',
   quota_5h: 'business.balanceQuota5h',
-  quota_weekly: 'business.balanceQuotaWeekly'
+  quota_weekly: 'business.balanceQuotaWeekly',
+  quota_7d: 'business.balanceQuota7d',
+  quota_month_total: 'business.balanceQuotaMonthTotal',
+  quota_month_code: 'business.balanceQuotaMonthCode'
 };
 
 function balanceLabel(row: Api.Management.ProviderBalanceEntry) {
@@ -795,8 +887,24 @@ function balanceLabel(row: Api.Management.ProviderBalanceEntry) {
   return key ? $t(key) : row.label_key;
 }
 
+function planQuotaLabel(row: Api.Management.ProviderPlanQuotaEntry) {
+  const key = balanceLabelKeys[row.label_key];
+  return key ? $t(key) : row.label_key;
+}
+
+function usageWindowLabel(labelKey: string) {
+  const keys: Record<string, App.I18n.I18nKey> = {
+    quota_5h: 'business.usageWindow5h',
+    quota_weekly: 'business.usageWindowWeekly',
+    quota_7d: 'business.usageWindow7d',
+    quota_month_total: 'business.usageWindowMonthTotal',
+    quota_month_code: 'business.usageWindowMonthCode'
+  };
+  const key = keys[labelKey];
+  return key ? $t(key) : labelKey;
+}
+
 const balanceEntries = computed(() => balanceRows.value.filter(item => item.kind !== 'quota'));
-const quotaEntries = computed(() => balanceRows.value.filter(item => item.kind === 'quota'));
 const balanceColumns = computed<DataTableColumns<Api.Management.ProviderBalanceEntry>>(() => [
   {
     title: $t('business.account'),
@@ -824,17 +932,87 @@ const balanceColumns = computed<DataTableColumns<Api.Management.ProviderBalanceE
   }
 ]);
 
-async function handleBalance(row: Api.Management.ProviderAccount) {
-  showBalance.value = true;
-  balanceLoading.value = true;
-  balanceTitle.value = $t('business.accountBalanceTitle', { name: row.name });
-  try {
-    const { data, error } = await fetchProviderBalance(row.id);
-    balanceRows.value = !error && data ? (data.balances ?? []) : [];
-  } finally {
-    balanceLoading.value = false;
+function quotaWindowLabel(value: string) {
+  const keys: Record<string, App.I18n.I18nKey> = {
+    rolling: 'business.quotaWindowRolling',
+    weekly: 'business.quotaWindowWeekly',
+    subscription_month: 'business.quotaWindowMonth',
+    unknown: 'business.quotaWindowUnknown'
+  };
+  return $t(keys[value] ?? 'business.quotaWindowUnknown');
+}
+
+function formatQuotaPercent(value: number | null | undefined) {
+  if (value === null || value === undefined) return $t('business.no-data');
+  return `${Number(value).toFixed(1)}%`;
+}
+
+function formatQuotaReset(value?: string) {
+  if (!value) return '';
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? formatTime(new Date(time).toISOString()) : value;
+}
+
+function stopQuotaAutoRefresh() {
+  if (quotaRefreshTimer !== null) {
+    window.clearInterval(quotaRefreshTimer);
+    quotaRefreshTimer = null;
   }
 }
+
+const quotaLoadingGuard = ref(false);
+
+async function loadQuota(accountID: string) {
+  quotaLoadingGuard.value = true;
+  quotaError.value = false;
+  try {
+    const { data, error } = await fetchProviderBalance(accountID);
+    if (error || !data) {
+      quotaError.value = true;
+      return;
+    }
+    balanceRows.value = data.balances ?? [];
+    planQuotaRows.value = data.plan_quotas ?? [];
+    quotaUnsupported.value = data.quota_support !== 'supported';
+    quotaLastQueriedAt.value = data.queried_at;
+  } finally {
+    quotaLoadingGuard.value = false;
+  }
+}
+
+async function handleQuota(row: Api.Management.ProviderAccount) {
+  currentQuotaAccount.value = row;
+  showBalance.value = true;
+  balanceTitle.value = $t('business.accountUsageTitle', { name: row.name });
+  const vendor = findVendor(row.provider);
+  quotaUnsupported.value = (vendor?.quota_support ?? 'unsupported') !== 'supported';
+  balanceRows.value = [];
+  planQuotaRows.value = [];
+  quotaError.value = false;
+  quotaLastQueriedAt.value = '';
+  if (quotaUnsupported.value) return;
+  balanceLoading.value = true;
+  await loadQuota(row.id);
+  balanceLoading.value = false;
+}
+
+const quotaAutoRefreshInterval = 60_000;
+
+watch(showBalance, visible => {
+  stopQuotaAutoRefresh();
+  if (visible && currentQuotaAccount.value && !quotaUnsupported.value) {
+    quotaRefreshTimer = window.setInterval(() => {
+      if (!quotaLoadingGuard.value && currentQuotaAccount.value) {
+        void loadQuota(currentQuotaAccount.value.id);
+      }
+    }, quotaAutoRefreshInterval);
+  }
+});
+
+onUnmounted(() => {
+  stopQuotaAutoRefresh();
+  if (showModels.value) modelRequestGeneration++;
+});
 
 async function handleDelete(id: string) {
   const { error } = await fetchDeleteProviderAccount(id);
@@ -846,11 +1024,19 @@ async function handleDelete(id: string) {
 
 onMounted(async () => {
   await Promise.all([loadCatalog(), loadData()]);
+  void loadUsageSummaries();
+  usageSummariesTimer = window.setInterval(() => {
+    void loadUsageSummaries();
+  }, 60_000);
   const providerID = typeof route.query.provider === 'string' ? route.query.provider : '';
   if (providerID) {
     const account = list.value.find(item => item.id === providerID);
     if (account) openEdit(account);
   }
+});
+
+onUnmounted(() => {
+  stopUsageSummaryRefresh();
 });
 </script>
 
@@ -1106,6 +1292,9 @@ onMounted(async () => {
 
     <NModal v-model:show="showModels" preset="card" :title="modelTitle" class="w-720px">
       <NAlert type="info" :bordered="false" class="mb-12px">{{ $t('business.the-model-list-comes-from') }}</NAlert>
+      <NAlert v-if="modelPricingKind === 'plan'" type="warning" :bordered="false" class="mb-12px">
+        {{ $t('business.plan-model-pricing-hint') }}
+      </NAlert>
       <NDataTable
         v-model:checked-row-keys="selectedModelKeys"
         :columns="modelColumns"
@@ -1132,27 +1321,42 @@ onMounted(async () => {
 
     <NModal v-model:show="showBalance" preset="card" :title="balanceTitle" class="w-680px">
       <NSpin :show="balanceLoading">
-        <div v-if="quotaEntries.length" class="mb-16px">
-          <NCard v-for="row in quotaEntries" :key="row.label_key" size="small" class="mb-8px" embedded>
+        <NAlert v-if="quotaUnsupported" type="warning" :bordered="false" class="mb-12px">
+          {{ $t('business.quota-unsupported-hint') }}
+        </NAlert>
+        <NAlert v-if="quotaError" type="error" :bordered="false" class="mb-12px">
+          {{ $t('business.quota-query-failed-hint') }}
+        </NAlert>
+
+        <div v-if="planQuotaRows.length" class="mb-16px">
+          <NCard v-for="row in planQuotaRows" :key="row.id" size="small" class="mb-8px" embedded>
+            <NSpace justify="space-between" align="center" class="mb-4px">
+              <NText strong>{{ planQuotaLabel(row) }}</NText>
+              <NTag size="small" round>{{ quotaWindowLabel(row.window_kind) }}</NTag>
+            </NSpace>
             <NSpace justify="space-between" align="center" class="mb-8px">
-              <NText strong>{{ balanceLabel(row) }}</NText>
-              <NText depth="2">
-                {{ $t('business.used') }}
-                {{ formatUnitAmount(row.used, row.unit) }}
-                {{ $t('business.remaining') }}
-                {{ formatUnitAmount(row.remaining, row.unit) }}
-              </NText>
+              <NText>{{ $t('business.used') }} {{ formatQuotaPercent(row.used_percent) }}</NText>
+              <NText depth="2">{{ $t('business.remaining') }} {{ formatQuotaPercent(row.remaining_percent) }}</NText>
             </NSpace>
             <NProgress
               type="line"
-              :percentage="row.used ?? 0"
-              :status="(row.used ?? 0) >= 90 ? 'error' : (row.used ?? 0) >= 70 ? 'warning' : 'success'"
+              :percentage="row.used_percent ?? 0"
+              :status="(row.used_percent ?? 0) >= 90 ? 'error' : (row.used_percent ?? 0) >= 70 ? 'warning' : 'success'"
             />
-            <NText v-if="row.next_reset_time" depth="3" class="mt-8px block text-12px">
-              {{ $t('business.next-reset') }}{{ formatResetTime(row.next_reset_time) }}
+            <NText v-if="row.used !== null && row.total !== null" depth="3" class="mt-8px block text-12px">
+              {{ $t('business.used') }} {{ formatUnitAmount(row.used ?? null, row.unit) }} /
+              {{ formatUnitAmount(row.total ?? null, row.unit) }} ·
+              {{ $t('business.remaining') }} {{ formatUnitAmount(row.remaining ?? null, row.unit) }} {{ row.unit }}
+            </NText>
+            <NText v-else depth="3" class="mt-8px block text-12px">
+              {{ $t('business.quota-absolute-unavailable') }}
+            </NText>
+            <NText v-if="row.reset_at" depth="3" class="mt-4px block text-12px">
+              {{ $t('business.next-reset') }}{{ formatQuotaReset(row.reset_at) }}
             </NText>
           </NCard>
         </div>
+
         <NDataTable
           v-if="balanceEntries.length"
           :columns="balanceColumns"
@@ -1160,7 +1364,21 @@ onMounted(async () => {
           size="small"
           :bordered="false"
         />
-        <NEmpty v-if="!balanceLoading && !balanceRows.length" :description="$t('business.no-balance-or-limit-data')" />
+
+        <NEmpty
+          v-if="!balanceLoading && !quotaUnsupported && !quotaError && !planQuotaRows.length && !balanceEntries.length"
+          :description="$t('business.no-balance-or-limit-data')"
+        />
+
+        <div v-if="!quotaUnsupported && !quotaError" class="mt-12px flex items-center justify-between">
+          <NText depth="3" class="text-12px">
+            {{ $t('business.quota-auto-refresh-hint') }}
+            <template v-if="quotaLastQueriedAt">· {{ formatTime(quotaLastQueriedAt) }}</template>
+          </NText>
+          <NButton size="small" :loading="balanceLoading" @click="currentQuotaAccount && loadQuota(currentQuotaAccount.id)">
+            {{ $t('common.refresh') }}
+          </NButton>
+        </div>
       </NSpin>
     </NModal>
 

@@ -174,12 +174,13 @@
 | `GET /api/v1/provider-catalog` | 厂商目录,按模型厂商/云平台（含官方 `openai`、`anthropic`、`gemini`）/第三方服务/自定义分类,同厂商提供套餐和地区版本及默认 `default_protocol` |
 | `GET /api/v1/provider-accounts` | 供应商账号列表(含 `api_protocol`、主动探测状态、24h 心跳条、可用率、生效代理及被动健康统计) |
 | `GET /api/v1/provider-accounts/availability` | 按厂商聚合的可用性总览、24h 心跳条与自动巡检配置 |
+| `GET /api/v1/provider-accounts/usage-summaries` | 批量查询当前组织内支持自动查询的账号余额/套餐额度摘要 |
 | `POST /api/v1/provider-accounts/test-all` | 一键批量检测当前组织下全部启用账号并记录结果 |
 | `POST /api/v1/provider-accounts` | 创建供应商账号(凭据加密入库;支持指定 `api_protocol`:`openai_responses`/`openai_chat`/`anthropic_messages`/`gemini_native`/`azure_openai`/`bedrock`/`vertex`;OpenAI/Anthropic/Gemini/兼容账号按账号隔离,支持各自独立的 `base_url` 与协议) |
 | `PATCH /api/v1/provider-accounts/{id}` | 更新供应商账号(支持调整 `api_protocol`、名称、端点与 API Key 轮换,API Key 留空保持不变) |
 | `PATCH /api/v1/provider-accounts/{id}/status` | 启用或停用账号,并刷新上游引擎 |
-| `GET /api/v1/provider-accounts/{id}/models` | 使用已保存凭据获取上游模型列表,并补全 models.dev 中的已知输入/输出价格;套餐类账号返回套餐内 0 价格 |
-| `GET /api/v1/provider-accounts/{id}/balance` | 查询支持的账户余额与套餐限额,按原币种返回;限额含已用/剩余百分比及重置时间 |
+| `GET /api/v1/provider-accounts/{id}/models` | 使用已保存凭据获取上游模型列表,并补全 models.dev 中的已知输入/输出价格;套餐类账号返回 0 价格与 `pricing_kind=plan` |
+| `GET /api/v1/provider-accounts/{id}/balance` | 查询支持的账户余额与套餐额度,响应区分 `balances` 与 `plan_quotas`;不支持自动查询时返回 `quota_support=unsupported` |
 | `POST /api/v1/provider-accounts/{id}/test` | 手动连通性与凭据检测(结果落库并刷新健康态) |
 | `GET /api/v1/provider-accounts/{id}/health-history` | 查询单账号 24h/7d 可用率、平均/P95 延迟与近期检测明细 |
 | `GET /api/v1/provider-health/settings` | 查询账号定时可用性巡检策略 |
@@ -225,7 +226,7 @@
 
 模型服务默认 `expose_router = false`，即仅作为管理分组，向客户端 `GET /v1/models` 与 `GET /v1beta/models` 暴露各可用候选的具体 `upstream_model`（绝不透出管理台中文服务名）；只有显式开启 `expose_router = true` 并设置合规 ASCII `router_model_id`（如 `omniflux/auto`）的服务，才会额外暴露一个 `owned_by: "omniflux-router"` 的智能路由入口模型。无效 ID 返回 400 `SERVICE_ROUTER_MODEL_ID_INVALID`，同组织重复返回 409 `SERVICE_ROUTER_MODEL_ID_EXISTS`。模型服务默认创建组织级 `read + invoke` 授权,撤销组织授权后可仅开放给指定部门或项目。`read` 控制 `GET /v1/models`,`invoke` 控制聊天、向量化和智能体执行,API Key 所属项目决定可见范围。账号与服务列表额外返回近 24 小时成功率、平均延迟、最近调用、可用候选数及健康状态;无流量标记为“未验证”,不等同于健康。
 
-供应商账号声明结算币种,同一模型服务的候选必须使用相同币种;不同服务可使用不同币种。公开价格目录只提供 USD 参考价,其他币种不自动换算。成本按实际结算币种写入用量并分组汇总,预算只累计同币种成本。账户余额保留厂商原始币种与单位,不进行隐式汇率换算;Coding Plan 等套餐按 `kind=quota` 返回独立限额窗口,与货币余额区分。
+供应商账号声明结算币种,同一模型服务的候选必须使用相同币种;不同服务可使用不同币种。公开价格目录只提供 USD 参考价,其他币种不自动换算。成本按实际结算币种写入用量并分组汇总,预算只累计同币种成本。账户余额保留厂商原始币种与单位,不进行隐式汇率换算。余额接口通过 `balances` 与 `plan_quotas` 区分货币余额和套餐窗口;厂商目录返回 `pricing_kind`、`quota_kind` 与 `quota_support`。未接入自动查询的套餐仅返回不支持状态,不伪造额度。
 
 用量汇总与明细同时覆盖业务 API 调用、提示词调试和智能体调试,并通过 `source` 区分 `api`、`prompt_debug`、`agent_debug`;多币种时 `cost_currency=MIXED`,各币种金额在 `costs` 中分别返回,不进行跨币种求和。
 

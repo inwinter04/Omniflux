@@ -394,6 +394,12 @@ declare namespace Api {
       api_key_url: string;
       balance_kind: string;
       editable_url: boolean;
+      pricing_kind: 'payg' | 'plan' | 'unknown';
+      plan_kind: 'coding' | 'token' | 'agent' | '' | string;
+      quota_kind: 'none' | 'balance' | 'plan_usage' | 'balance_and_plan' | string;
+      quota_support: 'supported' | 'unsupported' | 'unconfirmed';
+      credential_kind: 'inference_api_key' | 'oauth_device' | 'volc_aksk' | 'console_only' | 'unknown';
+      quota_docs_url: string;
     }
 
     interface ProviderCatalogGroup {
@@ -408,6 +414,17 @@ declare namespace Api {
       output_cost_per_million: number | null;
     }
 
+    interface ProviderModelsResponse {
+      models: ProviderModel[];
+      pricing_source: string;
+      pricing_kind: ProviderCatalogEntry['pricing_kind'];
+      plan_kind: ProviderCatalogEntry['plan_kind'];
+      quota_kind: ProviderCatalogEntry['quota_kind'];
+      quota_support: ProviderCatalogEntry['quota_support'];
+      credential_kind: ProviderCatalogEntry['credential_kind'];
+      quota_docs_url: string;
+    }
+
     interface ProviderBalanceEntry {
       label_key: string;
       kind: 'balance' | 'quota';
@@ -416,6 +433,51 @@ declare namespace Api {
       used: number | null;
       unit: string;
       next_reset_time?: number;
+      next_reset_time_text?: string;
+    }
+
+    interface ProviderPlanQuotaEntry {
+      id: string;
+      label_key: string;
+      window_kind: 'rolling' | 'weekly' | 'subscription_month' | 'unknown' | string;
+      window_seconds?: number;
+      used_percent: number | null;
+      remaining_percent: number | null;
+      used?: number | null;
+      remaining?: number | null;
+      total?: number | null;
+      unit: string;
+      reset_at?: string;
+    }
+
+    interface ProviderUsageSummary {
+      account_id: string;
+      account_name: string;
+      provider: string;
+      pricing_kind: ProviderCatalogEntry['pricing_kind'];
+      plan_kind: ProviderCatalogEntry['plan_kind'];
+      quota_kind: ProviderCatalogEntry['quota_kind'];
+      quota_support: ProviderCatalogEntry['quota_support'];
+      quota_status: 'ok' | 'query_failed' | string;
+      balances: ProviderBalanceEntry[];
+      plan_quotas: ProviderPlanQuotaEntry[];
+      queried_at: string;
+    }
+
+    interface ProviderUsageSummariesResponse {
+      items: ProviderUsageSummary[];
+      queried_at: string;
+    }
+
+    interface ProviderBalanceResponse {
+      pricing_kind: ProviderCatalogEntry['pricing_kind'];
+      plan_kind: ProviderCatalogEntry['plan_kind'];
+      quota_kind: ProviderCatalogEntry['quota_kind'];
+      quota_support: ProviderCatalogEntry['quota_support'];
+      quota_status: 'ok' | 'unsupported' | string;
+      balances: ProviderBalanceEntry[];
+      plan_quotas: ProviderPlanQuotaEntry[];
+      queried_at: string;
     }
 
     interface CreateProviderAccountParams {

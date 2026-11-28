@@ -38,6 +38,10 @@ func (d ServerDeps) ProviderCatalog(w http.ResponseWriter, r *http.Request) {
 				WebsiteURL:      "https://platform.openai.com",
 				APIKeyURL:       "https://platform.openai.com/api-keys",
 				EditableURL:     true,
+				PricingKind:     "payg",
+				QuotaKind:       "none",
+				QuotaSupport:    "unsupported",
+				CredentialKind:  "inference_api_key",
 			},
 			{
 				ID:              "anthropic",
@@ -52,6 +56,10 @@ func (d ServerDeps) ProviderCatalog(w http.ResponseWriter, r *http.Request) {
 				WebsiteURL:      "https://console.anthropic.com",
 				APIKeyURL:       "https://console.anthropic.com/settings/keys",
 				EditableURL:     true,
+				PricingKind:     "payg",
+				QuotaKind:       "none",
+				QuotaSupport:    "unsupported",
+				CredentialKind:  "inference_api_key",
 			},
 			{
 				ID:              "gemini",
@@ -66,6 +74,10 @@ func (d ServerDeps) ProviderCatalog(w http.ResponseWriter, r *http.Request) {
 				WebsiteURL:      "https://ai.google.dev",
 				APIKeyURL:       "https://aistudio.google.com/apikey",
 				EditableURL:     true,
+				PricingKind:     "payg",
+				QuotaKind:       "none",
+				QuotaSupport:    "unsupported",
+				CredentialKind:  "inference_api_key",
 			},
 		},
 	}
@@ -92,6 +104,10 @@ func (d ServerDeps) ProviderCatalog(w http.ResponseWriter, r *http.Request) {
 		EditableURL:     true,
 		VersionKind:     "custom",
 		RegionKind:      "custom",
+		PricingKind:     "unknown",
+		QuotaKind:       "none",
+		QuotaSupport:    "unsupported",
+		CredentialKind:  "unknown",
 	}}})
 	adminOK(w, groups)
 }

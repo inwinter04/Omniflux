@@ -122,6 +122,14 @@ func (d ServerDeps) ProviderModels(w http.ResponseWriter, r *http.Request) {
 	if bifrostx.IsPlanPriceProvider(access.Provider) {
 		pricingSource = "plan"
 	}
+	metadata, hasVendor := bifrostx.VendorCatalogEntryByID(access.Provider)
+	if !hasVendor {
+		metadata = bifrostx.VendorCatalogEntry{
+			PricingKind:  "unknown",
+			QuotaKind:    "none",
+			QuotaSupport: "unsupported",
+		}
+	}
 	prices := bifrostx.LookupModelPrices(ctx, access.Provider, ids)
 	models := make([]providerModelResponse, 0, len(ids))
 	for _, id := range ids {
@@ -132,5 +140,14 @@ func (d ServerDeps) ProviderModels(w http.ResponseWriter, r *http.Request) {
 		}
 		models = append(models, item)
 	}
-	adminOK(w, map[string]any{"models": models, "pricing_source": pricingSource})
+	adminOK(w, map[string]any{
+		"models":          models,
+		"pricing_source":  pricingSource,
+		"pricing_kind":    metadata.PricingKind,
+		"plan_kind":       metadata.PlanKind,
+		"quota_kind":      metadata.QuotaKind,
+		"quota_support":   metadata.QuotaSupport,
+		"credential_kind": metadata.CredentialKind,
+		"quota_docs_url":  metadata.QuotaDocsURL,
+	})
 }

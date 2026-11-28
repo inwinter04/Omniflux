@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,17 +24,60 @@ import (
 
 // balanceEntry 是一条余额信息;字段可空,取决于厂商接口返回口径。
 type balanceEntry struct {
-	LabelKey      string   `json:"label_key"`
-	Kind          string   `json:"kind"`
-	Remaining     *float64 `json:"remaining"`
-	Total         *float64 `json:"total"`
-	Used          *float64 `json:"used"`
-	Unit          string   `json:"unit"`
-	NextResetTime *int64   `json:"next_reset_time,omitempty"`
+	LabelKey          string   `json:"label_key"`
+	Kind              string   `json:"kind"`
+	Remaining         *float64 `json:"remaining"`
+	Total             *float64 `json:"total"`
+	Used              *float64 `json:"used"`
+	Unit              string   `json:"unit"`
+	NextResetTime     *int64   `json:"next_reset_time,omitempty"`
+	NextResetTimeText *string  `json:"next_reset_time_text,omitempty"`
 }
 
-// ProviderAccountBalance 查询厂商账户余额。
-// 服务端解密凭据后调用厂商余额接口,结果做归一化;不支持余额查询的厂商返回明确错误。
+// planQuotaEntry 是归一化后的套餐额度窗口。百分比统一使用 0-100。
+type planQuotaEntry struct {
+	ID               string   `json:"id"`
+	LabelKey         string   `json:"label_key"`
+	WindowKind       string   `json:"window_kind"`
+	WindowSeconds    *int64   `json:"window_seconds,omitempty"`
+	UsedPercent      *float64 `json:"used_percent"`
+	RemainingPercent *float64 `json:"remaining_percent"`
+	Used             *float64 `json:"used,omitempty"`
+	Remaining        *float64 `json:"remaining,omitempty"`
+	Total            *float64 `json:"total,omitempty"`
+	Unit             string   `json:"unit"`
+	ResetAt          *string  `json:"reset_at,omitempty"`
+}
+
+// providerUsageSummary 是账号列表直显用的轻量余额/套餐摘要。
+type providerUsageSummary struct {
+	AccountID    string           `json:"account_id"`
+	AccountName  string           `json:"account_name"`
+	Provider     string           `json:"provider"`
+	PricingKind  string           `json:"pricing_kind"`
+	PlanKind     string           `json:"plan_kind"`
+	QuotaKind    string           `json:"quota_kind"`
+	QuotaSupport string           `json:"quota_support"`
+	QuotaStatus  string           `json:"quota_status"`
+	Balances     []balanceEntry   `json:"balances"`
+	PlanQuotas   []planQuotaEntry `json:"plan_quotas"`
+	QueriedAt    string           `json:"queried_at"`
+}
+
+// providerBalanceResponse 区分钱包余额与套餐额度,并给前端稳定的展示语义。
+type providerBalanceResponse struct {
+	PricingKind  string           `json:"pricing_kind"`
+	PlanKind     string           `json:"plan_kind"`
+	QuotaKind    string           `json:"quota_kind"`
+	QuotaSupport string           `json:"quota_support"`
+	QuotaStatus  string           `json:"quota_status"`
+	Balances     []balanceEntry   `json:"balances"`
+	PlanQuotas   []planQuotaEntry `json:"plan_quotas"`
+	QueriedAt    string           `json:"queried_at"`
+}
+
+// ProviderAccountBalance 查询厂商余额与套餐额度。
+// 未接入自动查询的厂商返回 HTTP 200 和 quota_support=unsupported,由前端展示不可用状态。
 func (d ServerDeps) ProviderAccountBalance(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
 	if !ok || d.requirePermission(w, principal, auth.PermProviderManage) != nil {
@@ -53,8 +98,26 @@ func (d ServerDeps) ProviderAccountBalance(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	vendor := bifrostx.VendorByID(access.Provider)
-	if vendor == nil || vendor.BalanceKind == "" {
-		adminError(w, http.StatusBadRequest, "PROVIDER_BALANCE_UNSUPPORTED", "this-provider-does-not-support-balance", nil)
+	metadata, hasVendor := bifrostx.VendorCatalogEntryByID(access.Provider)
+	if !hasVendor {
+		metadata = bifrostx.VendorCatalogEntry{
+			PricingKind:  "unknown",
+			QuotaKind:    "none",
+			QuotaSupport: "unsupported",
+		}
+	}
+	response := providerBalanceResponse{
+		PricingKind:  metadata.PricingKind,
+		PlanKind:     metadata.PlanKind,
+		QuotaKind:    metadata.QuotaKind,
+		QuotaSupport: metadata.QuotaSupport,
+		QuotaStatus:  "unsupported",
+		Balances:     []balanceEntry{},
+		PlanQuotas:   []planQuotaEntry{},
+		QueriedAt:    time.Now().UTC().Format(time.RFC3339),
+	}
+	if metadata.QuotaSupport != "supported" || vendor == nil {
+		adminOK(w, response)
 		return
 	}
 	client, err := balanceHTTPClientFor(access.ProxyType, access.ProxyURL)
@@ -64,23 +127,158 @@ func (d ServerDeps) ProviderAccountBalance(w http.ResponseWriter, r *http.Reques
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	balances, qerr := queryVendorBalance(ctx, vendor.ID, vendor.BaseURL, access.APIKey, client)
+	entries, qerr := queryVendorBalance(ctx, vendor.ID, vendor.BaseURL, access.APIKey, client)
 	if qerr != nil {
 		adminError(w, http.StatusBadGateway, "PROVIDER_BALANCE_QUERY_FAILED", "provider-balance-query-failed", nil)
 		return
 	}
-	adminOK(w, map[string]any{"balances": balances})
+	response.QuotaStatus = "ok"
+	response.Balances = make([]balanceEntry, 0, len(entries))
+	for _, entry := range entries {
+		if entry.Kind != "quota" {
+			response.Balances = append(response.Balances, entry)
+		}
+	}
+	response.PlanQuotas = planQuotasFromBalanceEntries(entries)
+	adminOK(w, response)
+}
+
+// ProviderUsageSummaries 批量查询当前组织内支持自动查询的账号摘要。
+// 供供应商列表直显余额/套餐用量;不支持自动查询的账号由厂商目录元数据标记。
+func (d ServerDeps) ProviderUsageSummaries(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok || d.requirePermission(w, principal, auth.PermProviderRead) != nil {
+		return
+	}
+	rows, err := d.Pool.Query(r.Context(), `
+		SELECT id, name, provider
+		FROM provider_accounts
+		WHERE organization_id = $1
+		ORDER BY created_at DESC
+	`, principal.OrganizationID)
+	if err != nil {
+		adminError(w, http.StatusInternalServerError, "PROVIDER_USAGE_QUERY_FAILED", "failed-to-query-provider-accounts", nil)
+		return
+	}
+	type accountRow struct {
+		id       uuid.UUID
+		name     string
+		provider string
+	}
+	accounts := make([]accountRow, 0, 16)
+	for rows.Next() {
+		var item accountRow
+		if err := rows.Scan(&item.id, &item.name, &item.provider); err != nil {
+			rows.Close()
+			adminError(w, http.StatusInternalServerError, "PROVIDER_USAGE_QUERY_FAILED", "failed-to-query-provider-accounts", nil)
+			return
+		}
+		metadata, exists := bifrostx.VendorCatalogEntryByID(item.provider)
+		if !exists || metadata.QuotaSupport != "supported" {
+			continue
+		}
+		accounts = append(accounts, item)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		adminError(w, http.StatusInternalServerError, "PROVIDER_USAGE_QUERY_FAILED", "failed-to-query-provider-accounts", nil)
+		return
+	}
+
+	type result struct {
+		summary providerUsageSummary
+		err     error
+	}
+	results := make(map[uuid.UUID]result, len(accounts))
+	var resultMu sync.Mutex
+	sem := make(chan struct{}, 4)
+	var wg sync.WaitGroup
+	queriedAt := time.Now().UTC().Format(time.RFC3339)
+	for _, account := range accounts {
+		wg.Add(1)
+		go func(account accountRow) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			metadata, _ := bifrostx.VendorCatalogEntryByID(account.provider)
+			summary := providerUsageSummary{
+				AccountID:    account.id.String(),
+				AccountName:  account.name,
+				Provider:     account.provider,
+				PricingKind:  metadata.PricingKind,
+				PlanKind:     metadata.PlanKind,
+				QuotaKind:    metadata.QuotaKind,
+				QuotaSupport: metadata.QuotaSupport,
+				QuotaStatus:  "ok",
+				Balances:     []balanceEntry{},
+				PlanQuotas:   []planQuotaEntry{},
+				QueriedAt:    queriedAt,
+			}
+			access, err := d.loadProviderAccess(r.Context(), principal.OrganizationID, account.id)
+			if err != nil {
+				summary.QuotaStatus = "query_failed"
+				resultMu.Lock()
+				results[account.id] = result{summary: summary, err: err}
+				resultMu.Unlock()
+				return
+			}
+			client, err := balanceHTTPClientFor(access.ProxyType, access.ProxyURL)
+			if err != nil {
+				summary.QuotaStatus = "query_failed"
+				resultMu.Lock()
+				results[account.id] = result{summary: summary, err: err}
+				resultMu.Unlock()
+				return
+			}
+			ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+			defer cancel()
+			vendor := bifrostx.VendorByID(account.provider)
+			entries, err := queryVendorBalance(ctx, account.provider, vendor.BaseURL, access.APIKey, client)
+			if err != nil {
+				summary.QuotaStatus = "query_failed"
+				resultMu.Lock()
+				results[account.id] = result{summary: summary, err: err}
+				resultMu.Unlock()
+				return
+			}
+			for _, entry := range entries {
+				if entry.Kind != "quota" {
+					summary.Balances = append(summary.Balances, entry)
+				}
+			}
+			summary.PlanQuotas = planQuotasFromBalanceEntries(entries)
+			resultMu.Lock()
+			results[account.id] = result{summary: summary}
+			resultMu.Unlock()
+		}(account)
+	}
+	wg.Wait()
+
+	items := make([]providerUsageSummary, 0, len(accounts))
+	for _, account := range accounts {
+		if item, exists := results[account.id]; exists {
+			items = append(items, item.summary)
+		}
+	}
+	adminOK(w, map[string]any{"items": items, "queried_at": queriedAt})
 }
 
 // queryVendorBalance 按 BalanceKind 调用厂商余额接口并归一化结果。
 func queryVendorBalance(ctx context.Context, vendorID, baseURL, apiKey string, client *http.Client) ([]balanceEntry, error) {
-	switch bifrostx.VendorByID(vendorID).BalanceKind {
+	vendor := bifrostx.VendorByID(vendorID)
+	if vendor == nil {
+		return nil, errors.New("this-provider-does-not-support-balance")
+	}
+	switch vendor.BalanceKind {
 	case "deepseek":
 		return queryDeepSeekBalance(ctx, apiKey, client)
 	case "zhipu":
 		return queryZhipuBalance(ctx, vendorID, baseURL, apiKey, client)
 	case "zhipu_plan":
 		return queryZhipuPlanBalance(ctx, vendorID, baseURL, apiKey, client)
+	case "kimi_plan":
+		return queryKimiPlanBalance(ctx, baseURL, apiKey, client)
 	case "stepfun":
 		return queryStepFunBalance(ctx, vendorID, baseURL, apiKey, client)
 	case "siliconflow":
@@ -244,6 +442,235 @@ func queryZhipuBalance(ctx context.Context, vendorID, baseURL, apiKey string, cl
 		labelKey = "provider_zai"
 	}
 	return []balanceEntry{{LabelKey: labelKey, Remaining: remaining, Unit: unit}}, nil
+}
+
+// planQuotasFromBalanceEntries 把内部限额记录转换为套餐窗口展示模型。
+func planQuotasFromBalanceEntries(entries []balanceEntry) []planQuotaEntry {
+	quotas := make([]planQuotaEntry, 0, len(entries))
+	for _, entry := range entries {
+		if entry.Kind != "quota" {
+			continue
+		}
+		quota := planQuotaEntry{
+			ID:               fmt.Sprintf("%s-%d", entry.LabelKey, len(quotas)+1),
+			LabelKey:         entry.LabelKey,
+			WindowKind:       "unknown",
+			UsedPercent:      entry.Used,
+			RemainingPercent: entry.Remaining,
+			Unit:             "",
+		}
+		switch entry.LabelKey {
+		case "quota_5h":
+			quota.WindowKind = "rolling"
+			seconds := int64(18000)
+			quota.WindowSeconds = &seconds
+		case "quota_weekly", "quota_7d":
+			quota.WindowKind = "weekly"
+			seconds := int64(604800)
+			quota.WindowSeconds = &seconds
+		default:
+			quota.WindowKind = "subscription_month"
+		}
+		if entry.NextResetTimeText != nil {
+			quota.ResetAt = entry.NextResetTimeText
+		} else if entry.NextResetTime != nil {
+			seconds := *entry.NextResetTime
+			// 部分厂商返回毫秒时间戳;阈值足以区分 Unix 秒。
+			if seconds > 1e12 {
+				seconds /= 1000
+			}
+			value := time.Unix(seconds, 0).UTC().Format(time.RFC3339)
+			quota.ResetAt = &value
+		}
+		quotas = append(quotas, quota)
+	}
+	// 当前智谱上游可能把 5 小时与每周窗口都标成同一 Credit 类型;按重置时间先后区分。
+	if len(quotas) == 2 && quotas[0].LabelKey == "quota_weekly" && quotas[1].LabelKey == "quota_weekly" {
+		sort.Slice(quotas, func(i, j int) bool {
+			left := quotas[i].ResetAt
+			right := quotas[j].ResetAt
+			if left == nil || right == nil {
+				return false
+			}
+			return *left < *right
+		})
+		fiveHours := int64(18000)
+		quotas[0].ID = "quota_5h-1"
+		quotas[0].LabelKey = "quota_5h"
+		quotas[0].WindowKind = "rolling"
+		quotas[0].WindowSeconds = &fiveHours
+		quotas[1].ID = "quota_weekly-2"
+		quotas[1].LabelKey = "quota_weekly"
+		quotas[1].WindowKind = "weekly"
+		seconds := int64(604800)
+		quotas[1].WindowSeconds = &seconds
+	}
+	return quotas
+}
+
+// quotaTimeString 归一化上游秒、毫秒和字符串时间。
+func quotaTimeString(value any) *string {
+	switch v := value.(type) {
+	case string:
+		trimmed := strings.TrimSpace(v)
+		if trimmed == "" {
+			return nil
+		}
+		return &trimmed
+	case float64:
+		if v <= 0 {
+			return nil
+		}
+		// JavaScript 和部分管理 API 使用毫秒;阈值足以覆盖秒级 Unix 时间。
+		if v > 1e12 {
+			v /= 1000
+		}
+		formatted := time.Unix(int64(v), 0).UTC().Format(time.RFC3339)
+		return &formatted
+	default:
+		return nil
+	}
+}
+
+// ── Kimi For Coding ─────────────────────────────────────────
+// GET {api.kimi.com | api.kimi.ai}/coding/v1/usages
+// 鉴权: Authorization: Bearer <Coding API Key 或 OAuth token>。
+// 新版返回 usages.limit_*: used_ratio 为 0-1;旧版返回 usage/limits 绝对值。
+func queryKimiPlanBalance(ctx context.Context, baseURL, apiKey string, client *http.Client) ([]balanceEntry, error) {
+	url := strings.TrimRight(baseURL, "/") + "/coding/v1/usages"
+	payload, err := balanceGet(ctx, url, map[string]string{
+		"Authorization": "Bearer " + apiKey,
+		"Accept":        "application/json",
+	}, client)
+	if err != nil {
+		return nil, err
+	}
+
+	usages, ok := payload["usages"].(map[string]any)
+	if !ok {
+		if data, exists := payload["data"].(map[string]any); exists {
+			usages, ok = data["usages"].(map[string]any)
+		}
+	}
+	if ok {
+		type kimiWindow struct {
+			label      string
+			windowKind string
+			seconds    *int64
+		}
+		fiveHours := int64(18000)
+		sevenDays := int64(604800)
+		windows := []struct {
+			key    string
+			window kimiWindow
+		}{
+			{"limit_5h", kimiWindow{label: "quota_5h", windowKind: "rolling", seconds: &fiveHours}},
+			{"limit_7d", kimiWindow{label: "quota_7d", windowKind: "weekly", seconds: &sevenDays}},
+			{"limit_month_total", kimiWindow{label: "quota_month_total", windowKind: "subscription_month"}},
+			{"limit_month_code", kimiWindow{label: "quota_month_code", windowKind: "subscription_month"}},
+		}
+		entries := make([]balanceEntry, 0, len(windows))
+		for _, item := range windows {
+			limit, exists := usages[item.key].(map[string]any)
+			if !exists {
+				continue
+			}
+			ratio := balanceF64(limit, "used_ratio", "ratio")
+			if ratio == nil {
+				continue
+			}
+			// Kimi 新版官方契约使用 0-1 ratio。
+			usedPercent := *ratio * 100
+			if strings.Contains(strings.ToLower(item.key), "percent") {
+				usedPercent = *ratio
+			}
+			remainingPercent := 100 - usedPercent
+			entry := balanceEntry{
+				LabelKey:  item.window.label,
+				Kind:      "quota",
+				Used:      &usedPercent,
+				Remaining: &remainingPercent,
+				Unit:      "%",
+			}
+			if total := balanceF64(limit, "total", "limit"); total != nil {
+				entry.Total = total
+			}
+			if used := balanceF64(limit, "used"); used != nil {
+				entry.Used = used
+			}
+			if remaining := balanceF64(limit, "remaining"); remaining != nil {
+				entry.Remaining = remaining
+			}
+			if entry.Total != nil && entry.Used != nil {
+				remaining := *entry.Total - *entry.Used
+				entry.Remaining = &remaining
+			}
+			entry.NextResetTimeText = quotaTimeString(limit["reset_time"])
+			entries = append(entries, entry)
+			_ = item.window.seconds
+		}
+		if len(entries) > 0 {
+			return entries, nil
+		}
+	}
+
+	// 旧版契约: usage/limits 携带绝对 used/remaining/resetTime。
+	limits, _ := payload["limits"].([]any)
+	if usage, exists := payload["usage"].(map[string]any); exists {
+		if nested, nestedOK := usage["limits"].([]any); nestedOK {
+			limits = nested
+		}
+	}
+	entries := make([]balanceEntry, 0, len(limits))
+	for _, item := range limits {
+		limit, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		used := balanceF64(limit, "used")
+		total := balanceF64(limit, "limit", "total")
+		remaining := balanceF64(limit, "remaining")
+		if used == nil || remaining == nil {
+			continue
+		}
+		if total == nil {
+			value := *used + *remaining
+			total = &value
+		}
+		window := ""
+		if value, ok := limit["window"].(string); ok {
+			window = value
+		} else if value, ok := limit["detail"].(string); ok {
+			window = value
+		}
+		label := strings.ToLower(strings.TrimSpace(window))
+		labelKey := "quota_" + label
+		switch {
+		case strings.Contains(label, "5"):
+			labelKey = "quota_5h"
+		case strings.Contains(label, "7"):
+			labelKey = "quota_7d"
+		case strings.Contains(label, "month"):
+			labelKey = "quota_month_total"
+		}
+		entry := balanceEntry{
+			LabelKey:  labelKey,
+			Kind:      "quota",
+			Total:     total,
+			Used:      used,
+			Remaining: remaining,
+			Unit:      "credits",
+		}
+		if reset := balanceF64(limit, "resetTime", "reset_time"); reset != nil {
+			value := int64(*reset)
+			entry.NextResetTime = &value
+		}
+		entries = append(entries, entry)
+	}
+	if len(entries) == 0 {
+		return nil, errors.New("plan API response contains no usable quota window")
+	}
+	return entries, nil
 }
 
 // ── 智谱 GLM Coding Plan ────────────────────────────────────

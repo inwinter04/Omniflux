@@ -33,10 +33,17 @@ const emit = defineEmits<{
 }>();
 
 const modelCache = reactive<Record<string, Api.Management.ProviderModel[]>>({});
+const modelPricingSources = reactive<Record<string, string>>({});
 const modelLoading = reactive<Record<string, boolean>>({});
 const modelErrors = reactive<Record<string, string>>({});
 const refreshing = ref(false);
 const hasNonUSD = computed(() => props.candidates.some(item => item.cost_currency !== 'USD'));
+
+function isPlanRow(row: CandidateDraft) {
+  return modelPricingSources[row.provider_account_id ?? ''] === 'plan';
+}
+
+const hasPlanCandidates = computed(() => props.candidates.some(item => isPlanRow(item)));
 
 const statusOptions = computed(() => [
   { label: $t('business.enable'), value: 'active' },
@@ -127,6 +134,7 @@ const columns = computed<DataTableColumns<CandidateDraft>>(() => [
         value: row.input_cost_per_million,
         min: 0,
         size: 'small',
+        disabled: isPlanRow(row),
         'onUpdate:value': value => (row.input_cost_per_million = value ?? 0)
       })
   },
@@ -139,6 +147,7 @@ const columns = computed<DataTableColumns<CandidateDraft>>(() => [
         value: row.output_cost_per_million,
         min: 0,
         size: 'small',
+        disabled: isPlanRow(row),
         'onUpdate:value': value => (row.output_cost_per_million = value ?? 0)
       })
   },
@@ -152,6 +161,7 @@ const columns = computed<DataTableColumns<CandidateDraft>>(() => [
         min: 0,
         clearable: true,
         size: 'small',
+        disabled: isPlanRow(row),
         placeholder: $t('business.cache-pricing-placeholder'),
         'onUpdate:value': value => (row.cache_read_cost_per_million = value ?? null)
       })
@@ -166,6 +176,7 @@ const columns = computed<DataTableColumns<CandidateDraft>>(() => [
         min: 0,
         clearable: true,
         size: 'small',
+        disabled: isPlanRow(row),
         placeholder: $t('business.cache-pricing-placeholder'),
         'onUpdate:value': value => (row.cache_write_cost_per_million = value ?? null)
       })
@@ -335,6 +346,7 @@ async function loadModels(accountID: string, force = false) {
       return;
     }
     modelCache[accountID] = data.models;
+    modelPricingSources[accountID] = data.pricing_kind;
   } finally {
     modelLoading[accountID] = false;
   }
@@ -347,6 +359,7 @@ function selectModel(row: CandidateDraft, modelID: string) {
   row.cache_read_cost_per_million = null;
   row.cache_write_cost_per_million = null;
   const model = (modelCache[row.provider_account_id ?? ''] ?? []).find(item => item.id === modelID);
+  if (!model || isPlanRow(row)) return;
   if (
     row.cost_currency === 'USD' &&
     model?.input_cost_per_million !== null &&
@@ -374,6 +387,9 @@ function selectModel(row: CandidateDraft, modelID: string) {
       </NButton>
     </NSpace>
   </NSpace>
+  <NAlert v-if="hasPlanCandidates" type="warning" :bordered="false" class="mb-12px">
+    {{ $t('business.plan-candidate-pricing-hint') }}
+  </NAlert>
   <NAlert v-if="hasNonUSD" type="info" :bordered="false" class="mb-12px">
     {{ $t('business.the-public-price-catalog-provides') }}
   </NAlert>
