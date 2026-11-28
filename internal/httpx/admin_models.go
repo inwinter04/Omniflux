@@ -48,9 +48,11 @@ type modelServiceResponse struct {
 	SuccessRate24h   *float64            `json:"success_rate_24h"`
 	Requests24h      int64               `json:"requests_24h"`
 	AvgLatencyMS24h  *float64            `json:"avg_latency_ms_24h"`
+	AvgTTFTMS24h     *float64            `json:"avg_ttft_ms_24h"`
 	LastUsedAt       *time.Time          `json:"last_used_at"`
 	ActiveCandidates int                 `json:"active_candidates"`
 	HealthStatus     string              `json:"health_status"`
+	HealthReason     string              `json:"health_reason"`
 	Candidates       []candidateResponse `json:"candidates"`
 }
 
@@ -177,7 +179,9 @@ func (d ServerDeps) ModelServices(w http.ResponseWriter, r *http.Request) {
 	healthRows, err := d.Pool.Query(r.Context(), `
 		SELECT c.model_service_id, count(u.id),
 		       avg(CASE WHEN u.state = 'success' THEN 1.0 ELSE 0.0 END) FILTER (WHERE u.id IS NOT NULL),
-		       avg(u.total_ms) FILTER (WHERE u.state = 'success'), max(u.created_at)
+		       avg(u.total_ms) FILTER (WHERE u.state = 'success'),
+		       avg(u.first_token_ms) FILTER (WHERE u.state = 'success' AND u.first_token_ms IS NOT NULL),
+		       max(u.created_at)
 		FROM model_candidates c
 		LEFT JOIN usage_records u ON u.model_candidate_id = c.id
 		     AND u.created_at >= now() - interval '24 hours' AND u.state <> 'pending'
@@ -193,13 +197,14 @@ func (d ServerDeps) ModelServices(w http.ResponseWriter, r *http.Request) {
 		requests int64
 		rate     *float64
 		latency  *float64
+		ttft     *float64
 		lastUsed *time.Time
 	}
 	health := map[uuid.UUID]serviceHealth{}
 	for healthRows.Next() {
 		var id uuid.UUID
 		var item serviceHealth
-		if err := healthRows.Scan(&id, &item.requests, &item.rate, &item.latency, &item.lastUsed); err != nil {
+		if err := healthRows.Scan(&id, &item.requests, &item.rate, &item.latency, &item.ttft, &item.lastUsed); err != nil {
 			adminError(w, http.StatusInternalServerError, "SERVICE_LIST_FAILED", "failed-to-read-model-service-health", nil)
 			return
 		}
@@ -217,8 +222,11 @@ func (d ServerDeps) ModelServices(w http.ResponseWriter, r *http.Request) {
 		list[index].Requests24h = item.requests
 		list[index].SuccessRate24h = item.rate
 		list[index].AvgLatencyMS24h = item.latency
+		list[index].AvgTTFTMS24h = item.ttft
 		list[index].LastUsedAt = item.lastUsed
-		list[index].HealthStatus = deriveHealthStatus(list[index].Status, item.requests, item.rate, item.latency, activeCandidates)
+		list[index].HealthStatus, list[index].HealthReason = deriveHealthStatus(
+			list[index].Status, item.requests, item.rate, activeCandidates,
+		)
 	}
 	adminOK(w, list)
 }

@@ -115,10 +115,32 @@ export function failoverReasonText(reason?: string | null) {
   return key ? $t(key) : reason;
 }
 
+export function healthReasonText(reason?: string) {
+  const map: Record<string, App.I18n.I18nKey> = {
+    healthy: 'business.health-reason-healthy',
+    disabled: 'business.health-reason-disabled',
+    no_candidates: 'business.health-reason-no-candidates',
+    no_traffic: 'business.health-reason-no-traffic',
+    no_data: 'business.health-reason-no-data',
+    active_probe_unhealthy: 'business.health-reason-active-probe-unhealthy',
+    active_probe_degraded: 'business.health-reason-active-probe-degraded',
+    passive_low_success_rate: 'business.health-reason-passive-low-success-rate',
+    passive_degraded_success_rate: 'business.health-reason-passive-degraded-success-rate',
+    active_and_passive_unhealthy: 'business.health-reason-active-and-passive-unhealthy',
+    active_and_passive_degraded: 'business.health-reason-active-and-passive-degraded',
+    probe_traffic_mismatch: 'business.health-reason-probe-traffic-mismatch',
+    partial_accounts_unhealthy: 'business.health-reason-partial-accounts-unhealthy'
+  };
+  if (!reason) return '-';
+  const key = map[reason];
+  return key ? $t(key) : reason;
+}
+
 export function healthSummary(row: {
   requests_24h: number;
   success_rate_24h: number | null;
   avg_latency_ms_24h: number | null;
+  avg_ttft_ms_24h?: number | null;
   last_used_at: string | null;
   active_candidates: number;
 }) {
@@ -129,11 +151,16 @@ export function healthSummary(row: {
     row.avg_latency_ms_24h === null
       ? $t('business.no-data')
       : $t('business.latencyMs', { value: Math.round(row.avg_latency_ms_24h) });
+  const ttft =
+    row.avg_ttft_ms_24h == null
+      ? $t('business.no-data')
+      : $t('business.latencyMs', { value: Math.round(row.avg_ttft_ms_24h) });
   const lastUsed = row.last_used_at ? formatTime(row.last_used_at) : $t('business.no-records');
   return $t('business.healthSummary', {
     requests: row.requests_24h,
     success,
     latency,
+    ttft,
     lastUsed
   });
 }

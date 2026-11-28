@@ -44,9 +44,11 @@ type providerAccountResponse struct {
 	Requests24h           int64                        `json:"requests_24h"`
 	SuccessRate24h        *float64                     `json:"success_rate_24h"`
 	AvgLatencyMS24h       *float64                     `json:"avg_latency_ms_24h"`
+	AvgTTFTMS24h          *float64                     `json:"avg_ttft_ms_24h"`
 	LastUsedAt            *time.Time                   `json:"last_used_at"`
 	ActiveCandidates      int                          `json:"active_candidates"`
 	HealthStatus          string                       `json:"health_status"`
+	HealthReason          string                       `json:"health_reason"`
 	ActiveCheckStatus     string                       `json:"active_check_status"`
 	ActiveCheckReason     string                       `json:"active_check_reason,omitempty"`
 	ActiveCheckStatusCode *int                         `json:"active_check_status_code,omitempty"`
@@ -141,6 +143,7 @@ func (d ServerDeps) ProviderAccounts(w http.ResponseWriter, r *http.Request) {
 		       count(u.id),
 		       avg(CASE WHEN u.state = 'success' THEN 1.0 ELSE 0.0 END) FILTER (WHERE u.id IS NOT NULL),
 		       avg(u.total_ms) FILTER (WHERE u.state = 'success'),
+		       avg(u.first_token_ms) FILTER (WHERE u.state = 'success' AND u.first_token_ms IS NOT NULL),
 		       max(u.created_at),
 		       count(DISTINCT mc.id) FILTER (WHERE mc.status = 'active' AND mc.retired_at IS NULL)
 		FROM provider_accounts a
@@ -160,6 +163,7 @@ func (d ServerDeps) ProviderAccounts(w http.ResponseWriter, r *http.Request) {
 		Requests         int64
 		SuccessRate      *float64
 		AverageLatencyMS *float64
+		AverageTTFTMS    *float64
 		LastUsedAt       *time.Time
 		ActiveCandidates int
 	}{}
@@ -169,10 +173,11 @@ func (d ServerDeps) ProviderAccounts(w http.ResponseWriter, r *http.Request) {
 			Requests         int64
 			SuccessRate      *float64
 			AverageLatencyMS *float64
+			AverageTTFTMS    *float64
 			LastUsedAt       *time.Time
 			ActiveCandidates int
 		}
-		if err := healthRows.Scan(&id, &h.Requests, &h.SuccessRate, &h.AverageLatencyMS, &h.LastUsedAt, &h.ActiveCandidates); err != nil {
+		if err := healthRows.Scan(&id, &h.Requests, &h.SuccessRate, &h.AverageLatencyMS, &h.AverageTTFTMS, &h.LastUsedAt, &h.ActiveCandidates); err != nil {
 			adminError(w, http.StatusInternalServerError, "PROVIDER_LIST_FAILED", "failed-to-query-provider-health-statistics", nil)
 			return
 		}
@@ -212,11 +217,17 @@ func (d ServerDeps) ProviderAccounts(w http.ResponseWriter, r *http.Request) {
 			list[j].Requests24h = h.Requests
 			list[j].SuccessRate24h = h.SuccessRate
 			list[j].AvgLatencyMS24h = h.AverageLatencyMS
+			list[j].AvgTTFTMS24h = h.AverageTTFTMS
 			list[j].LastUsedAt = h.LastUsedAt
 			list[j].ActiveCandidates = h.ActiveCandidates
-			list[j].HealthStatus = deriveAccountHealthStatus(
-				list[j].Status, list[j].ActiveCheckStatus,
-				h.Requests, h.SuccessRate, h.AverageLatencyMS, h.ActiveCandidates,
+			list[j].HealthStatus, list[j].HealthReason = deriveAccountHealthStatus(
+				list[j].Status, list[j].ActiveCheckStatus, list[j].ActiveCheckReason,
+				h.Requests, h.SuccessRate, h.ActiveCandidates,
+			)
+		} else {
+			list[j].HealthStatus, list[j].HealthReason = deriveAccountHealthStatus(
+				list[j].Status, list[j].ActiveCheckStatus, list[j].ActiveCheckReason,
+				0, nil, 0,
 			)
 		}
 		hb, avail := governance.BuildHeartbeat24h(toGovernanceSamples(checksByAccount[list[j].ID]), now)
@@ -237,10 +248,12 @@ type providerAvailabilityItem struct {
 	UnknownAccounts     int                          `json:"unknown_accounts"`
 	UnsupportedAccounts int                          `json:"unsupported_accounts"`
 	HealthStatus        string                       `json:"health_status"`
+	HealthReason        string                       `json:"health_reason"`
 	Availability24h     *float64                     `json:"availability_24h"`
 	AvgLatencyMS24h     *float64                     `json:"avg_latency_ms_24h"`
 	Requests24h         int64                        `json:"requests_24h"`
 	SuccessRate24h      *float64                     `json:"success_rate_24h"`
+	AvgTTFTMS24h        *float64                     `json:"avg_ttft_ms_24h"`
 	ProxyPoolSize       int                          `json:"proxy_pool_size"`
 	ActiveProxyID       *string                      `json:"active_proxy_id"`
 	ActiveProxyName     *string                      `json:"active_proxy_name"`
@@ -278,10 +291,13 @@ func (d ServerDeps) ProviderAccountsAvailability(w http.ResponseWriter, r *http.
 
 	rows, err := d.Pool.Query(r.Context(), `
 		SELECT a.id, a.provider, a.status,
-		       COALESCE(hs.status, 'unknown'), hs.last_checked_at,
+		       COALESCE(hs.status, 'unknown'), COALESCE(hs.reason, ''), hs.last_checked_at,
 		       count(u.id),
 		       count(u.id) FILTER (WHERE u.state = 'success'),
-		       avg(u.total_ms) FILTER (WHERE u.state = 'success'),
+		       COALESCE(sum(u.first_token_ms) FILTER (WHERE u.state = 'success' AND u.first_token_ms IS NOT NULL), 0)::float8,
+		       count(u.first_token_ms) FILTER (WHERE u.state = 'success' AND u.first_token_ms IS NOT NULL),
+		       COALESCE(sum(u.total_ms) FILTER (WHERE u.state = 'success'), 0)::float8,
+		       count(u.total_ms) FILTER (WHERE u.state = 'success'),
 		       count(DISTINCT mc.id) FILTER (WHERE mc.status = 'active' AND mc.retired_at IS NULL)
 		FROM provider_accounts a
 		LEFT JOIN provider_account_health_states hs ON hs.provider_account_id = a.id
@@ -290,7 +306,7 @@ func (d ServerDeps) ProviderAccountsAvailability(w http.ResponseWriter, r *http.
 		     AND u.created_at >= now() - interval '24 hours'
 		     AND u.state <> 'pending'
 		WHERE a.organization_id = $1
-		GROUP BY a.id, a.provider, a.status, hs.status, hs.last_checked_at
+		GROUP BY a.id, a.provider, a.status, hs.status, hs.reason, hs.last_checked_at
 	`, principal.OrganizationID)
 	if err != nil {
 		adminError(w, http.StatusInternalServerError, "PROVIDER_LIST_FAILED", "failed-to-query-provider-health-statistics", nil)
@@ -299,21 +315,29 @@ func (d ServerDeps) ProviderAccountsAvailability(w http.ResponseWriter, r *http.
 	defer rows.Close()
 
 	type accStat struct {
-		provider      string
-		status        string
-		activeCheck   string
-		lastChecked   *time.Time
-		reqs          int64
-		succ          int64
-		avgLatencyMS  *float64
-		activeCands   int
+		provider     string
+		status       string
+		activeCheck  string
+		activeReason string
+		lastChecked  *time.Time
+		reqs         int64
+		succ         int64
+		ttftSums     float64
+		ttftCount    int64
+		latencySums  float64
+		latencyCount int64
+		activeCands  int
 	}
 	type providerAgg struct {
-		item        providerAvailabilityItem
-		totalReqs   int64
-		totalSucc   int64
-		passiveSums float64
-		passiveCnt  int64
+		item            providerAvailabilityItem
+		totalReqs       int64
+		totalSucc       int64
+		unhealthyReason string
+		degradedReason  string
+		ttftSums        float64
+		ttftCount       int64
+		passiveSums     float64
+		passiveCnt      int64
 	}
 	byProvider := make(map[string]*providerAgg)
 	summary := providerAvailabilitySummary{}
@@ -322,8 +346,8 @@ func (d ServerDeps) ProviderAccountsAvailability(w http.ResponseWriter, r *http.
 		var id uuid.UUID
 		var st accStat
 		if err := rows.Scan(
-			&id, &st.provider, &st.status, &st.activeCheck, &st.lastChecked,
-			&st.reqs, &st.succ, &st.avgLatencyMS, &st.activeCands,
+			&id, &st.provider, &st.status, &st.activeCheck, &st.activeReason, &st.lastChecked,
+			&st.reqs, &st.succ, &st.ttftSums, &st.ttftCount, &st.latencySums, &st.latencyCount, &st.activeCands,
 		); err != nil {
 			adminError(w, http.StatusInternalServerError, "PROVIDER_LIST_FAILED", "failed-to-query-provider-health-statistics", nil)
 			return
@@ -351,22 +375,35 @@ func (d ServerDeps) ProviderAccountsAvailability(w http.ResponseWriter, r *http.
 			passiveRate = &r
 			agg.totalReqs += st.reqs
 			agg.totalSucc += st.succ
-			if st.avgLatencyMS != nil {
-				agg.passiveSums += *st.avgLatencyMS
+			if st.ttftCount > 0 {
+				agg.ttftSums += st.ttftSums
+				agg.ttftCount += st.ttftCount
+			}
+			if st.latencyCount > 0 {
+				agg.passiveSums += st.latencySums / float64(st.latencyCount)
 				agg.passiveCnt++
 			}
 		}
-		derived := deriveAccountHealthStatus(st.status, st.activeCheck, st.reqs, passiveRate, st.avgLatencyMS, st.activeCands)
-		switch derived {
+		derivedStatus, derivedReason := deriveAccountHealthStatus(
+			st.status, st.activeCheck, st.activeReason,
+			st.reqs, passiveRate, st.activeCands,
+		)
+		switch derivedStatus {
 		case "healthy":
 			agg.item.HealthyAccounts++
 			summary.HealthyAccounts++
 		case "degraded":
 			agg.item.DegradedAccounts++
 			summary.DegradedAccounts++
+			if agg.degradedReason == "" {
+				agg.degradedReason = derivedReason
+			}
 		case "unhealthy":
 			agg.item.UnhealthyAccounts++
 			summary.UnhealthyAccounts++
+			if agg.unhealthyReason == "" {
+				agg.unhealthyReason = derivedReason
+			}
 		default:
 			if st.activeCheck == "unsupported" {
 				agg.item.UnsupportedAccounts++
@@ -437,6 +474,10 @@ func (d ServerDeps) ProviderAccountsAvailability(w http.ResponseWriter, r *http.
 		hb, avail := governance.BuildHeartbeat24h(toGovernanceSamples(samples), now)
 		agg.item.Heartbeat24h = hb
 		agg.item.Availability24h = avail
+		if agg.ttftCount > 0 {
+			ttft := agg.ttftSums / float64(agg.ttftCount)
+			agg.item.AvgTTFTMS24h = &ttft
+		}
 		if lat := avgSampleLatency(samples); lat != nil {
 			agg.item.AvgLatencyMS24h = lat
 		} else if agg.passiveCnt > 0 {
@@ -446,15 +487,29 @@ func (d ServerDeps) ProviderAccountsAvailability(w http.ResponseWriter, r *http.
 
 		switch {
 		case agg.item.ActiveAccounts == 0:
-			agg.item.HealthStatus = "disabled"
+			agg.item.HealthStatus, agg.item.HealthReason = "disabled", "disabled"
 		case agg.item.HealthyAccounts == 0 && agg.item.UnhealthyAccounts > 0:
 			agg.item.HealthStatus = "unhealthy"
+			if agg.unhealthyReason != "" {
+				agg.item.HealthReason = agg.unhealthyReason
+			} else {
+				agg.item.HealthReason = "active_probe_unhealthy"
+			}
 		case agg.item.UnhealthyAccounts > 0 || agg.item.DegradedAccounts > 0:
 			agg.item.HealthStatus = "degraded"
+			if agg.item.UnhealthyAccounts > 0 && agg.item.HealthyAccounts > 0 {
+				agg.item.HealthReason = "partial_accounts_unhealthy"
+			} else if agg.degradedReason != "" {
+				agg.item.HealthReason = agg.degradedReason
+			} else if agg.unhealthyReason != "" {
+				agg.item.HealthReason = agg.unhealthyReason
+			} else {
+				agg.item.HealthReason = "active_probe_degraded"
+			}
 		case agg.item.HealthyAccounts > 0:
-			agg.item.HealthStatus = "healthy"
+			agg.item.HealthStatus, agg.item.HealthReason = "healthy", "healthy"
 		default:
-			agg.item.HealthStatus = "no_data"
+			agg.item.HealthStatus, agg.item.HealthReason = "no_data", "no_data"
 		}
 		items = append(items, agg.item)
 	}
@@ -507,14 +562,14 @@ func (d ServerDeps) ProviderAccountHealthHistory(w http.ResponseWriter, r *http.
 		}
 	}
 
-	var provider, name string
+	var provider, name, accountStatus string
 	var currentStatus, currentReason, currentError string
 	var currentHTTPStatus, currentLatencyMS *int
 	var currentProxyName *string
 	var consecutiveFailures int
 	var lastCheckedAt, lastHealthyAt *time.Time
 	err = d.Pool.QueryRow(r.Context(), `
-		SELECT a.provider, a.name,
+		SELECT a.provider, a.name, a.status,
 		       COALESCE(hs.status, 'unknown'), COALESCE(hs.reason, ''), hs.http_status, hs.latency_ms,
 		       hs.proxy_name, COALESCE(hs.error_detail, ''), COALESCE(hs.consecutive_failures, 0),
 		       hs.last_checked_at, hs.last_healthy_at
@@ -522,7 +577,7 @@ func (d ServerDeps) ProviderAccountHealthHistory(w http.ResponseWriter, r *http.
 		LEFT JOIN provider_account_health_states hs ON hs.provider_account_id = a.id
 		WHERE a.id = $1 AND a.organization_id = $2
 	`, accountID, principal.OrganizationID).Scan(
-		&provider, &name, &currentStatus, &currentReason, &currentHTTPStatus, &currentLatencyMS,
+		&provider, &name, &accountStatus, &currentStatus, &currentReason, &currentHTTPStatus, &currentLatencyMS,
 		&currentProxyName, &currentError, &consecutiveFailures, &lastCheckedAt, &lastHealthyAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -546,6 +601,33 @@ func (d ServerDeps) ProviderAccountHealthHistory(w http.ResponseWriter, r *http.
 		adminError(w, http.StatusInternalServerError, "PROVIDER_HEALTH_FAILED", "failed-to-query-provider-health-statistics", nil)
 		return
 	}
+
+	var requests24h, activeCandidates int64
+	var successRate24h, avgTTFT24h, passiveAvgLatency24h *float64
+	if err := d.Pool.QueryRow(r.Context(), `
+		SELECT
+			count(u.id),
+			avg(CASE WHEN u.state = 'success' THEN 1.0 ELSE 0.0 END) FILTER (WHERE u.id IS NOT NULL),
+			avg(u.first_token_ms) FILTER (WHERE u.state = 'success' AND u.first_token_ms IS NOT NULL),
+			avg(u.total_ms) FILTER (WHERE u.state = 'success'),
+			count(DISTINCT mc.id) FILTER (WHERE mc.status = 'active' AND mc.retired_at IS NULL)
+		FROM provider_accounts a
+		LEFT JOIN model_candidates mc ON mc.provider_account_id = a.id
+		LEFT JOIN usage_records u ON u.model_candidate_id = mc.id
+		     AND u.created_at >= now() - interval '24 hours'
+		     AND u.state <> 'pending'
+		WHERE a.id = $1
+		GROUP BY a.id
+	`, accountID).Scan(
+		&requests24h, &successRate24h, &avgTTFT24h, &passiveAvgLatency24h, &activeCandidates,
+	); err != nil {
+		adminError(w, http.StatusInternalServerError, "PROVIDER_HEALTH_FAILED", "failed-to-query-provider-health-statistics", nil)
+		return
+	}
+	healthStatus, healthReason := deriveAccountHealthStatus(
+		accountStatus, currentStatus, currentReason,
+		requests24h, successRate24h, int(activeCandidates),
+	)
 
 	hbRows, err := d.Pool.Query(r.Context(), `
 		SELECT checked_at, ok, status, latency_ms, reason
@@ -604,24 +686,30 @@ func (d ServerDeps) ProviderAccountHealthHistory(w http.ResponseWriter, r *http.
 	}
 
 	adminOK(w, map[string]any{
-		"account_id":           accountID.String(),
-		"provider":             provider,
-		"name":                 name,
-		"current_status":       currentStatus,
-		"current_reason":       currentReason,
-		"current_http_status":  currentHTTPStatus,
-		"current_latency_ms":   currentLatencyMS,
-		"current_proxy_name":   currentProxyName,
-		"current_error_detail": currentError,
-		"consecutive_failures": consecutiveFailures,
-		"last_checked_at":      lastCheckedAt,
-		"last_healthy_at":      lastHealthyAt,
-		"availability_24h":     avail24h,
-		"availability_7d":      avail7d,
-		"avg_latency_ms_24h":   avgLatency24h,
-		"p95_latency_ms_24h":   p95Latency24h,
-		"heartbeat_24h":        heartbeat,
-		"checks":               checks,
+		"account_id":                 accountID.String(),
+		"provider":                   provider,
+		"name":                       name,
+		"current_status":             currentStatus,
+		"current_reason":             currentReason,
+		"current_http_status":        currentHTTPStatus,
+		"current_latency_ms":         currentLatencyMS,
+		"current_proxy_name":         currentProxyName,
+		"current_error_detail":       currentError,
+		"consecutive_failures":       consecutiveFailures,
+		"last_checked_at":            lastCheckedAt,
+		"last_healthy_at":            lastHealthyAt,
+		"health_status":              healthStatus,
+		"health_reason":              healthReason,
+		"requests_24h":               requests24h,
+		"success_rate_24h":           successRate24h,
+		"avg_ttft_ms_24h":            avgTTFT24h,
+		"passive_avg_latency_ms_24h": passiveAvgLatency24h,
+		"availability_24h":           avail24h,
+		"availability_7d":            avail7d,
+		"avg_latency_ms_24h":         avgLatency24h,
+		"p95_latency_ms_24h":         p95Latency24h,
+		"heartbeat_24h":              heartbeat,
+		"checks":                     checks,
 	})
 }
 

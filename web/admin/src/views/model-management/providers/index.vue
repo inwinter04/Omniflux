@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, h, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
+import type { VNode } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
   NAlert,
@@ -25,15 +26,16 @@ import {
   NSpin,
   NSwitch,
   NTag,
-  NText
+  NText,
+  NTooltip
 } from 'naive-ui';
 import type { DataTableColumns, DropdownOption, FormInst, FormRules, SelectGroupOption } from 'naive-ui';
 import AvailabilityBar from '@/components/common/availability-bar.vue';
 import {
   apiProtocolText,
   formatTime,
+  healthReasonText,
   healthStatusText,
-  healthSummary,
   healthTagType,
   probeReasonText,
   statusTagType,
@@ -189,6 +191,54 @@ function proxyTypeText(value: Api.Management.ProviderProxyType) {
 function formatAvail(val: number | null) {
   if (val === null || val === undefined) return '-';
   return `${Math.round(val * 10) / 10}%`;
+}
+
+function activeProbeText(row: Api.Management.ProviderAccount) {
+  const status = healthStatusText(row.active_check_status);
+  const availability = formatAvail(row.availability_24h);
+  if (row.active_check_status === 'degraded' || row.active_check_status === 'unhealthy') {
+    return $t('business.tooltip-active-probe-reason', {
+      status,
+      availability,
+      reason: probeReasonText(row.active_check_reason)
+    });
+  }
+  const latency =
+    row.active_check_latency_ms == null
+      ? $t('business.no-data')
+      : $t('business.latencyMs', { value: row.active_check_latency_ms });
+  return $t('business.tooltip-active-probe', { status, availability, latency });
+}
+
+function passiveTrafficTooltipText(row: Api.Management.ProviderAccount) {
+  if (row.requests_24h === 0) return $t('business.no-calls-in-the-last');
+  const success = Math.round((row.success_rate_24h ?? 0) * 100);
+  const ttft =
+    row.avg_ttft_ms_24h == null
+      ? $t('business.no-data')
+      : $t('business.latencyMs', { value: Math.round(row.avg_ttft_ms_24h) });
+  const total =
+    row.avg_latency_ms_24h == null
+      ? $t('business.no-data')
+      : $t('business.latencyMs', { value: Math.round(row.avg_latency_ms_24h) });
+  return $t('business.tooltip-passive-traffic', {
+    traffic: $t('business.tooltip-calls-success-rate', { requests: row.requests_24h, success }),
+    ttft,
+    latency: total
+  });
+}
+
+function providerHealthTooltip(row: Api.Management.ProviderAccount): VNode[] {
+  return [
+    h('div', null, [
+      $t('business.tooltip-overall-health', {
+        status: healthStatusText(row.health_status),
+        reason: healthReasonText(row.health_reason)
+      })
+    ]),
+    h('div', null, activeProbeText(row)),
+    h('div', null, passiveTrafficTooltipText(row))
+  ];
 }
 
 const selectedVendor = computed(() => findVendor(formModel.provider));
@@ -358,16 +408,25 @@ const columns = computed<DataTableColumns<Api.Management.ProviderAccount>>(() =>
           { type: statusTagType(row.status), size: 'small', round: true },
           { default: () => statusText(row.status, 'account') }
         ),
-        h('div', { class: 'flex items-center gap-4px', title: healthSummary(row) }, [
-          h(
-            NTag,
-            { type: healthTagType(row.health_status), size: 'small', round: true },
-            { default: () => healthStatusText(row.health_status) }
-          ),
-          row.requests_24h > 0
-            ? h('span', { class: 'text-12px text-#6b7280' }, `${Math.round((row.success_rate_24h ?? 0) * 100)}%`)
-            : null
-        ])
+        h(
+          NTooltip,
+          null,
+          {
+            trigger: () =>
+              h('div', { class: 'flex items-center gap-4px' }, [
+                h(
+                  NTag,
+                  { type: healthTagType(row.health_status), size: 'small', round: true },
+                  { default: () => healthStatusText(row.health_status) }
+                ),
+                row.requests_24h > 0
+                  ? h('span', { class: 'text-12px text-#6b7280' }, `${Math.round((row.success_rate_24h ?? 0) * 100)}%`)
+                  : null
+              ]),
+            default: () =>
+              h('div', { class: 'max-w-280px whitespace-normal text-12px leading-18px' }, providerHealthTooltip(row))
+          }
+        )
       ])
   },
   {
@@ -1107,13 +1166,55 @@ onUnmounted(() => {
           >
             <div class="flex items-center justify-between gap-8px">
               <span class="truncate font-semibold">{{ providerLabel(item.provider) }}</span>
-              <NTag size="tiny" round :type="healthTagType(item.health_status)">
-                {{ healthStatusText(item.health_status) }}
-              </NTag>
+              <NTooltip placement="top">
+                <template #trigger>
+                  <NTag size="tiny" round :type="healthTagType(item.health_status)">
+                    {{ healthStatusText(item.health_status) }}
+                  </NTag>
+                </template>
+                <div class="max-w-280px whitespace-normal text-12px leading-18px">
+                  <div>
+                    {{
+                      $t('business.tooltip-overall-health', {
+                        status: healthStatusText(item.health_status),
+                        reason: healthReasonText(item.health_reason)
+                      })
+                    }}
+                  </div>
+                  <div>
+                    {{
+                      $t('business.tooltip-probe-summary', {
+                        availability: formatAvail(item.availability_24h),
+                        latency:
+                          item.avg_latency_ms_24h !== null
+                            ? $t('business.latencyMs', { value: Math.round(item.avg_latency_ms_24h) })
+                            : '-'
+                      })
+                    }}
+                  </div>
+                  <div v-if="item.requests_24h > 0">
+                    {{
+                      $t('business.tooltip-traffic-ttft', {
+                        traffic: $t('business.tooltip-calls-success-rate', {
+                          requests: item.requests_24h,
+                          success: Math.round((item.success_rate_24h ?? 0) * 100)
+                        }),
+                        ttft:
+                          item.avg_ttft_ms_24h !== null
+                            ? $t('business.latencyMs', { value: Math.round(item.avg_ttft_ms_24h) })
+                            : '-'
+                      })
+                    }}
+                  </div>
+                </div>
+              </NTooltip>
             </div>
 
             <div class="mt-8px flex items-baseline justify-between gap-8px">
-              <span class="text-20px font-semibold">{{ formatAvail(item.availability_24h) }}</span>
+              <div class="flex items-baseline gap-6px">
+                <span class="text-20px font-semibold">{{ formatAvail(item.availability_24h) }}</span>
+                <span class="text-11px text-#6b7280">{{ $t('business.probe-availability-24h-short') }}</span>
+              </div>
               <span class="text-12px text-#6b7280">
                 {{
                   $t('business.accounts-healthy-ratio', {
@@ -1132,8 +1233,10 @@ onUnmounted(() => {
               <span>
                 {{
                   item.avg_latency_ms_24h !== null
-                    ? $t('business.latencyMs', { value: Math.round(item.avg_latency_ms_24h) })
-                    : '-'
+                    ? $t('business.probe-latency-short', {
+                        value: $t('business.latencyMs', { value: Math.round(item.avg_latency_ms_24h) })
+                      })
+                    : $t('business.probe-latency-short', { value: '-' })
                 }}
               </span>
               <span>
@@ -1442,20 +1545,41 @@ onUnmounted(() => {
             <NAlert v-if="healthHistory.current_error_detail" type="warning" :bordered="false" class="mb-12px">
               {{ probeReasonText(healthHistory.current_reason) }}: {{ healthHistory.current_error_detail }}
             </NAlert>
+            <NAlert
+              v-if="
+                healthHistory.health_status !== 'healthy' &&
+                  healthHistory.health_status !== 'no_data' &&
+                  healthHistory.health_status !== 'no_candidates' &&
+                  healthHistory.health_status !== 'disabled'
+              "
+              type="warning"
+              :bordered="false"
+              class="mb-12px"
+            >
+              {{ $t('business.health-alert-reason', { reason: healthReasonText(healthHistory.health_reason) }) }}
+            </NAlert>
 
             <NDescriptions :column="3" size="small" bordered class="mb-16px">
+              <NDescriptionsItem :label="$t('business.overall-health')" :span="2">
+                <NSpace size="small" align="center">
+                  <NTag size="small" round :type="healthTagType(healthHistory.health_status)">
+                    {{ healthStatusText(healthHistory.health_status) }}
+                  </NTag>
+                  <span>{{ healthReasonText(healthHistory.health_reason) }}</span>
+                </NSpace>
+              </NDescriptionsItem>
               <NDescriptionsItem :label="$t('business.probe-status')">
                 <NTag size="small" round :type="healthTagType(healthHistory.current_status)">
                   {{ healthStatusText(healthHistory.current_status) }}
                 </NTag>
               </NDescriptionsItem>
-              <NDescriptionsItem :label="$t('business.availability-24h')">
+              <NDescriptionsItem :label="$t('business.probe-availability-24h')">
                 {{ formatAvail(healthHistory.availability_24h) }}
               </NDescriptionsItem>
-              <NDescriptionsItem :label="$t('business.availability-7d')">
+              <NDescriptionsItem :label="$t('business.probe-availability-7d')">
                 {{ formatAvail(healthHistory.availability_7d) }}
               </NDescriptionsItem>
-              <NDescriptionsItem :label="$t('business.avgLatency24h')">
+              <NDescriptionsItem :label="$t('business.probe-avg-latency-24h')">
                 {{
                   healthHistory.avg_latency_ms_24h !== null
                     ? $t('business.latencyMs', { value: Math.round(healthHistory.avg_latency_ms_24h) })
@@ -1466,6 +1590,26 @@ onUnmounted(() => {
                 {{
                   healthHistory.p95_latency_ms_24h !== null
                     ? $t('business.latencyMs', { value: Math.round(healthHistory.p95_latency_ms_24h) })
+                    : '-'
+                }}
+              </NDescriptionsItem>
+              <NDescriptionsItem :label="$t('business.requests24h')">
+                {{ healthHistory.requests_24h }}
+              </NDescriptionsItem>
+              <NDescriptionsItem :label="$t('business.successRate24h')">
+                {{ healthHistory.success_rate_24h !== null ? `${Math.round(healthHistory.success_rate_24h * 100)}%` : '-' }}
+              </NDescriptionsItem>
+              <NDescriptionsItem :label="$t('business.avg-ttft-24h')">
+                {{
+                  healthHistory.avg_ttft_ms_24h !== null
+                    ? $t('business.latencyMs', { value: Math.round(healthHistory.avg_ttft_ms_24h) })
+                    : '-'
+                }}
+              </NDescriptionsItem>
+              <NDescriptionsItem :label="$t('business.passive-avg-latency-24h')">
+                {{
+                  healthHistory.passive_avg_latency_ms_24h !== null
+                    ? $t('business.latencyMs', { value: Math.round(healthHistory.passive_avg_latency_ms_24h) })
                     : '-'
                 }}
               </NDescriptionsItem>

@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { h, onMounted, reactive, ref, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { NButton, NDataTable, NDropdown, NSpace, NTag } from 'naive-ui';
+import { NButton, NDataTable, NDropdown, NSpace, NTag, NTooltip } from 'naive-ui';
 import type { DataTableColumns, DropdownOption, FormInst, FormItemRule, FormRules } from 'naive-ui';
 import {
   formatTime,
+  healthReasonText,
   healthStatusText,
   healthSummary,
   healthTagType,
@@ -299,25 +300,42 @@ const columns = computed<DataTableColumns<Api.Management.ModelService>>(() => [
     key: 'health_status',
     width: 180,
     render: row =>
-      h('span', { title: healthSummary(row) }, [
-        h(
-          NTag,
-          {
-            type: healthTagType(row.health_status),
-            size: 'small',
-            round: true
-          },
-          { default: () => healthStatusText(row.health_status) }
-        ),
-        h(
-          'span',
-          { class: 'ml-6px text-12px text-#6b7280' },
-          $t('business.availableCandidateCount', {
-            active: row.active_candidates,
-            total: row.candidates.length
-          })
-        )
-      ])
+      h(
+        NTooltip,
+        null,
+        {
+          trigger: () =>
+            h('span', null, [
+              h(
+                NTag,
+                {
+                  type: healthTagType(row.health_status),
+                  size: 'small',
+                  round: true
+                },
+                { default: () => healthStatusText(row.health_status) }
+              ),
+              h(
+                'span',
+                { class: 'ml-6px text-12px text-#6b7280' },
+                $t('business.availableCandidateCount', {
+                  active: row.active_candidates,
+                  total: row.candidates.length
+                })
+              )
+            ]),
+          default: () =>
+            h('div', { class: 'max-w-280px whitespace-normal text-12px leading-18px' }, [
+              h('div', null, [
+                $t('business.tooltip-overall-health', {
+                  status: healthStatusText(row.health_status),
+                  reason: healthReasonText(row.health_reason)
+                })
+              ]),
+              h('div', null, healthSummary(row))
+            ])
+        }
+      )
   },
   {
     title: $t('business.candidates'),
@@ -759,9 +777,12 @@ onMounted(async () => {
                 </NTag>
               </NDescriptionsItem>
               <NDescriptionsItem :label="$t('business.healthy')">
-                <NTag :type="healthTagType(editService?.health_status)" size="small" round>
-                  {{ healthStatusText(editService?.health_status) }}
-                </NTag>
+                <NSpace size="small" align="center">
+                  <NTag :type="healthTagType(editService?.health_status)" size="small" round>
+                    {{ healthStatusText(editService?.health_status) }}
+                  </NTag>
+                  <span>{{ healthReasonText(editService?.health_reason) }}</span>
+                </NSpace>
               </NDescriptionsItem>
               <NDescriptionsItem :label="$t('business.route-policy')">
                 {{ policyOptions.find(item => item.value === editService?.route_policy_id)?.label ?? '-' }}
@@ -775,8 +796,19 @@ onMounted(async () => {
               <NDescriptionsItem :label="$t('business.successRate24h')">
                 {{ editService?.success_rate_24h != null ? `${Math.round(editService?.success_rate_24h * 100)}%` : '-' }}
               </NDescriptionsItem>
-              <NDescriptionsItem :label="$t('business.avgLatency24h')">
-                {{ editService?.avg_latency_ms_24h != null ? `${Math.round(editService?.avg_latency_ms_24h)} ms` : '-' }}
+              <NDescriptionsItem :label="$t('business.avg-ttft-24h')">
+                {{
+                  editService?.avg_ttft_ms_24h != null
+                    ? $t('business.latencyMs', { value: Math.round(editService?.avg_ttft_ms_24h) })
+                    : '-'
+                }}
+              </NDescriptionsItem>
+              <NDescriptionsItem :label="$t('business.passive-avg-latency-24h')">
+                {{
+                  editService?.avg_latency_ms_24h != null
+                    ? $t('business.latencyMs', { value: Math.round(editService?.avg_latency_ms_24h) })
+                    : '-'
+                }}
               </NDescriptionsItem>
               <NDescriptionsItem :label="$t('business.last-used')">
                 {{ formatTime(editService?.last_used_at) }}

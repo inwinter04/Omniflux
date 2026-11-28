@@ -172,8 +172,8 @@
 | 接口 | 说明 |
 | --- | --- |
 | `GET /api/v1/provider-catalog` | 厂商目录,按模型厂商/云平台（含官方 `openai`、`anthropic`、`gemini`）/第三方服务/自定义分类,同厂商提供套餐和地区版本及默认 `default_protocol` |
-| `GET /api/v1/provider-accounts` | 供应商账号列表(含 `api_protocol`、主动探测状态、24h 心跳条、可用率、生效代理及被动健康统计) |
-| `GET /api/v1/provider-accounts/availability` | 按厂商聚合的可用性总览、24h 心跳条与自动巡检配置 |
+| `GET /api/v1/provider-accounts` | 供应商账号列表(含 `health_reason`、`avg_ttft_ms_24h`、主动探测状态、24h 心跳条与被动流量成功率;综合健康仅按成功率降级) |
+| `GET /api/v1/provider-accounts/availability` | 按厂商聚合的整体健康、`health_reason`、24h 探测心跳、被动调用成功率与 `avg_ttft_ms_24h`、自动巡检配置 |
 | `GET /api/v1/provider-accounts/usage-summaries` | 批量查询当前组织内支持自动查询的账号余额/套餐额度摘要 |
 | `POST /api/v1/provider-accounts/test-all` | 一键批量检测当前组织下全部启用账号并记录结果 |
 | `POST /api/v1/provider-accounts` | 创建供应商账号(凭据加密入库;支持指定 `api_protocol`:`openai_responses`/`openai_chat`/`anthropic_messages`/`gemini_native`/`azure_openai`/`bedrock`/`vertex`;OpenAI/Anthropic/Gemini/兼容账号按账号隔离,支持各自独立的 `base_url` 与协议) |
@@ -182,7 +182,7 @@
 | `GET /api/v1/provider-accounts/{id}/models` | 使用已保存凭据获取上游模型列表,并补全 models.dev 中的已知输入/输出价格;套餐类账号返回 0 价格与 `pricing_kind=plan` |
 | `GET /api/v1/provider-accounts/{id}/balance` | 查询支持的账户余额与套餐额度,响应区分 `balances` 与 `plan_quotas`;不支持自动查询时返回 `quota_support=unsupported` |
 | `POST /api/v1/provider-accounts/{id}/test` | 手动连通性与凭据检测(结果落库并刷新健康态) |
-| `GET /api/v1/provider-accounts/{id}/health-history` | 查询单账号 24h/7d 可用率、平均/P95 延迟与近期检测明细 |
+| `GET /api/v1/provider-accounts/{id}/health-history` | 查询单账号综合健康与 `health_reason`、主动探测状态、24h/7d 探测可用率与延迟、24h 被动调用量/成功率/TTFT/总耗时及近期检测明细 |
 | `GET /api/v1/provider-health/settings` | 查询账号定时可用性巡检策略 |
 | `PATCH /api/v1/provider-health/settings` | 更新账号定时可用性巡检策略（仅平台管理员） |
 | `DELETE /api/v1/provider-accounts/{id}` | 删除供应商账号 |
@@ -213,7 +213,7 @@
 
 | 接口 | 说明 |
 | --- | --- |
-| `GET /api/v1/model-services` | 模型服务列表(含 `expose_router`、`router_model_id` 与候选列表) |
+| `GET /api/v1/model-services` | 模型服务列表(含 `health_reason`、24h 被动健康统计、`avg_ttft_ms_24h`、`expose_router`、`router_model_id` 与候选列表;被动健康仅按成功率降级) |
 | `POST /api/v1/model-services` | 创建模型服务与候选(支持 `expose_router` 与 `router_model_id`) |
 | `PATCH /api/v1/model-services/{id}` | 更新模型服务(候选按稳定键 upsert,移除候选保留历史) |
 | `PATCH /api/v1/model-services/{id}/status` | 启用或停用模型服务 |
